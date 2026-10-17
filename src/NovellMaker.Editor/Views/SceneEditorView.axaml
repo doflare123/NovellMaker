@@ -1,0 +1,95 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:NovellMaker.Editor.ViewModels"
+             xmlns:views="using:NovellMaker.Editor.Views"
+             x:Class="NovellMaker.Editor.Views.SceneEditorView" x:DataType="vm:SceneDocumentViewModel">
+  <DockPanel Margin="12">
+    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+      <StackPanel Spacing="4">
+        <TextBlock Text="Название сцены" Classes="section" />
+        <TextBox Name="SceneNameBox" Text="{Binding Name, Mode=TwoWay}" IsUndoEnabled="False" IsEnabled="{Binding Session.CanEdit}" />
+        <TextBlock Text="{Binding NameValidation}" IsVisible="{Binding !IsNameValid}" Foreground="#D9B68C" />
+      </StackPanel>
+      <Button Grid.Column="1" Content="Удалить сцену" Command="{Binding Session.DeleteSceneCommand}" Margin="12,16,0,0" VerticalAlignment="Top" />
+    </Grid>
+    <TabControl Name="SceneSections">
+      <TabItem>
+        <TabItem.Header><TextBlock Text="Реплики" FontSize="13" /></TabItem.Header>
+        <Grid ColumnDefinitions="180,5,*" Margin="0,10,0,0">
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Top" Spacing="5" Margin="0,0,8,8">
+              <Button Name="AddLineButton" Content="Добавить реплику" Command="{Binding AddLineCommand}" />
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <Button Content="Выше" Command="{Binding MoveUpCommand}" />
+                <Button Content="Ниже" Command="{Binding MoveDownCommand}" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <Button Content="Копия" Command="{Binding DuplicateLineCommand}" />
+                <Button Content="Удалить" Command="{Binding DeleteLineCommand}" />
+              </StackPanel>
+            </StackPanel>
+            <ListBox Name="DialogueLines" ItemsSource="{Binding Lines}" SelectedItem="{Binding SelectedLine, Mode=TwoWay}" IsEnabled="{Binding Session.IsIdle}" Background="#24262B">
+              <ListBox.ItemTemplate>
+                <DataTemplate DataType="vm:DialogueLineViewModel">
+                  <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Label}" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </DockPanel>
+          <GridSplitter Grid.Column="1" ResizeDirection="Columns" Background="#363A40" />
+          <ScrollViewer Grid.Column="2">
+            <StackPanel Margin="12,0,0,0" Spacing="8">
+              <Grid ColumnDefinitions="*,110">
+                <TextBlock Text="Текст реплики" Classes="section" VerticalAlignment="Center" />
+                <TextBox Grid.Column="1" Text="{Binding EditingLanguage, Mode=TwoWay}" IsEnabled="{Binding Session.IsIdle}" PlaceholderText="Язык" ToolTip.Tip="Язык редактируемого текста" />
+              </Grid>
+              <TextBlock Text="{Binding LanguageValidation}" IsVisible="{Binding !IsEditingLanguageValid}" Foreground="#D9B68C" />
+              <TextBox Name="LineTextBox" Text="{Binding LineText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" MaxHeight="180" IsEnabled="{Binding CanEditLine}" IsUndoEnabled="False" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Name="PreviousLineButton" Content="Назад" Command="{Binding PreviousLineCommand}" />
+                <TextBlock Text="{Binding NavigationPosition}" VerticalAlignment="Center" />
+                <Button Name="NextLineButton" Content="Вперёд" Command="{Binding NextLineCommand}" />
+              </StackPanel>
+              <TextBlock Text="ОБРАЗЕЦ ПЛАШКИ" Classes="section" Margin="0,8,0,0" />
+              <TextBlock Text="{Binding CssError}" IsVisible="{Binding HasCssError}" Foreground="#D9B68C" TextWrapping="Wrap" />
+              <views:DialogueStyleSample Name="DialogueSample" StyleSheet="{Binding Style}" SampleText="{Binding SampleText}"
+                  ShowVoiceProgress="{Binding Session.ShowVoiceProgress}" ShowVoiceControls="{Binding Session.ShowVoiceControls}"
+                  ShowNavigationControls="{Binding Session.ShowNavigationControls}" PreviousCommand="{Binding PreviousLineCommand}" NextCommand="{Binding NextLineCommand}" />
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </TabItem>
+      <TabItem>
+        <TabItem.Header><TextBlock Text="Оформление плашки" FontSize="13" /></TabItem.Header>
+        <ScrollViewer>
+          <StackPanel Margin="0,12,0,0" Spacing="10">
+            <CheckBox Content="Собственный стиль сцены" IsChecked="{Binding UseSceneStyle, Mode=TwoWay}" IsEnabled="{Binding Session.CanEdit}" />
+            <TextBox Name="SceneCssBox" Text="{Binding Css, Mode=TwoWay}" AcceptsReturn="True" FontFamily="Consolas, DejaVu Sans Mono, monospace" FontSize="12" MinHeight="260" IsEnabled="{Binding CanEditCss}" IsUndoEnabled="False" />
+            <TextBlock Text="{Binding CssError}" IsVisible="{Binding HasCssError}" Foreground="#D9B68C" TextWrapping="Wrap" />
+            <TextBlock Text="Поддерживаемые CSS-свойства и @keyframes описаны в документации проекта. При выключенном переопределении сцена наследует общий CSS." Classes="muted" TextWrapping="Wrap" />
+            <views:DialogueStyleSample StyleSheet="{Binding Style}" SampleText="{Binding SampleText}" ShowVoiceProgress="{Binding Session.ShowVoiceProgress}" ShowVoiceControls="{Binding Session.ShowVoiceControls}" ShowNavigationControls="{Binding Session.ShowNavigationControls}" PreviousCommand="{Binding PreviousLineCommand}" NextCommand="{Binding NextLineCommand}" />
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+      <TabItem>
+        <TabItem.Header><TextBlock Text="Задник" FontSize="13" /></TabItem.Header>
+        <ScrollViewer>
+          <StackPanel Margin="0,12,0,0" Spacing="10">
+            <TextBlock Text="ИЗОБРАЖЕНИЕ ЗАДНИКА" Classes="section" />
+            <ComboBox Name="BackgroundPicker" ItemsSource="{Binding BackgroundOptions}" SelectedItem="{Binding SelectedBackground, Mode=TwoWay}" IsEnabled="{Binding Session.CanEdit}" HorizontalAlignment="Stretch">
+              <ComboBox.ItemTemplate>
+                <DataTemplate DataType="vm:BackgroundImageOption"><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" /></DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Content="Открыть библиотеку изображений" Command="{Binding Session.OpenAssetLibraryCommand}" HorizontalAlignment="Left" />
+            <TextBlock Name="BackgroundDiagnostic" Text="{Binding BackgroundStatus}" Foreground="#D9B68C" TextWrapping="Wrap" />
+            <Border Background="#17191D" BorderBrush="#383C43" BorderThickness="1" MinHeight="160">
+              <views:ProjectImageView Name="BackgroundPreview" Asset="{Binding BackgroundImage}" ProjectDirectory="{Binding Session.ProjectDirectory}" Revision="{Binding Session.AssetRevision}" MaxHeight="360" />
+            </Border>
+            <TextBlock Text="Статический задник сцены. Привязка сохраняется по ID изображения; переименование в библиотеке её не меняет." Classes="muted" TextWrapping="Wrap" />
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</UserControl>

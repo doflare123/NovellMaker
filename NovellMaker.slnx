@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NovellMaker.Core/NovellMaker.Core.csproj" />
+    <Project Path="src/NovellMaker.Editor/NovellMaker.Editor.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NovellMaker.Core.Tests/NovellMaker.Core.Tests.csproj" />
+    <Project Path="tests/NovellMaker.Editor.Tests/NovellMaker.Editor.Tests.csproj" />
+  </Folder>
+</Solution>

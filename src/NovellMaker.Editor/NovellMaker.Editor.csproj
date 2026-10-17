@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaVersion>12.1.0</AvaloniaVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="NovellMaker.Editor.Tests" />
+    <ProjectReference Include="../NovellMaker.Core/NovellMaker.Core.csproj" />
+    <PackageReference Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
+  </ItemGroup>
+</Project>

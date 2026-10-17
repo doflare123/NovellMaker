@@ -1,0 +1,30 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:NovellMaker.Editor.ViewModels"
+             x:Class="NovellMaker.Editor.Views.ProjectSettingsView" x:DataType="vm:EditorSession">
+  <ScrollViewer>
+    <StackPanel Margin="24" Spacing="12" MaxWidth="800" HorizontalAlignment="Stretch">
+      <TextBlock Text="Параметры проекта" FontSize="22" FontWeight="Light" />
+      <TextBlock Text="Название проекта" />
+      <TextBox Name="ProjectNameBox" Text="{Binding ProjectName, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" IsUndoEnabled="False" PlaceholderText="Название новеллы" />
+      <TextBlock Text="{Binding NameValidation}" Foreground="#D9B68C" />
+      <TextBlock Text="Основной язык текста" />
+      <TextBox Text="{Binding DefaultLanguage, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" IsUndoEnabled="False" PlaceholderText="ru, en, en-US…" />
+      <TextBlock Text="{Binding DocumentValidation}" Foreground="#D9B68C" TextWrapping="Wrap" />
+      <TextBlock Text="Файл проекта" Classes="section" />
+      <SelectableTextBlock Text="{Binding PathDisplay}" TextWrapping="Wrap" />
+      <TextBlock Text="ДИАЛОГОВЫЙ ИНТЕРФЕЙС" Classes="section" Margin="0,14,0,0" />
+      <CheckBox Content="Показывать прогресс озвучки" IsChecked="{Binding ShowVoiceProgress, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
+      <CheckBox Content="Показывать паузу и продолжение озвучки" IsChecked="{Binding ShowVoiceControls, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
+      <CheckBox Content="Показывать кнопки «Назад» и «Вперёд»" IsChecked="{Binding ShowNavigationControls, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
+      <TextBlock Text="Общий CSS плашки" />
+      <TextBox Name="ProjectCssBox" Text="{Binding DialogueCss, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Consolas, DejaVu Sans Mono, monospace" FontSize="12" MinHeight="200" IsUndoEnabled="False" IsEnabled="{Binding CanEdit}" />
+      <TextBlock Text="{Binding ProjectCssError}" Foreground="#D9B68C" TextWrapping="Wrap" />
+      <TextBlock Text="Сцены наследуют этот стиль, если в них не задан собственный. Ошибочный CSS сохраняется как черновик; образец продолжает показывать последний корректный стиль." Classes="muted" TextWrapping="Wrap" FontSize="12" />
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+        <Button Content="Сохранить" Command="{Binding SaveCommand}" />
+        <Button Content="Сохранить как…" Command="{Binding SaveAsCommand}" />
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

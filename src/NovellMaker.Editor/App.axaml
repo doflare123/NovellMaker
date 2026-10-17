@@ -1,0 +1,31 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="NovellMaker.Editor.App"
+             RequestedThemeVariant="Dark">
+  <Application.Styles>
+    <FluentTheme DensityStyle="Compact">
+      <FluentTheme.Palettes>
+        <ColorPaletteResources x:Key="Dark" Accent="#8397AE" />
+      </FluentTheme.Palettes>
+    </FluentTheme>
+    <Style Selector="Window">
+      <Setter Property="FontFamily" Value="Inter, Segoe UI, DejaVu Sans, sans-serif" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Background" Value="#202226" />
+    </Style>
+    <Style Selector="TextBlock.section">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="#AEB4BD" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="#AEB4BD" />
+    </Style>
+    <Style Selector="Button.tool">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="2" />
+      <Setter Property="Padding" Value="12,6" />
+    </Style>
+  </Application.Styles>
+</Application>

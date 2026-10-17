@@ -1,0 +1,93 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:NovellMaker.Editor.ViewModels"
+             xmlns:views="using:NovellMaker.Editor.Views"
+             x:Class="NovellMaker.Editor.Views.AssetLibraryView"
+             x:DataType="vm:EditorSession">
+  <Grid RowDefinitions="Auto,*">
+    <Border Background="#26292E" BorderBrush="#383C43" BorderThickness="0,0,0,1" Padding="12,10">
+      <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,8,Auto">
+        <Button Name="ImportImageButton"
+                Content="Импортировать изображение…"
+                Command="{Binding ImportImageCommand}"
+                VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1"
+                   Text="{Binding AssetSearchSummary}"
+                   Classes="muted"
+                   FontSize="11"
+                   HorizontalAlignment="Right"
+                   VerticalAlignment="Center"
+                   Margin="12,0,2,0" />
+        <TextBox Name="AssetFilterBox"
+                 Grid.Row="2" Grid.ColumnSpan="2"
+                 Text="{Binding AssetFilter, Mode=TwoWay}"
+                 PlaceholderText="Поиск по названию или пути"
+                 IsUndoEnabled="False"
+                 IsEnabled="{Binding IsIdle}" />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="200,5,*">
+      <Border Background="#24262B" BorderBrush="#383C43" BorderThickness="0,0,1,0">
+        <ListBox Name="AssetList"
+                 ItemsSource="{Binding FilteredImages}"
+                 SelectedItem="{Binding SelectedImage, Mode=TwoWay}"
+                 IsEnabled="{Binding IsIdle}"
+                 Background="Transparent"
+                 Margin="4">
+          <ListBox.ItemTemplate>
+            <DataTemplate DataType="vm:ImageAssetViewModel">
+              <Grid ColumnDefinitions="72,*" Margin="3" MinHeight="58">
+                <Border Width="64" Height="52" BorderBrush="#41464E" BorderThickness="1">
+                  <views:ProjectImageView Asset="{Binding Model}"
+                                          ProjectDirectory="{Binding ProjectDirectory}"
+                                          Revision="{Binding Revision}"
+                                          MaximumWidth="128" />
+                </Border>
+                <StackPanel Grid.Column="1" Margin="8,2,4,2" Spacing="3" VerticalAlignment="Center">
+                  <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="{Binding Dimensions}" Classes="muted" FontSize="11" />
+                  <TextBlock Text="{Binding Status}" Foreground="#D9B68C" FontSize="11"
+                             TextWrapping="Wrap" MaxHeight="32" />
+                </StackPanel>
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Border>
+
+      <GridSplitter Grid.Column="1" Background="#363A40" ResizeDirection="Columns" />
+
+      <ScrollViewer Grid.Column="2">
+        <StackPanel Margin="18" Spacing="10" MaxWidth="760" HorizontalAlignment="Stretch">
+          <TextBlock Text="Изображение" FontSize="22" FontWeight="Light" />
+          <Border Height="200" MinHeight="140" Background="#1B1D21"
+                  BorderBrush="#41464E" BorderThickness="1">
+            <views:ProjectImageView Name="SelectedImagePreview"
+                                    Asset="{Binding SelectedImage.Model}"
+                                    ProjectDirectory="{Binding ProjectDirectory}"
+                                    Revision="{Binding AssetRevision}"
+                                    MaximumWidth="1280" />
+          </Border>
+
+          <TextBlock Text="Название" Classes="section" Margin="0,6,0,0" />
+          <TextBox Name="SelectedImageNameBox"
+                   Text="{Binding SelectedImageName, Mode=TwoWay}"
+                   IsEnabled="{Binding CanEditImage}"
+                   IsUndoEnabled="False"
+                   PlaceholderText="Название ресурса" />
+          <TextBlock Text="{Binding SelectedImageValidation}"
+                     Foreground="#D9B68C" TextWrapping="Wrap" />
+
+          <TextBlock Text="Сведения" Classes="section" Margin="0,6,0,0" />
+          <SelectableTextBlock Text="{Binding SelectedImageInfo}"
+                               TextWrapping="Wrap" FontSize="12" />
+          <TextBlock Text="{Binding SelectedImageStatus}"
+                     Foreground="#D9B68C" TextWrapping="Wrap" />
+          <TextBlock Text="Файлы изображений хранятся внутри проекта. Название изменяет только подпись ресурса."
+                     Classes="muted" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0" />
+        </StackPanel>
+      </ScrollViewer>
+    </Grid>
+  </Grid>
+</UserControl>
