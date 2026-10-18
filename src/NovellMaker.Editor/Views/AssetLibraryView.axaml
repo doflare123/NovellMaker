@@ -35,6 +35,7 @@
                  IsEnabled="{Binding IsIdle}"
                  Background="Transparent"
                  Margin="4">
+        <ListBox.KeyBindings><KeyBinding Gesture="Delete" Command="{Binding DeleteImageCommand}" /></ListBox.KeyBindings>
           <ListBox.ItemTemplate>
             <DataTemplate DataType="vm:ImageAssetViewModel">
               <Grid ColumnDefinitions="72,*" Margin="3" MinHeight="58">
@@ -60,7 +61,10 @@
 
       <ScrollViewer Grid.Column="2">
         <StackPanel Margin="18" Spacing="10" MaxWidth="760" HorizontalAlignment="Stretch">
-          <TextBlock Text="Изображение" FontSize="22" FontWeight="Light" />
+          <DockPanel>
+            <Button Name="DeleteImageButton" DockPanel.Dock="Right" Content="Удалить изображение" Command="{Binding DeleteImageCommand}" />
+            <TextBlock Text="Изображение" FontSize="22" FontWeight="Light" />
+          </DockPanel>
           <Border Height="200" MinHeight="140" Background="#1B1D21"
                   BorderBrush="#41464E" BorderThickness="1">
             <views:ProjectImageView Name="SelectedImagePreview"

@@ -82,4 +82,27 @@ public sealed class SceneModelTests
         }));
         Assert.IsFalse(scene.ContentEquals(separateCopy with { BackgroundImageId = Guid.NewGuid() }));
     }
+
+    [TestMethod]
+    public void DialogueLineContentEquals_ComparesCharacterBindings()
+    {
+        var line = DialogueLine.Create("ru", "Текст") with
+        {
+            SpeakerId = Guid.NewGuid(),
+            CharacterStateId = Guid.NewGuid(),
+            HideCharacterId = Guid.NewGuid(),
+        };
+        var copy = new DialogueLine(line.Id, line.TextKey)
+        {
+            Texts = line.Texts.ToImmutableDictionary(StringComparer.Ordinal),
+            SpeakerId = line.SpeakerId,
+            CharacterStateId = line.CharacterStateId,
+            HideCharacterId = line.HideCharacterId,
+        };
+
+        Assert.IsTrue(line.ContentEquals(copy));
+        Assert.IsFalse(line.ContentEquals(copy with { SpeakerId = Guid.NewGuid() }));
+        Assert.IsFalse(line.ContentEquals(copy with { CharacterStateId = Guid.NewGuid() }));
+        Assert.IsFalse(line.ContentEquals(copy with { HideCharacterId = Guid.NewGuid() }));
+    }
 }

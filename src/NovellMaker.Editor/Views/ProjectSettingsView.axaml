@@ -11,6 +11,11 @@
       <TextBlock Text="Основной язык текста" />
       <TextBox Text="{Binding DefaultLanguage, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" IsUndoEnabled="False" PlaceholderText="ru, en, en-US…" />
       <TextBlock Text="{Binding DocumentValidation}" Foreground="#D9B68C" TextWrapping="Wrap" />
+      <TextBlock Text="Вид обозревателя проекта" />
+      <ComboBox Name="ExplorerModePicker" SelectedIndex="{Binding ExplorerModeIndex, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" HorizontalAlignment="Stretch">
+        <ComboBoxItem Content="Иерархия новеллы" />
+        <ComboBoxItem Content="Папки и файлы" />
+      </ComboBox>
       <TextBlock Text="Файл проекта" Classes="section" />
       <SelectableTextBlock Text="{Binding PathDisplay}" TextWrapping="Wrap" />
       <TextBlock Text="ДИАЛОГОВЫЙ ИНТЕРФЕЙС" Classes="section" Margin="0,14,0,0" />

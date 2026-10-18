@@ -8,8 +8,15 @@
   <ItemGroup>
     <InternalsVisibleTo Include="NovellMaker.Editor.Tests" />
     <ProjectReference Include="../NovellMaker.Core/NovellMaker.Core.csproj" />
+    <ProjectReference Include="../NovellMaker.Runtime/NovellMaker.Runtime.csproj" ReferenceOutputAssembly="false" />
     <PackageReference Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="$(AvaloniaVersion)" />
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
   </ItemGroup>
+  <Target Name="CopyRuntimeHost" AfterTargets="Build">
+    <ItemGroup>
+      <RuntimeHostFile Include="$(MSBuildProjectDirectory)/../NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(RuntimeHostFile)" DestinationFiles="@(RuntimeHostFile->'$(TargetDir)Runtime/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

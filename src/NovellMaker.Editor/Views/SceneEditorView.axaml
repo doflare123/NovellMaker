@@ -10,9 +10,12 @@
         <TextBox Name="SceneNameBox" Text="{Binding Name, Mode=TwoWay}" IsUndoEnabled="False" IsEnabled="{Binding Session.CanEdit}" />
         <TextBlock Text="{Binding NameValidation}" IsVisible="{Binding !IsNameValid}" Foreground="#D9B68C" />
       </StackPanel>
-      <Button Grid.Column="1" Content="Удалить сцену" Command="{Binding Session.DeleteSceneCommand}" Margin="12,16,0,0" VerticalAlignment="Top" />
+      <StackPanel Grid.Column="1" Margin="12,16,0,0" Spacing="4">
+        <Button Name="PreviewSceneButton" Content="Запустить сцену" Command="{Binding Session.PreviewSceneCommand}" ToolTip.Tip="Запустить с выбранной реплики (F6)" />
+        <Button Content="Удалить сцену" Command="{Binding Session.DeleteSceneCommand}" />
+      </StackPanel>
     </Grid>
-    <TabControl Name="SceneSections">
+    <TabControl Name="SceneSections" SelectedIndex="{Binding SelectedSection, Mode=TwoWay}">
       <TabItem>
         <TabItem.Header><TextBlock Text="Реплики" FontSize="13" /></TabItem.Header>
         <Grid ColumnDefinitions="180,5,*" Margin="0,10,0,0">
@@ -29,6 +32,7 @@
               </StackPanel>
             </StackPanel>
             <ListBox Name="DialogueLines" ItemsSource="{Binding Lines}" SelectedItem="{Binding SelectedLine, Mode=TwoWay}" IsEnabled="{Binding Session.IsIdle}" Background="#24262B">
+        <ListBox.KeyBindings><KeyBinding Gesture="Delete" Command="{Binding DeleteLineCommand}" /></ListBox.KeyBindings>
               <ListBox.ItemTemplate>
                 <DataTemplate DataType="vm:DialogueLineViewModel">
                   <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Label}" />
@@ -39,6 +43,24 @@
           <GridSplitter Grid.Column="1" ResizeDirection="Columns" Background="#363A40" />
           <ScrollViewer Grid.Column="2">
             <StackPanel Margin="12,0,0,0" Spacing="8">
+              <TextBlock Text="Говорящий персонаж" Classes="section" />
+              <ComboBox Name="SpeakerPicker" ItemsSource="{Binding SpeakerOptions}" SelectedItem="{Binding SelectedSpeaker, Mode=TwoWay}" IsEnabled="{Binding CanEditLine}" HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate><DataTemplate DataType="vm:CharacterOption"><TextBlock Text="{Binding Name}" /></DataTemplate></ComboBox.ItemTemplate>
+              </ComboBox>
+              <Grid ColumnDefinitions="*,8,*">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="Состояние говорящего" Classes="section" />
+                  <ComboBox Name="CharacterStatePicker" ItemsSource="{Binding StateOptions}" SelectedItem="{Binding SelectedCharacterState, Mode=TwoWay}" IsEnabled="{Binding CanChooseState}" HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate><DataTemplate DataType="vm:CharacterOption"><TextBlock Text="{Binding Name}" /></DataTemplate></ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="4">
+                  <TextBlock Text="Скрыть перед репликой" Classes="section" />
+                  <ComboBox Name="HideCharacterPicker" ItemsSource="{Binding HideOptions}" SelectedItem="{Binding SelectedHiddenCharacter, Mode=TwoWay}" IsEnabled="{Binding CanEditLine}" HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate><DataTemplate DataType="vm:CharacterOption"><TextBlock Text="{Binding Name}" /></DataTemplate></ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+              </Grid>
               <Grid ColumnDefinitions="*,110">
                 <TextBlock Text="Текст реплики" Classes="section" VerticalAlignment="Center" />
                 <TextBox Grid.Column="1" Text="{Binding EditingLanguage, Mode=TwoWay}" IsEnabled="{Binding Session.IsIdle}" PlaceholderText="Язык" ToolTip.Tip="Язык редактируемого текста" />
@@ -50,14 +72,54 @@
                 <TextBlock Text="{Binding NavigationPosition}" VerticalAlignment="Center" />
                 <Button Name="NextLineButton" Content="Вперёд" Command="{Binding NextLineCommand}" />
               </StackPanel>
-              <TextBlock Text="ОБРАЗЕЦ ПЛАШКИ" Classes="section" Margin="0,8,0,0" />
-              <TextBlock Text="{Binding CssError}" IsVisible="{Binding HasCssError}" Foreground="#D9B68C" TextWrapping="Wrap" />
-              <views:DialogueStyleSample Name="DialogueSample" StyleSheet="{Binding Style}" SampleText="{Binding SampleText}"
-                  ShowVoiceProgress="{Binding Session.ShowVoiceProgress}" ShowVoiceControls="{Binding Session.ShowVoiceControls}"
-                  ShowNavigationControls="{Binding Session.ShowNavigationControls}" PreviousCommand="{Binding PreviousLineCommand}" NextCommand="{Binding NextLineCommand}" />
             </StackPanel>
           </ScrollViewer>
         </Grid>
+      </TabItem>
+      <TabItem Name="PlacementTab">
+        <TabItem.Header><TextBlock Text="Размещение" FontSize="13" /></TabItem.Header>
+        <DockPanel Margin="0,12,0,0">
+          <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,12">
+            <TextBlock Text="Команды размещения перед выбранной репликой" Classes="section" />
+            <ComboBox Name="PlacementLinePicker" ItemsSource="{Binding Lines}" SelectedItem="{Binding SelectedLine, Mode=TwoWay}" IsEnabled="{Binding Session.IsIdle}" HorizontalAlignment="Stretch">
+              <ComboBox.ItemTemplate><DataTemplate DataType="vm:DialogueLineViewModel"><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate></ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+          <Grid ColumnDefinitions="210,12,*">
+            <ScrollViewer>
+                <StackPanel Spacing="6">
+                  <TextBlock Text="ПЕРСОНАЖ" Classes="section" />
+                  <ComboBox Name="PlacementCharacterPicker" ItemsSource="{Binding PlacementOptions}" SelectedItem="{Binding SelectedPlacementCharacter, Mode=TwoWay}" IsEnabled="{Binding CanEditLine}" HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate><DataTemplate DataType="vm:CharacterOption"><TextBlock Text="{Binding Name}" /></DataTemplate></ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <StackPanel Spacing="6" IsEnabled="{Binding CanPlaceCharacter}">
+                    <TextBlock Text="X, %" /><NumericUpDown Name="PlacementXBox" FormatString="0.##" Minimum="-100" Maximum="200" Increment="1" Value="{Binding PlacementX, Mode=TwoWay}" />
+                    <TextBlock Text="Y, %" /><NumericUpDown Name="PlacementYBox" FormatString="0.##" Minimum="-100" Maximum="200" Increment="1" Value="{Binding PlacementY, Mode=TwoWay}" />
+                    <TextBlock Text="Масштаб, %" /><NumericUpDown Name="PlacementScaleBox" FormatString="0.##" Minimum="5" Maximum="500" Increment="5" Value="{Binding PlacementScale, Mode=TwoWay}" />
+                    <TextBlock Text="Слой (больше — ближе)" /><NumericUpDown Name="PlacementLayerBox" Minimum="-1000" Maximum="1000" Increment="1" Value="{Binding PlacementLayer, Mode=TwoWay}" />
+                  </StackPanel>
+                  <WrapPanel IsEnabled="{Binding CanPlaceCharacter}">
+                    <Button Content="Слева" Click="PlaceLeft" Margin="0,0,4,4" />
+                    <Button Content="По центру" Click="PlaceCenter" Margin="0,0,4,4" />
+                    <Button Content="Справа" Click="PlaceRight" Margin="0,0,4,4" />
+                    <Button Content="Автоматически" Click="PlaceAutomatic" Margin="0,0,4,4" />
+                    <Button Content="Убрать команду" Click="RemovePlacement" Margin="0,0,4,4" />
+                  </WrapPanel>
+                  <TextBlock Text="{Binding PlacementStatus}" Classes="muted" />
+                </StackPanel>
+            </ScrollViewer>
+            <DockPanel Grid.Column="2">
+              <TextBlock DockPanel.Dock="Top" Text="Перетащите персонажа; Escape — отмена. X/Y — нижняя середина спрайта, Y растёт вниз. Размещение сохраняется до следующей команды." Classes="muted" TextWrapping="Wrap" Margin="0,0,0,8" />
+              <DockPanel>
+                <TextBlock DockPanel.Dock="Bottom" Text="{Binding PlaybackDiagnostics}" Foreground="#D9B68C" TextWrapping="Wrap" />
+                <views:DialogueStyleSample Name="PlacementSample" StyleSheet="{Binding Style}" SampleText="{Binding SampleText}" SampleFrame="{Binding SampleFrame}" PlacementEditor="{Binding}"
+                    BackgroundImage="{Binding BackgroundImage}" ProjectDirectory="{Binding Session.ProjectDirectory}" AssetRevision="{Binding Session.AssetRevision}"
+                    ShowVoiceProgress="{Binding Session.ShowVoiceProgress}" ShowVoiceControls="{Binding Session.ShowVoiceControls}"
+                    ShowNavigationControls="{Binding Session.ShowNavigationControls}" PreviousCommand="{Binding PreviousLineCommand}" NextCommand="{Binding NextLineCommand}" />
+              </DockPanel>
+            </DockPanel>
+          </Grid>
+        </DockPanel>
       </TabItem>
       <TabItem>
         <TabItem.Header><TextBlock Text="Оформление плашки" FontSize="13" /></TabItem.Header>
@@ -67,7 +129,7 @@
             <TextBox Name="SceneCssBox" Text="{Binding Css, Mode=TwoWay}" AcceptsReturn="True" FontFamily="Consolas, DejaVu Sans Mono, monospace" FontSize="12" MinHeight="260" IsEnabled="{Binding CanEditCss}" IsUndoEnabled="False" />
             <TextBlock Text="{Binding CssError}" IsVisible="{Binding HasCssError}" Foreground="#D9B68C" TextWrapping="Wrap" />
             <TextBlock Text="Поддерживаемые CSS-свойства и @keyframes описаны в документации проекта. При выключенном переопределении сцена наследует общий CSS." Classes="muted" TextWrapping="Wrap" />
-            <views:DialogueStyleSample StyleSheet="{Binding Style}" SampleText="{Binding SampleText}" ShowVoiceProgress="{Binding Session.ShowVoiceProgress}" ShowVoiceControls="{Binding Session.ShowVoiceControls}" ShowNavigationControls="{Binding Session.ShowNavigationControls}" PreviousCommand="{Binding PreviousLineCommand}" NextCommand="{Binding NextLineCommand}" />
+            <views:DialogueStyleSample StyleSheet="{Binding Style}" SampleText="{Binding SampleText}" BackgroundImage="{Binding BackgroundImage}" ProjectDirectory="{Binding Session.ProjectDirectory}" AssetRevision="{Binding Session.AssetRevision}" ShowVoiceProgress="{Binding Session.ShowVoiceProgress}" ShowVoiceControls="{Binding Session.ShowVoiceControls}" ShowNavigationControls="{Binding Session.ShowNavigationControls}" PreviousCommand="{Binding PreviousLineCommand}" NextCommand="{Binding NextLineCommand}" />
           </StackPanel>
         </ScrollViewer>
       </TabItem>

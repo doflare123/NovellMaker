@@ -11,6 +11,35 @@ namespace NovellMaker.Core.Tests.Projects;
 public sealed class JsonProjectStoreTests
 {
     [TestMethod]
+    public async Task Version6_RoundTripsExplorerModeAndStrictlyMigratesVersion5InMemory()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var path = Path.Combine(directory.Path, "editor-settings.novell");
+        var project = NovelProject.Create("Настройки") with { ExplorerShowsFiles = true };
+        var store = new JsonProjectStore();
+        await store.SaveAsync(path, project);
+        Assert.IsTrue(project.ContentEquals(await store.LoadAsync(path)));
+        Assert.IsFalse(project.ContentEquals(project with { ExplorerShowsFiles = false }));
+        var document = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
+        document["formatVersion"] = 5;
+        await File.WriteAllTextAsync(path, document.ToJsonString());
+        await Assert.ThrowsExactlyAsync<ProjectFormatException>(() => store.LoadAsync(path));
+        document.Remove("explorerShowsFiles");
+        await File.WriteAllTextAsync(path, document.ToJsonString());
+        var bytes = await File.ReadAllBytesAsync(path);
+        var migrated = await store.LoadAsync(path);
+        Assert.AreEqual(NovelProject.CurrentFormatVersion, migrated.FormatVersion);
+        Assert.IsFalse(migrated.ExplorerShowsFiles);
+        CollectionAssert.AreEqual(bytes, await File.ReadAllBytesAsync(path));
+        document["formatVersion"] = 6;
+        await File.WriteAllTextAsync(path, document.ToJsonString());
+        await Assert.ThrowsExactlyAsync<ProjectFormatException>(() => store.LoadAsync(path));
+        document["explorerShowsFiles"] = "files";
+        await File.WriteAllTextAsync(path, document.ToJsonString());
+        await Assert.ThrowsExactlyAsync<ProjectFormatException>(() => store.LoadAsync(path));
+    }
+
+    [TestMethod]
     public async Task SaveAndLoad_RoundTripsProjectAtUnicodePath()
     {
         using var directory = TemporaryDirectory.Create("проект с пробелами");
@@ -126,7 +155,7 @@ public sealed class JsonProjectStoreTests
         var path = Path.Combine(directory.Path, "future.novell");
         var json = """
             {
-              "formatVersion": 4,
+              "formatVersion": 7,
               "id": "9a4b7915-17df-48ac-84fb-69d00f4bab41",
               "name": "Проект из будущего",
               "futureFeature": { "nested": true }
@@ -137,7 +166,7 @@ public sealed class JsonProjectStoreTests
         var exception = await Assert.ThrowsExactlyAsync<ProjectFormatException>(() =>
             new JsonProjectStore().LoadAsync(path));
 
-        StringAssert.Contains(exception.Message, "4");
+        StringAssert.Contains(exception.Message, "7");
         StringAssert.Contains(exception.Message, "не поддерживается");
     }
 
@@ -218,12 +247,13 @@ public sealed class JsonProjectStoreTests
         Assert.AreEqual("ru", migrated.DefaultLanguage);
         Assert.HasCount(0, migrated.Scenes);
         Assert.HasCount(0, migrated.Images);
+        Assert.HasCount(0, migrated.Characters);
         Assert.AreEqual(DialogueCssParser.DefaultCss, migrated.DialogueUi.Css);
 
         await store.SaveAsync(path, migrated);
 
         var savedJson = await File.ReadAllTextAsync(path);
-        StringAssert.Contains(savedJson, "\"formatVersion\": 3");
+        StringAssert.Contains(savedJson, "\"formatVersion\": 6");
         CollectionAssert.AreNotEqual(originalBytes, await File.ReadAllBytesAsync(path));
     }
 
@@ -288,6 +318,7 @@ public sealed class JsonProjectStoreTests
         CollectionAssert.AreEqual(originalBytes, await File.ReadAllBytesAsync(path));
         Assert.AreEqual(NovelProject.CurrentFormatVersion, migrated.FormatVersion);
         Assert.HasCount(0, migrated.Images);
+        Assert.HasCount(0, migrated.Characters);
         Assert.HasCount(1, migrated.Scenes);
         Assert.AreEqual(Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), migrated.Scenes[0].Id);
         Assert.IsNull(migrated.Scenes[0].BackgroundImageId);

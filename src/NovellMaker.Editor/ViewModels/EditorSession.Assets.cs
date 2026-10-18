@@ -16,6 +16,7 @@ public sealed partial class EditorSession
 
     public ObservableCollection<ImageAssetViewModel> Images { get; } = [];
     public ObservableCollection<ImageAssetViewModel> FilteredImages { get; } = [];
+    public AsyncCommand DeleteImageCommand { get; private set; } = null!;
     public AsyncCommand ImportImageCommand { get; private set; } = null!;
     public AsyncCommand OpenAssetLibraryCommand { get; private set; } = null!;
     public string? ProjectDirectory => projectPath is null ? null : Path.GetDirectoryName(projectPath);
@@ -71,6 +72,7 @@ public sealed partial class EditorSession
 
     private void InitializeAssets()
     {
+        DeleteImageCommand = new(() => selectedImage is { } image ? DeleteImageAsync(image.Id) : Task.CompletedTask, () => CanEditImage);
         ImportImageCommand = new(ImportImageAsync, () => CanEdit);
         OpenAssetLibraryCommand = Command(OpenAssetLibrary, () => CanEdit);
     }
@@ -181,12 +183,14 @@ public sealed partial class EditorSession
 
     private void NotifyImageSelection()
     {
+        DeleteImageCommand?.NotifyCanExecuteChanged();
         foreach (var property in new[] { nameof(SelectedImage), nameof(SelectedImageName), nameof(CanEditImage),
                      nameof(SelectedImageValidation), nameof(SelectedImageInfo), nameof(SelectedImageStatus) }) Changed(property);
     }
 
     private void NotifyAssetCommands()
     {
+        DeleteImageCommand?.NotifyCanExecuteChanged();
         ImportImageCommand?.NotifyCanExecuteChanged();
         OpenAssetLibraryCommand?.NotifyCanExecuteChanged();
         assetLibrary?.CloseCommand.NotifyCanExecuteChanged();

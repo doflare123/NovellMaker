@@ -401,6 +401,37 @@ public sealed class SceneAuthoringTests
             Assert.IsTrue(original.ContentEquals(document.Lines.Single(row => row.Id == original.Id).Model));
     }
 
+    [TestMethod]
+    public async Task DuplicateLineKeepsCharacterCommandsWithNewIdentityThroughUndoRedoAndSave()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var path = Path.Combine(directory.Path, "duplicate.novell");
+        var source = DialogueLine.Create("ru", "Текст") with
+        {
+            SpeakerId = Guid.NewGuid(), CharacterStateId = Guid.NewGuid(), HideCharacterId = Guid.NewGuid()
+        };
+        var scene = NovelScene.Create("Сцена") with { Lines = [source] };
+        await new JsonProjectStore().SaveAsync(path, NovelProject.Create("Проект") with { Scenes = [scene] });
+        var session = await NewSessionAsync(new Dialogs { OpenPath = path });
+        await session.OpenProjectAsync();
+        session.OpenScene(scene.Id);
+        var document = session.ActiveScene!;
+        document.DuplicateLine();
+        var copy = document.SelectedLine!.Model;
+        Assert.AreNotEqual(source.Id, copy.Id);
+        Assert.AreNotEqual(source.TextKey, copy.TextKey);
+        Assert.AreEqual(source.SpeakerId, copy.SpeakerId);
+        Assert.AreEqual(source.CharacterStateId, copy.CharacterStateId);
+        Assert.AreEqual(source.HideCharacterId, copy.HideCharacterId);
+        session.Undo();
+        Assert.AreEqual(source.Id, document.Lines.Single().Id);
+        session.Redo();
+        Assert.AreEqual(copy.Id, document.SelectedLine!.Id);
+        await session.SaveAsync();
+        var savedCopy = (await new JsonProjectStore().LoadAsync(path)).Scenes.Single().Lines[1];
+        Assert.IsTrue(copy.ContentEquals(savedCopy));
+    }
+
     private static async Task<EditorSession> NewSessionAsync(Dialogs? dialogs = null)
     {
         var session = new EditorSession(new JsonProjectStore(), dialogs ?? new Dialogs(), new Git());

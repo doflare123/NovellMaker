@@ -299,7 +299,7 @@ public sealed class ImageAssetService : IImageAssetService
             path,
             FileMode.Open,
             FileAccess.Read,
-            FileShare.Read,
+            FileShare.Read | FileShare.Delete,
             bufferSize: 81920,
             FileOptions.SequentialScan);
         using var codec = SKCodec.Create(stream);

@@ -12,6 +12,19 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
     private DialogueStyle style = DialogueCssParser.Parse(DialogueCssParser.DefaultCss);
     private string cssError = "";
     private string? sampledCss;
+    private int selectedSection;
+
+    // Transient authoring UI state; docking or switching documents must not reset it.
+    public int SelectedSection
+    {
+        get => selectedSection;
+        set
+        {
+            if (value is < 0 or > 3 || selectedSection == value) return;
+            selectedSection = value;
+            Changed();
+        }
+    }
 
     internal SceneDocumentViewModel(EditorSession session, NovelScene scene)
     {
@@ -19,7 +32,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         this.scene = scene;
         editingLanguage = session.DefaultLanguage;
         AddLineCommand = EditorSession.Command(AddLine, () => Session.CanEdit && IsEditingLanguageValid);
-        DeleteLineCommand = EditorSession.Command(DeleteLine, () => CanEditLine);
+        DeleteLineCommand = new(ConfirmDeleteLineAsync, () => CanEditLine);
         DuplicateLineCommand = EditorSession.Command(DuplicateLine, () => CanEditLine);
         MoveUpCommand = EditorSession.Command(() => MoveLine(-1), () => CanEditLine && CanPrevious);
         MoveDownCommand = EditorSession.Command(() => MoveLine(1), () => CanEditLine && CanNext);
@@ -145,6 +158,20 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         SelectLine(line.Id);
     }
 
+    public Task ConfirmDeleteLineAsync()
+    {
+        var id = SelectedLine?.Id;
+        return Session.ConfirmEditorDeletionAsync("Реплика", () => { if (SelectedLine?.Id == id) DeleteLineCore(); });
+    }
+
+    private void DeleteLineCore()
+    {
+        var index = SelectedIndex;
+        if (index < 0) return;
+        Session.UpdateScene(scene with { Lines = scene.Lines.RemoveAt(index) });
+        SelectedLine = Lines.Count == 0 ? null : Lines[Math.Min(index, Lines.Count - 1)];
+    }
+
     public void DeleteLine()
     {
         if (!CanEditLine) return;
@@ -156,7 +183,12 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
     public void DuplicateLine()
     {
         if (!CanEditLine || SelectedLine is null) return;
-        var copy = DialogueLine.Create(editingLanguage) with { Texts = SelectedLine.Model.Texts };
+        var source = SelectedLine.Model;
+        var copy = DialogueLine.Create(editingLanguage) with
+        {
+            Texts = source.Texts, SpeakerId = source.SpeakerId,
+            CharacterStateId = source.CharacterStateId, HideCharacterId = source.HideCharacterId, Placements = source.Placements
+        };
         Session.UpdateScene(scene with { Lines = scene.Lines.Insert(SelectedIndex + 1, copy) });
         SelectLine(copy.Id);
     }
@@ -186,6 +218,8 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         RefreshBackground();
         if (unchanged)
         {
+            RefreshCharacterBindings();
+            RefreshPlayback();
             RefreshHeader();
             return;
         }
@@ -219,6 +253,8 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
 
     private void RefreshLineSelection()
     {
+        RefreshCharacterBindings();
+        RefreshPlayback();
         foreach (var property in new[] { nameof(SelectedLine), nameof(LineText), nameof(SelectedTextKey), nameof(SampleText),
                      nameof(CanEditLine), nameof(CanPrevious), nameof(CanNext), nameof(NavigationPosition) }) Changed(property);
         Session.NotifySelectionChanged();
@@ -227,7 +263,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
 
     internal void NotifyCommands()
     {
-        foreach (var property in new[] { nameof(CanEditLine), nameof(CanEditCss) }) Changed(property);
+        foreach (var property in new[] { nameof(CanEditLine), nameof(CanEditCss), nameof(CanChooseState) }) Changed(property);
         foreach (var command in new[] { AddLineCommand, DeleteLineCommand, DuplicateLineCommand, MoveUpCommand, MoveDownCommand,
                      PreviousLineCommand, NextLineCommand, CloseCommand }) command?.NotifyCanExecuteChanged();
     }

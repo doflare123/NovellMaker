@@ -1,0 +1,57 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:NovellMaker.Editor.ViewModels"
+             xmlns:views="using:NovellMaker.Editor.Views"
+             x:Class="NovellMaker.Editor.Views.ProjectFolderView" x:DataType="vm:ProjectFolderBrowser">
+  <Grid Name="BrowserRoot" RowDefinitions="Auto,Auto,*,Auto" Background="#24262B">
+    <Grid ColumnDefinitions="Auto,Auto,Auto,*" Margin="4" ColumnSpacing="2">
+      <Button Name="FolderBackButton" Content="←" Command="{Binding BackCommand}" Padding="6,3" ToolTip.Tip="Назад" AutomationProperties.Name="Назад по папкам" />
+      <Button Grid.Column="1" Content="→" Command="{Binding ForwardCommand}" Padding="6,3" ToolTip.Tip="Вперёд" AutomationProperties.Name="Вперёд по папкам" />
+      <Button Name="FolderUpButton" Grid.Column="2" Content="↑" Command="{Binding UpCommand}" Padding="6,3" ToolTip.Tip="На уровень выше" AutomationProperties.Name="На уровень выше" />
+      <TextBox Name="FolderSearchBox" Grid.Column="3" Text="{Binding Search, Mode=TwoWay}" PlaceholderText="Поиск в папке" MinWidth="60" IsUndoEnabled="False" />
+    </Grid>
+    <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="4,0,4,4">
+      <ItemsControl ItemsSource="{Binding Breadcrumbs}">
+        <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate><DataTemplate DataType="vm:FolderBreadcrumb">
+          <Button Content="{Binding Name}" Click="BreadcrumbClicked" Padding="5,3" FontSize="11" Background="Transparent" />
+        </DataTemplate></ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+    <Grid Name="BrowserColumns" Grid.Row="2" ColumnDefinitions="110,4,*">
+      <TreeView Name="FolderNavigation" ItemsSource="{Binding Roots}" SelectionChanged="FolderSelectionChanged" Background="#202226">
+        <TreeView.ItemTemplate><TreeDataTemplate DataType="vm:ExplorerEntry" ItemsSource="{Binding Folders}">
+          <Grid ColumnDefinitions="16,*" ToolTip.Tip="{Binding Detail}">
+            <Path Data="M1,4 L6,4 L8,6 L15,6 L15,14 L1,14 Z" Stroke="#B9AC85" StrokeThickness="1" Width="16" Height="16" />
+            <TextBlock Grid.Column="1" Text="{Binding FolderName}" FontSize="11" TextTrimming="CharacterEllipsis" />
+          </Grid>
+        </TreeDataTemplate></TreeView.ItemTemplate>
+        <TreeView.Styles><Style Selector="TreeViewItem"><Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay, DataType=vm:ExplorerEntry}" /></Style></TreeView.Styles>
+      </TreeView>
+      <GridSplitter Name="FolderNavigationSplitter" Grid.Column="1" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" Background="#363A40" />
+      <Grid Grid.Column="2">
+        <ListBox Name="FolderTiles" ItemsSource="{Binding Tiles}" SelectedItem="{Binding SelectedTile, Mode=TwoWay}"
+                 Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 DoubleTapped="TileDoubleTapped" Padding="4">
+          <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
+          <ListBox.Styles><Style Selector="ListBoxItem"><Setter Property="Padding" Value="3" /><Setter Property="Margin" Value="2" /></Style></ListBox.Styles>
+          <ListBox.ItemTemplate><DataTemplate DataType="vm:FolderTile">
+            <StackPanel Width="88" Height="96" Spacing="5" ToolTip.Tip="{Binding Detail}">
+              <Grid Width="72" Height="56">
+                <Path Data="M2,12 L25,12 L32,19 L68,19 L68,50 L2,50 Z" Fill="#525D67" Stroke="#87939D" StrokeThickness="1.5" IsVisible="{Binding IsFolder}" />
+                <Path Data="M18,4 L45,4 L57,16 L57,52 L18,52 Z M45,4 L45,16 L57,16 M25,28 L49,28 M25,35 L49,35 M25,42 L43,42" Fill="#38414B" Stroke="#99A8B9" StrokeThickness="1" IsVisible="{Binding IsDocument}" />
+                <views:ProjectImageView Asset="{Binding Image}" ProjectDirectory="{Binding ProjectDirectory}" Revision="{Binding Revision}" MaximumWidth="128" IsVisible="{Binding HasImage}" />
+                <Border IsVisible="{Binding HasGitStatus}" Background="#292D32" Padding="3,0" HorizontalAlignment="Right" VerticalAlignment="Top">
+                  <TextBlock Text="{Binding GitStatus}" FontSize="10" Foreground="#D9B68C" />
+                </Border>
+              </Grid>
+              <TextBlock Text="{Binding Name}" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="34" FontSize="11" />
+            </StackPanel>
+          </DataTemplate></ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock Text="{Binding EmptyMessage}" IsVisible="{Binding IsEmpty}" IsHitTestVisible="False" Classes="muted" TextWrapping="Wrap" Margin="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      </Grid>
+    </Grid>
+    <TextBlock Grid.Row="3" Text="{Binding SelectionDetail}" TextTrimming="CharacterEllipsis" Classes="muted" FontSize="11" Margin="6" ToolTip.Tip="{Binding SelectionDetail}" />
+  </Grid>
+</UserControl>

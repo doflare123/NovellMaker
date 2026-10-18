@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using NovellMaker.Core.Assets;
+using NovellMaker.Core.Characters;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Scenes;
 using NovellMaker.Core.Styling;
@@ -22,6 +23,7 @@ public sealed class NovelProjectTests
         Assert.AreEqual("ru", first.DefaultLanguage);
         Assert.HasCount(0, first.Scenes);
         Assert.HasCount(0, first.Images);
+        Assert.HasCount(0, first.Characters);
         Assert.AreEqual(DialogueCssParser.DefaultCss, first.DialogueUi.Css);
     }
 
@@ -54,7 +56,8 @@ public sealed class NovelProjectTests
 
     [TestMethod]
     [DataRow(0)]
-    [DataRow(4)]
+    [DataRow(3)]
+    [DataRow(7)]
     public void Constructor_RejectsUnsupportedFormatVersion(int version)
     {
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
@@ -144,5 +147,36 @@ public sealed class NovelProjectTests
         }));
         Assert.IsTrue(NovelProject.ContentEquals(null, null));
         Assert.IsFalse(NovelProject.ContentEquals(project, null));
+    }
+
+    [TestMethod]
+    public void ContentEquals_ComparesCharactersStructurally()
+    {
+        var state = new CharacterState(Guid.NewGuid(), "Спокойна", Guid.NewGuid());
+        var character = new NovelCharacter(Guid.NewGuid(), "Алиса")
+        {
+            States = [state],
+            DefaultStateId = state.Id,
+        };
+        var project = NovelProject.Create("Проект") with { Characters = [character] };
+        var separateCopy = NovelProject.Create("Временный") with
+        {
+            Id = project.Id,
+            Name = project.Name,
+            Characters =
+            [
+                new NovelCharacter(character.Id, character.Name)
+                {
+                    States = [new CharacterState(state.Id, state.Name, state.ImageId)],
+                    DefaultStateId = state.Id,
+                },
+            ],
+        };
+
+        Assert.IsTrue(project.ContentEquals(separateCopy));
+        Assert.IsFalse(project.ContentEquals(separateCopy with
+        {
+            Characters = [separateCopy.Characters[0] with { Name = "Боб" }],
+        }));
     }
 }

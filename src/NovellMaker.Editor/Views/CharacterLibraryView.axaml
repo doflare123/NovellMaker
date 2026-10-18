@@ -1,0 +1,117 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:NovellMaker.Editor.ViewModels"
+             xmlns:views="using:NovellMaker.Editor.Views"
+             x:Class="NovellMaker.Editor.Views.CharacterLibraryView"
+             x:DataType="vm:EditorSession">
+  <Grid ColumnDefinitions="190,5,*">
+    <Grid RowDefinitions="Auto,*,Auto,Auto,*" Background="#24262B">
+      <Border Padding="10" BorderBrush="#383C43" BorderThickness="0,0,0,1">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Text="Персонажи" Classes="section" VerticalAlignment="Center" />
+          <Button Name="AddCharacterButton" Grid.Column="1" Content="Добавить"
+                  Command="{Binding AddCharacterCommand}" />
+        </Grid>
+      </Border>
+      <ListBox Name="CharacterList" Grid.Row="1" ItemsSource="{Binding Characters}"
+               SelectedItem="{Binding SelectedCharacter, Mode=TwoWay}"
+               IsEnabled="{Binding IsIdle}" Background="Transparent" Margin="4">
+        <ListBox.KeyBindings><KeyBinding Gesture="Delete" Command="{Binding DeleteCharacterCommand}" /></ListBox.KeyBindings>
+        <ListBox.ItemTemplate>
+          <DataTemplate DataType="vm:CharacterViewModel">
+            <StackPanel Margin="8,5" Spacing="2">
+              <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+              <TextBlock Text="{Binding StateSummary}" Classes="muted" FontSize="11" />
+            </StackPanel>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+
+      <StackPanel Grid.Row="2">
+        <Button Name="DeleteCharacterButton" Content="Удалить персонажа" Command="{Binding DeleteCharacterCommand}" Margin="8,0,8,8" />
+      <Border Padding="10" BorderBrush="#383C43" BorderThickness="0,1,0,1">
+        <TextBlock Text="Состояния" Classes="section" />
+      </Border>
+      </StackPanel>
+      <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="6" Margin="8">
+        <Button Name="AddCharacterStateButton" Content="Добавить"
+                Command="{Binding AddCharacterStateCommand}" />
+        <Button Name="DeleteCharacterStateButton" Content="Удалить"
+                Command="{Binding DeleteCharacterStateCommand}" />
+      </StackPanel>
+      <ListBox Name="CharacterStateList" Grid.Row="4"
+               ItemsSource="{Binding SelectedCharacter.States}"
+               SelectedItem="{Binding SelectedState, Mode=TwoWay}"
+               IsEnabled="{Binding IsIdle}" Background="Transparent" Margin="4">
+        <ListBox.KeyBindings><KeyBinding Gesture="Delete" Command="{Binding DeleteCharacterStateCommand}" /></ListBox.KeyBindings>
+        <ListBox.ItemTemplate>
+          <DataTemplate DataType="vm:CharacterStateViewModel">
+            <StackPanel Margin="8,5" Spacing="2">
+              <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+              <TextBlock Text="{Binding ImageName}" Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
+              <TextBlock Text="{Binding Status}" Foreground="#D9B68C" FontSize="11" TextWrapping="Wrap" />
+            </StackPanel>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Grid>
+
+    <GridSplitter Grid.Column="1" Background="#363A40" ResizeDirection="Columns" />
+
+    <ScrollViewer Grid.Column="2">
+      <StackPanel Margin="18" Spacing="9" MaxWidth="760" HorizontalAlignment="Stretch">
+        <TextBlock Text="Персонаж" FontSize="22" FontWeight="Light" />
+        <TextBlock Text="Имя" Classes="section" />
+        <TextBox Name="CharacterNameBox" Text="{Binding SelectedCharacterName, Mode=TwoWay}"
+                 IsEnabled="{Binding CanEditCharacter}" IsUndoEnabled="False"
+                 PlaceholderText="Имя персонажа" />
+        <TextBlock Text="{Binding CharacterValidation}" Foreground="#D9B68C" TextWrapping="Wrap" />
+
+        <TextBlock Text="Состояние по умолчанию" Classes="section" Margin="0,6,0,0" />
+        <ComboBox Name="DefaultCharacterStateBox"
+                  ItemsSource="{Binding SelectedCharacter.States}"
+                  SelectedItem="{Binding SelectedDefaultState, Mode=TwoWay}"
+                  IsEnabled="{Binding CanEditCharacter}">
+          <ComboBox.ItemTemplate>
+            <DataTemplate DataType="vm:CharacterStateViewModel">
+              <TextBlock Text="{Binding Name}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+
+        <TextBlock Text="Название состояния" Classes="section" Margin="0,6,0,0" />
+        <TextBox Name="CharacterStateNameBox" Text="{Binding SelectedStateName, Mode=TwoWay}"
+                 IsEnabled="{Binding CanEditState}" IsUndoEnabled="False"
+                 PlaceholderText="Например: default, sad, angry" />
+        <TextBlock Text="{Binding CharacterStateValidation}" Foreground="#D9B68C" TextWrapping="Wrap" />
+
+        <TextBlock Text="Изображение состояния" Classes="section" Margin="0,6,0,0" />
+        <ComboBox Name="CharacterStateImageBox" ItemsSource="{Binding Images}"
+                  SelectedItem="{Binding SelectedStateImage, Mode=TwoWay}"
+                  IsEnabled="{Binding CanEditState}">
+          <ComboBox.ItemTemplate>
+            <DataTemplate DataType="vm:ImageAssetViewModel">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="1" Text="{Binding Dimensions}" Classes="muted" Margin="12,0,0,0" />
+              </Grid>
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+        <TextBlock Text="{Binding AddCharacterStateHint}" Classes="muted" TextWrapping="Wrap" FontSize="12" />
+
+        <Border Height="150" MinHeight="120" Margin="0,8,0,0"
+                Background="#1B1D21" BorderBrush="#41464E" BorderThickness="1">
+          <views:ProjectImageView Name="CharacterStatePreview"
+                                  Asset="{Binding SelectedState.Image}"
+                                  ProjectDirectory="{Binding ProjectDirectory}"
+                                  Revision="{Binding AssetRevision}"
+                                  MaximumWidth="1280" />
+        </Border>
+
+        <TextBlock Text="{Binding CharacterStateStatus}" Foreground="#D9B68C" TextWrapping="Wrap" />
+        <SelectableTextBlock Text="{Binding CharacterStateInfo}" TextWrapping="Wrap" FontSize="12" />
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

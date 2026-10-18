@@ -14,6 +14,7 @@
     <KeyBinding Gesture="Ctrl+Shift+S" Command="{Binding SaveAsCommand}" />
     <KeyBinding Gesture="Ctrl+W" Command="{Binding CloseProjectCommand}" />
     <KeyBinding Gesture="F5" Command="{Binding RefreshGitCommand}" />
+    <KeyBinding Gesture="F6" Command="{Binding PreviewSceneCommand}" />
     <KeyBinding Gesture="Ctrl+Z" Command="{Binding UndoCommand}" />
     <KeyBinding Gesture="Ctrl+Y" Command="{Binding RedoCommand}" />
   </Window.KeyBindings>
@@ -26,6 +27,9 @@
     </DataTemplate>
     <DataTemplate DataType="vm:AssetLibraryDocumentViewModel">
       <views:AssetLibraryView DataContext="{Binding Session}" />
+    </DataTemplate>
+    <DataTemplate DataType="vm:CharacterLibraryDocumentViewModel">
+      <views:CharacterLibraryView DataContext="{Binding Session}" />
     </DataTemplate>
   </Window.DataTemplates>
   <DockPanel>
@@ -45,13 +49,18 @@
         <MenuItem Header="_Повторить" Command="{Binding RedoCommand}" InputGesture="Ctrl+Y" />
       </MenuItem>
       <MenuItem Header="_Сцена">
+        <MenuItem Header="_Запустить с выбранной реплики" Command="{Binding PreviewSceneCommand}" InputGesture="F6" />
         <MenuItem Header="_Добавить сцену" Command="{Binding AddSceneCommand}" />
         <MenuItem Header="_Удалить текущую сцену" Command="{Binding DeleteSceneCommand}" />
       </MenuItem>
       <MenuItem Header="_Вид">
+        <MenuItem Name="WorkspacePanelsMenu" Header="Панели" />
+        <MenuItem Header="Восстановить расположение панелей" Click="ResetWorkspaceClicked" />
+        <Separator />
         <MenuItem Header="_Обновить ресурсы и Git" Command="{Binding RefreshGitCommand}" InputGesture="F5" />
       </MenuItem>
       <MenuItem Header="_Ресурсы">
+        <MenuItem Header="_Персонажи и состояния" Command="{Binding OpenCharacterLibraryCommand}" />
         <MenuItem Header="_Библиотека изображений" Command="{Binding OpenAssetLibraryCommand}" />
         <MenuItem Header="_Импортировать изображение…" Command="{Binding ImportImageCommand}" />
       </MenuItem>
@@ -75,32 +84,36 @@
         <TextBlock Grid.Column="1" Text="{Binding GitSummary}" Classes="muted" Margin="20,0,0,0" MaxWidth="460" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding GitSummary}" />
       </Grid>
     </Border>
-    <Grid RowDefinitions="*,5,150">
-      <Grid ColumnDefinitions="250,5,*,5,260">
-        <Border Background="#24262B">
+    <Grid Name="Workspace">
+        <Border Name="ExplorerPane" Background="#24262B">
           <DockPanel>
-            <Border DockPanel.Dock="Top" Background="#2A2D32" Padding="12,10">
-              <TextBlock Text="ОБОЗРЕВАТЕЛЬ ПРОЕКТА" Classes="section" />
-            </Border>
+
             <TextBlock DockPanel.Dock="Bottom" Margin="12" Classes="muted" FontSize="11" TextWrapping="Wrap"
                        Text="Git: первый столбец — индекс, второй — рабочая копия. M — изменён, A — добавлен, D — удалён, R — переименован, ?? — новый."
                        IsVisible="{Binding HasProject}" />
-            <TreeView Name="ProjectExplorer" ItemsSource="{Binding Explorer}" Margin="4,8" IsEnabled="{Binding IsIdle}" SelectionChanged="ExplorerSelectionChanged">
+            <Grid>
+            <views:ProjectFolderView Name="ProjectFolders" IsVisible="{Binding IsFolderExplorer}" IsEnabled="{Binding IsIdle}" />
+            <TreeView IsVisible="{Binding !IsFolderExplorer}" Name="ProjectExplorer" ItemsSource="{Binding Explorer}" Margin="4,8" IsEnabled="{Binding IsIdle}" SelectionChanged="ExplorerSelectionChanged">
               <TreeView.ItemTemplate>
-                <TreeDataTemplate DataType="vm:ExplorerEntry" ItemsSource="{Binding Children}">
-                  <TextBlock Text="{Binding Label}" ToolTip.Tip="{Binding Detail}" TextTrimming="CharacterEllipsis" />
+                <TreeDataTemplate DataType="vm:ExplorerEntry" ItemsSource="{Binding Items}">
+                  <Grid ColumnDefinitions="18,*" ToolTip.Tip="{Binding Detail}">
+                    <Path Data="M1,4 L6,4 L8,6 L15,6 L15,14 L1,14 Z" Stroke="#B9AC85" StrokeThickness="1" Width="16" Height="16" IsVisible="{Binding IsFolder}" />
+                    <Path Data="M3,2 L10,2 L14,6 L14,15 L3,15 Z M10,2 L10,6 L14,6" Stroke="#9BA7B7" StrokeThickness="1" Width="16" Height="16" IsVisible="{Binding !IsFolder}" />
+                    <TextBlock Grid.Column="1" Text="{Binding Label}" TextTrimming="CharacterEllipsis" />
+                  </Grid>
                 </TreeDataTemplate>
               </TreeView.ItemTemplate>
               <TreeView.Styles>
                 <Style Selector="TreeViewItem">
-                  <Setter Property="IsExpanded" Value="True" />
+                  <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay, DataType=vm:ExplorerEntry}" />
                 </Style>
               </TreeView.Styles>
             </TreeView>
+            </Grid>
           </DockPanel>
         </Border>
-        <GridSplitter Grid.Column="1" Background="#363A40" ResizeDirection="Columns" />
-        <Grid Grid.Column="2" Background="#202226">
+
+        <Grid Name="DocumentsPane" Background="#202226">
           <StackPanel IsVisible="{Binding !HasProject}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" MaxWidth="430" Margin="32">
             <TextBlock Text="NovellMaker" FontSize="28" FontWeight="Light" />
             <TextBlock Text="Создайте проект новеллы или откройте существующий файл проекта." Classes="muted" TextWrapping="Wrap" />
@@ -120,12 +133,10 @@
             </TabControl.ItemTemplate>
           </TabControl>
         </Grid>
-        <GridSplitter Grid.Column="3" Background="#363A40" ResizeDirection="Columns" />
-        <Border Grid.Column="4" Background="#24262B">
+
+        <Border Name="InformationPane" Background="#24262B">
           <DockPanel>
-            <Border DockPanel.Dock="Top" Background="#2A2D32" Padding="12,10">
-              <TextBlock Text="СВЕДЕНИЯ О ПРОЕКТЕ" Classes="section" />
-            </Border>
+
             <ScrollViewer IsVisible="{Binding HasProject}">
               <StackPanel Margin="14,18" Spacing="10">
                 <TextBlock Text="Идентификатор" Classes="section" />
@@ -145,12 +156,23 @@
             </ScrollViewer>
           </DockPanel>
         </Border>
-      </Grid>
-      <GridSplitter Grid.Row="1" Background="#363A40" ResizeDirection="Rows" />
-      <DockPanel Grid.Row="2" Background="#24262B">
-        <Border DockPanel.Dock="Top" Background="#2A2D32" Padding="12,8">
-          <TextBlock Text="СООБЩЕНИЯ" Classes="section" />
-        </Border>
+      <ContentControl Name="ScenePane" Content="{Binding ActiveScene}">
+        <ContentControl.ContentTemplate>
+          <DataTemplate DataType="vm:SceneDocumentViewModel">
+            <DockPanel Margin="8">
+                <TextBlock DockPanel.Dock="Top" Text="{Binding CssError}" IsVisible="{Binding HasCssError}" Foreground="#D9B68C" TextWrapping="Wrap" />
+                <TextBlock DockPanel.Dock="Bottom" Text="{Binding PlaybackDiagnostics}" Foreground="#D9B68C" TextWrapping="Wrap" />
+                <views:DialogueStyleSample Name="DialogueSample" StyleSheet="{Binding Style}" SampleText="{Binding SampleText}"
+                    SampleFrame="{Binding SampleFrame}" PlacementEditor="{Binding}"
+                    BackgroundImage="{Binding BackgroundImage}" ProjectDirectory="{Binding Session.ProjectDirectory}" AssetRevision="{Binding Session.AssetRevision}"
+                    ShowVoiceProgress="{Binding Session.ShowVoiceProgress}" ShowVoiceControls="{Binding Session.ShowVoiceControls}"
+                    ShowNavigationControls="{Binding Session.ShowNavigationControls}" PreviousCommand="{Binding PreviousLineCommand}" NextCommand="{Binding NextLineCommand}" />
+            </DockPanel>
+          </DataTemplate>
+        </ContentControl.ContentTemplate>
+      </ContentControl>
+      <DockPanel Name="MessagesPane" Background="#24262B">
+
         <ListBox Name="DiagnosticsList" ItemsSource="{Binding Diagnostics}" Background="Transparent" FontSize="12" />
       </DockPanel>
     </Grid>

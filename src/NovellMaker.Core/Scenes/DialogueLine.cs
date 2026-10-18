@@ -14,6 +14,14 @@ public sealed record DialogueLine(Guid Id, string TextKey)
     public ImmutableDictionary<string, string> Texts { get; init; } =
         ImmutableDictionary<string, string>.Empty;
 
+    public Guid? SpeakerId { get; init; }
+
+    public Guid? CharacterStateId { get; init; }
+
+    public Guid? HideCharacterId { get; init; }
+
+    public ImmutableArray<CharacterPlacementCommand> Placements { get; init; } = [];
+
     public static DialogueLine Create(string language, string text = "")
     {
         if (string.IsNullOrWhiteSpace(language))
@@ -35,6 +43,10 @@ public sealed record DialogueLine(Guid Id, string TextKey)
         if (other is null ||
             Id != other.Id ||
             !string.Equals(TextKey, other.TextKey, StringComparison.Ordinal) ||
+            SpeakerId != other.SpeakerId ||
+            CharacterStateId != other.CharacterStateId ||
+            HideCharacterId != other.HideCharacterId ||
+            Placements.IsDefault || other.Placements.IsDefault || !Placements.SequenceEqual(other.Placements) ||
             Texts is null ||
             other.Texts is null ||
             Texts.Count != other.Texts.Count)

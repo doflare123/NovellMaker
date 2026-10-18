@@ -5,16 +5,18 @@ using NovellMaker.Core.Projects;
 using NovellMaker.Editor.Services;
 using NovellMaker.Editor.Services.Git;
 using NovellMaker.Editor.Services.Assets;
+using NovellMaker.Editor.Services.Preview;
 
 namespace NovellMaker.Editor.ViewModels;
 
 /// <summary>Owns one authoring project. No rendering or game execution lives here.</summary>
-public sealed partial class EditorSession : INotifyPropertyChanged
+public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
 {
     private readonly IProjectStore store;
     private readonly IEditorDialogs dialogs;
     private readonly IGitStatusService git;
     private readonly IImageAssetService imageAssets;
+    private readonly IPreviewService previewService;
     private NovelProject? project;
     private NovelProject? savedProject;
     private string draftName = "";
@@ -23,12 +25,13 @@ public sealed partial class EditorSession : INotifyPropertyChanged
     private string status = "Создайте или откройте проект.";
     private string gitSummary = "Git: проект не открыт";
 
-    public EditorSession(IProjectStore store, IEditorDialogs dialogs, IGitStatusService git, IImageAssetService? imageAssets = null)
+    public EditorSession(IProjectStore store, IEditorDialogs dialogs, IGitStatusService git, IImageAssetService? imageAssets = null, IPreviewService? previewService = null)
     {
         this.store = store;
         this.dialogs = dialogs;
         this.git = git;
         this.imageAssets = imageAssets ?? new ImageAssetService();
+        this.previewService = previewService ?? new PreviewService();
         NewCommand = new(NewProjectAsync, () => !IsBusy);
         OpenCommand = new(OpenProjectAsync, () => !IsBusy);
         SaveCommand = new(() => SaveAsync(), () => !IsBusy && HasProject && IsNameValid && AreDocumentsValid);
@@ -37,6 +40,8 @@ public sealed partial class EditorSession : INotifyPropertyChanged
         RefreshGitCommand = new(RefreshGitAsync, () => !IsBusy && ProjectPath is not null);
         InitializeAuthoring();
         InitializeAssets();
+        InitializeCharacters();
+        InitializePreview();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -165,6 +170,12 @@ public sealed partial class EditorSession : INotifyPropertyChanged
             !string.Equals(sourceRoot, Path.GetDirectoryName(path), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
             await imageAssets.CopyAsync(sourceRoot, Path.GetDirectoryName(path)!, snapshot.Images);
         await store.SaveAsync(path, snapshot);
+        if ((deletedFiles.Length > 0 || undo.Any(s => s.DeletedFiles.Length > 0) || redo.Any(s => s.DeletedFiles.Length > 0)) && projectPath is not null && !string.Equals(Path.GetDirectoryName(path), ProjectDirectory,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+        {
+            // File undo belongs to the old filesystem root, not the newly copied project.
+            undo.Clear(); redo.Clear(); deletedFiles = [];
+        }
         savedProject = snapshot;
         projectPath = path;
         EndEditGroup();
@@ -182,8 +193,11 @@ public sealed partial class EditorSession : INotifyPropertyChanged
         projectPath = path;
         ResetAuthoring();
         ResetAssets();
+        ResetCharacters();
         gitSummary = path is null ? "Git: сохраните проект для проверки" : "Git: проверка…";
         if (value is null) gitSummary = "Git: проект не открыт";
+        fileExplorerRoot = null;
+        fileGitSnapshot = null;
         Explorer.Clear();
         NotifyProjectChanged();
     }
@@ -192,9 +206,10 @@ public sealed partial class EditorSession : INotifyPropertyChanged
     {
         foreach (var name in new[] { nameof(Project), nameof(ProjectName), nameof(HasProject), nameof(IsDirty),
                      nameof(IsNameValid), nameof(NameValidation), nameof(CanEdit), nameof(ProjectId), nameof(FormatVersion),
-                     nameof(ProjectPath), nameof(PathDisplay), nameof(DocumentTitle), nameof(WindowTitle), nameof(GitSummary) })
+                     nameof(ExplorerModeIndex), nameof(IsFolderExplorer), nameof(ProjectPath), nameof(PathDisplay), nameof(DocumentTitle), nameof(WindowTitle), nameof(GitSummary) })
             Changed(name);
         NotifyAssetsChanged();
+        NotifyCharactersChanged();
         RebuildProjectEntry();
         NotifyAuthoringChanged();
         NotifyCommands();
@@ -203,13 +218,20 @@ public sealed partial class EditorSession : INotifyPropertyChanged
     private void RebuildProjectEntry()
     {
         if (project is null) return;
+        if (project.ExplorerShowsFiles)
+        {
+            RebuildFileExplorer();
+            return;
+        }
         var row = new ExplorerEntry(IsNameValid ? ProjectName : "Без названия", "Проект новеллы",
-            [new ExplorerEntry(projectPath is null ? "Параметры проекта *" : Path.GetFileName(projectPath), PathDisplay),
+            [new ExplorerEntry(projectPath is null ? "Параметры проекта *" : Path.GetFileName(projectPath), PathDisplay, [], IsProjectSettings: true),
              new ExplorerEntry($"Сцены ({project.Scenes.Length})", "Сцены проекта",
                  project.Scenes.Select(scene => new ExplorerEntry(string.IsNullOrWhiteSpace(scene.Name) ? "Сцена без названия" : scene.Name,
                      scene.Id.ToString(), [], scene.Id)).ToArray()),
              new ExplorerEntry($"Изображения ({project.Images.Length})", "Библиотека изображений",
-                 project.Images.Select(image => new ExplorerEntry(image.Name, image.RelativePath, [], ImageAssetId: image.Id)).ToArray(), IsAssetLibrary: true)]);
+                 project.Images.Select(image => new ExplorerEntry(image.Name, image.RelativePath, [], ImageAssetId: image.Id)).ToArray(), IsAssetLibrary: true),
+             new ExplorerEntry($"Персонажи ({project.Characters.Length})", "Персонажи и состояния",
+                 project.Characters.Select(character => new ExplorerEntry(character.Name, character.Id.ToString(), [], CharacterId: character.Id)).ToArray(), IsCharacterLibrary: true)]);
         if (Explorer.Count == 0) Explorer.Add(row);
         else Explorer[0] = row;
     }
@@ -218,6 +240,9 @@ public sealed partial class EditorSession : INotifyPropertyChanged
     {
         if (projectPath is null) return;
         var result = await git.GetStatusAsync(Path.GetDirectoryName(projectPath)!);
+        fileGitSnapshot = result;
+        fileExplorerRoot = null;
+        RebuildProjectEntry();
         gitSummary = result.Message;
         Changed(nameof(GitSummary));
         var entries = result.Changes.Select(change => new ExplorerEntry(
@@ -253,6 +278,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged
         Changed(nameof(CanEdit));
         NotifyAuthoringCommands();
         NotifyAssetCommands();
+        NotifyCharacterCommands();
         NotifyCommands();
     }
 

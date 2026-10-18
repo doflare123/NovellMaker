@@ -23,6 +23,10 @@ public sealed class ProjectImageView : UserControl
 
     public static readonly StyledProperty<int> MaximumWidthProperty =
         AvaloniaProperty.Register<ProjectImageView, int>(nameof(MaximumWidth), 1280);
+    public static readonly StyledProperty<bool> TransparentBackgroundProperty =
+        AvaloniaProperty.Register<ProjectImageView, bool>(nameof(TransparentBackground));
+    public static readonly StyledProperty<Stretch> ImageStretchProperty =
+        AvaloniaProperty.Register<ProjectImageView, Stretch>(nameof(ImageStretch), Stretch.Uniform);
 
     public static readonly DirectProperty<ProjectImageView, string> PreviewStatusProperty =
         AvaloniaProperty.RegisterDirect<ProjectImageView, string>(
@@ -37,6 +41,7 @@ public sealed class ProjectImageView : UserControl
     private readonly IImageAssetService imageAssets;
     private readonly Image image;
     private readonly TextBlock statusText;
+    private readonly Grid panel;
     private CancellationTokenSource? loadCancellation;
     private Bitmap? bitmap;
     private long loadVersion;
@@ -68,6 +73,8 @@ public sealed class ProjectImageView : UserControl
         get => GetValue(MaximumWidthProperty);
         set => SetValue(MaximumWidthProperty, value);
     }
+    public bool TransparentBackground { get => GetValue(TransparentBackgroundProperty); set => SetValue(TransparentBackgroundProperty, value); }
+    public Stretch ImageStretch { get => GetValue(ImageStretchProperty); set => SetValue(ImageStretchProperty, value); }
 
     public string PreviewStatus
     {
@@ -106,7 +113,7 @@ public sealed class ProjectImageView : UserControl
             Margin = new Thickness(12),
         };
 
-        var panel = new Grid
+        panel = new Grid
         {
             Background = new SolidColorBrush(Color.Parse("#1B1D21")),
             ClipToBounds = true,
@@ -118,6 +125,9 @@ public sealed class ProjectImageView : UserControl
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
+        if (change.Property == TransparentBackgroundProperty && panel is not null)
+            panel.Background = TransparentBackground ? Brushes.Transparent : new SolidColorBrush(Color.Parse("#1B1D21"));
+        if (change.Property == ImageStretchProperty && image is not null) image.Stretch = ImageStretch;
         if (change.Property == ProjectDirectoryProperty ||
             change.Property == AssetProperty ||
             change.Property == RevisionProperty ||

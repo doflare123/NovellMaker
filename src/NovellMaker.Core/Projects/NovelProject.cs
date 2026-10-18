@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using NovellMaker.Core.Assets;
+using NovellMaker.Core.Characters;
 using NovellMaker.Core.Scenes;
 
 namespace NovellMaker.Core.Projects;
@@ -9,7 +10,7 @@ namespace NovellMaker.Core.Projects;
 /// </summary>
 public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
 {
-    public const int CurrentFormatVersion = 3;
+    public const int CurrentFormatVersion = 6;
 
     public int FormatVersion { get; init; } = ValidateFormatVersion(FormatVersion);
 
@@ -21,7 +22,11 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
 
     public ImmutableArray<ImageAsset> Images { get; init; } = [];
 
+    public ImmutableArray<NovelCharacter> Characters { get; init; } = [];
+
     public string DefaultLanguage { get; init; } = "ru";
+
+    public bool ExplorerShowsFiles { get; init; }
 
     public DialogueUiSettings DialogueUi { get; init; } = new();
 
@@ -43,11 +48,30 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
             Id != other.Id ||
             !string.Equals(Name, other.Name, StringComparison.Ordinal) ||
             !string.Equals(DefaultLanguage, other.DefaultLanguage, StringComparison.Ordinal) ||
+            ExplorerShowsFiles != other.ExplorerShowsFiles ||
             !DialogueUiEquals(DialogueUi, other.DialogueUi) ||
             Scenes.IsDefault != other.Scenes.IsDefault ||
-            Images.IsDefault != other.Images.IsDefault)
+            Images.IsDefault != other.Images.IsDefault ||
+            Characters.IsDefault != other.Characters.IsDefault)
         {
             return false;
+        }
+
+        if (!Characters.IsDefault)
+        {
+            if (Characters.Length != other.Characters.Length)
+            {
+                return false;
+            }
+
+            for (var characterIndex = 0; characterIndex < Characters.Length; characterIndex++)
+            {
+                if (Characters[characterIndex] is null ||
+                    !Characters[characterIndex].ContentEquals(other.Characters[characterIndex]))
+                {
+                    return false;
+                }
+            }
         }
 
         if (!Images.IsDefault)
@@ -133,6 +157,11 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
             throw new ArgumentException("Коллекция изображений проекта не инициализирована.", nameof(project));
         }
 
+        if (project.Characters.IsDefault)
+        {
+            throw new ArgumentException("Коллекция персонажей проекта не инициализирована.", nameof(project));
+        }
+
         if (string.IsNullOrWhiteSpace(project.DefaultLanguage))
         {
             throw new ArgumentException("Язык проекта по умолчанию не может быть пустым.", nameof(project));
@@ -170,6 +199,28 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
                 throw new ArgumentException(
                     $"Путь изображения «{image.RelativePath}» используется более одного раза.",
                     nameof(project));
+            }
+        }
+
+        foreach (var character in project.Characters)
+        {
+            if (character is null)
+            {
+                throw new ArgumentException("Коллекция персонажей содержит null.", nameof(project));
+            }
+
+            NovelCharacter.ValidateForPersistence(character);
+            if (!ids.Add(character.Id))
+            {
+                throw new ArgumentException($"Идентификатор {character.Id} используется более одного раза.", nameof(project));
+            }
+
+            foreach (var state in character.States)
+            {
+                if (!ids.Add(state.Id))
+                {
+                    throw new ArgumentException($"Идентификатор {state.Id} используется более одного раза.", nameof(project));
+                }
             }
         }
 
@@ -215,6 +266,26 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
                 if (line.Id == Guid.Empty)
                 {
                     throw new ArgumentException("Идентификатор реплики не может быть пустым.", nameof(project));
+                }
+
+                if (line.Placements.IsDefault || line.Placements.Any(command => command is null ||
+                    command.CharacterId == Guid.Empty || command.Placement is { IsValid: false }) ||
+                    line.Placements.Select(command => command.CharacterId).Distinct().Count() != line.Placements.Length)
+                    throw new ArgumentException("Некорректные команды размещения персонажей.", nameof(project));
+
+                if (line.SpeakerId == Guid.Empty)
+                {
+                    throw new ArgumentException("Ссылка реплики на персонажа не может быть пустым GUID.", nameof(project));
+                }
+
+                if (line.CharacterStateId == Guid.Empty)
+                {
+                    throw new ArgumentException("Ссылка реплики на состояние персонажа не может быть пустым GUID.", nameof(project));
+                }
+
+                if (line.HideCharacterId == Guid.Empty)
+                {
+                    throw new ArgumentException("Ссылка реплики на скрываемого персонажа не может быть пустым GUID.", nameof(project));
                 }
 
                 if (!ids.Add(line.Id))

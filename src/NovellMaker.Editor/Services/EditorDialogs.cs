@@ -62,6 +62,21 @@ public sealed class EditorDialogs(Window owner) : IEditorDialogs
         return await dialog.ShowDialog<UnsavedChangesDecision?>(owner) ?? UnsavedChangesDecision.Cancel;
     }
 
+    public async Task<bool> ConfirmDeleteAsync(string name, string consequences)
+    {
+        var dialog = CreateDialog("Подтверждение удаления");
+        var cancel = new Button { Content = "Отмена", Name = "CancelDeleteButton" };
+        var delete = new Button { Content = "Удалить", Name = "ConfirmDeleteButton" };
+        cancel.Click += (_, _) => dialog.Close(false);
+        delete.Click += (_, _) => dialog.Close(true);
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8,
+            Children = { cancel, delete } };
+        dialog.Content = DialogContent($"Удалить «{name}»?\n\n{consequences}", buttons);
+        dialog.Opened += (_, _) => cancel.Focus();
+        dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(false); };
+        return await dialog.ShowDialog<bool>(owner);
+    }
+
     public async Task ShowErrorAsync(string title, string message)
     {
         var dialog = CreateDialog(title);

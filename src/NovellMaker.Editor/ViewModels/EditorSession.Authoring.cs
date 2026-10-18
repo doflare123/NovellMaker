@@ -25,8 +25,9 @@ public sealed partial class EditorSession
     public bool CanRedo => !IsBusy && redo.Count > 0;
     public bool AreDocumentsValid => project is null ||
         (!string.IsNullOrWhiteSpace(project.DefaultLanguage) && project.Scenes.All(scene => !string.IsNullOrWhiteSpace(scene.Name)) &&
-         project.Images.All(image => !string.IsNullOrWhiteSpace(image.Name)));
-    public string DocumentValidation => AreDocumentsValid ? "" : "Укажите основной язык и названия всех сцен и изображений.";
+         project.Images.All(image => !string.IsNullOrWhiteSpace(image.Name)) &&
+         project.Characters.All(character => !string.IsNullOrWhiteSpace(character.Name) && character.States.All(state => !string.IsNullOrWhiteSpace(state.Name))));
+    public string DocumentValidation => AreDocumentsValid ? "" : "Укажите основной язык и названия сцен, изображений, персонажей и состояний.";
     public SceneDocumentViewModel? ActiveScene => selectedDocument as SceneDocumentViewModel;
     public string SelectedSceneId => ActiveScene?.Id.ToString() ?? "—";
     public string SelectedLineId => ActiveScene?.SelectedLine?.Id.ToString() ?? "—";
@@ -83,9 +84,9 @@ public sealed partial class EditorSession
     private void InitializeAuthoring()
     {
         AddSceneCommand = Command(AddScene, () => CanEdit);
-        DeleteSceneCommand = Command(DeleteActiveScene, () => CanEdit && ActiveScene is not null);
-        UndoCommand = Command(Undo, () => CanUndo);
-        RedoCommand = Command(Redo, () => CanRedo);
+        DeleteSceneCommand = new(() => ActiveScene is { } active ? DeleteSceneAsync(active.Id) : Task.CompletedTask, () => CanEdit && ActiveScene is not null);
+        UndoCommand = new(() => RunHistoryAsync(Undo), () => CanUndo);
+        RedoCommand = new(() => RunHistoryAsync(Redo), () => CanRedo);
     }
 
     internal static AsyncCommand Command(Action action, Func<bool> enabled) => new(() => { action(); return Task.CompletedTask; }, enabled);
@@ -157,7 +158,8 @@ public sealed partial class EditorSession
     public void EndEditGroup() => editGroup = null;
 
     private AuthoringSnapshot Snapshot() => new(project!, draftName, ActiveScene?.Id, ActiveScene?.SelectedLine?.Id,
-        SelectedDocument is AssetLibraryDocumentViewModel, SelectedImage?.Id);
+        SelectedDocument is AssetLibraryDocumentViewModel, SelectedImage?.Id,
+        SelectedDocument is CharacterLibraryDocumentViewModel, SelectedCharacter?.Id, SelectedState?.Id, deletedFiles);
 
     private void RecordEdit(string? group)
     {
@@ -174,23 +176,28 @@ public sealed partial class EditorSession
     public void Undo()
     {
         if (!CanUndo) return;
-        redo.Add(Snapshot());
+        var current = Snapshot();
         var previous = undo[^1];
-        undo.RemoveAt(undo.Count - 1);
         Restore(previous);
+        undo.RemoveAt(undo.Count - 1);
+        redo.Add(current);
+        NotifyAuthoringCommands();
     }
 
     public void Redo()
     {
         if (!CanRedo) return;
-        undo.Add(Snapshot());
+        var current = Snapshot();
         var next = redo[^1];
-        redo.RemoveAt(redo.Count - 1);
         Restore(next);
+        redo.RemoveAt(redo.Count - 1);
+        undo.Add(current);
+        NotifyAuthoringCommands();
     }
 
     private void Restore(AuthoringSnapshot state)
     {
+        RestoreDeletedFiles(state.DeletedFiles);
         project = state.Project;
         draftName = state.DraftName;
         EndEditGroup();
@@ -205,6 +212,12 @@ public sealed partial class EditorSession
             OpenAssetLibrary();
             SelectedImage = Images.FirstOrDefault(image => image.Id == state.ImageId);
         }
+        else if (state.CharacterLibrarySelected)
+        {
+            OpenCharacterLibrary();
+            SelectedCharacter = Characters.FirstOrDefault(character => character.Id == state.CharacterId);
+            SelectedState = SelectedCharacter?.States.FirstOrDefault(pose => pose.Id == state.CharacterStateId);
+        }
         else SelectedDocument = Documents.FirstOrDefault();
     }
 
@@ -212,6 +225,7 @@ public sealed partial class EditorSession
     {
         undo.Clear();
         redo.Clear();
+        deletedFiles = [];
         EndEditGroup();
         sceneDocuments.Clear();
         projectStyle = DialogueCssParser.Parse(DialogueCssParser.DefaultCss);
@@ -248,9 +262,10 @@ public sealed partial class EditorSession
         Changed(nameof(CanUndo));
         Changed(nameof(CanRedo));
         foreach (var command in new[] { AddSceneCommand, DeleteSceneCommand, UndoCommand, RedoCommand }) command?.NotifyCanExecuteChanged();
+        PreviewSceneCommand?.NotifyCanExecuteChanged();
         foreach (var document in sceneDocuments.Values) document.NotifyCommands();
     }
 
     private sealed record AuthoringSnapshot(NovelProject Project, string DraftName, Guid? SceneId, Guid? LineId,
-        bool AssetLibrarySelected, Guid? ImageId);
+        bool AssetLibrarySelected, Guid? ImageId, bool CharacterLibrarySelected, Guid? CharacterId, Guid? CharacterStateId, ImmutableArray<NovellMaker.Editor.Services.ProjectFileDeletion> DeletedFiles);
 }

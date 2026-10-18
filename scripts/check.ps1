@@ -1,4 +1,4 @@
-param([switch]$CaptureScreenshots)
+param([switch]$CaptureScreenshots, [switch]$NativeRuntime)
 
 $ErrorActionPreference = 'Stop'
 $env:AVALONIA_TELEMETRY_OPTOUT = '1'
@@ -9,6 +9,7 @@ try {
     if ($CaptureScreenshots) {
         $env:NOVELLMAKER_CAPTURE_DIR = Join-Path (Get-Location) 'artifacts/screenshots'
     }
+    if ($NativeRuntime) { $env:NOVELLMAKER_NATIVE_SMOKE = '1' }
     dotnet restore NovellMaker.slnx --locked-mode
     if ($LASTEXITCODE -ne 0) { throw 'Restore failed.' }
     dotnet build NovellMaker.slnx -c Release --no-restore

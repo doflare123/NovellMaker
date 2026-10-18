@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Unicode;
 using NovellMaker.Core.Assets;
+using NovellMaker.Core.Characters;
 using NovellMaker.Core.Scenes;
 
 namespace NovellMaker.Core.Projects;
@@ -61,9 +62,14 @@ public sealed class JsonProjectStore : IProjectStore
                 2 => MigrateFromVersion2(await DeserializeRequiredAsync<Version2ProjectDocument>(
                     stream,
                     cancellationToken).ConfigureAwait(false)),
-                NovelProject.CurrentFormatVersion => MapVersion3(await DeserializeRequiredAsync<Version3ProjectDocument>(
+                3 => MigrateFromVersion3(await DeserializeRequiredAsync<Version3ProjectDocument>(
                     stream,
                     cancellationToken).ConfigureAwait(false)),
+                4 => MapVersion4(await DeserializeRequiredAsync<Version4ProjectDocument>(
+                    stream,
+                    cancellationToken).ConfigureAwait(false)),
+                5 => MapVersion5(await DeserializeRequiredAsync<Version5ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
+                6 => MapVersion6(await DeserializeRequiredAsync<Version6ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 _ => throw new ProjectFormatException(
                     $"Некорректная версия формата проекта: {versionProbe.FormatVersion}."),
             };
@@ -188,11 +194,12 @@ public sealed class JsonProjectStore : IProjectStore
             document.Name,
             scenes,
             [],
+            [],
             document.DefaultLanguage,
             document.DialogueUi);
     }
 
-    private static NovelProject MapVersion3(Version3ProjectDocument document)
+    private static NovelProject MigrateFromVersion3(Version3ProjectDocument document)
     {
         var scenes = MapScenes(document.Scenes, MapVersion3Scene);
         if (document.Images is null)
@@ -211,8 +218,81 @@ public sealed class JsonProjectStore : IProjectStore
             document.Name,
             scenes,
             images.MoveToImmutable(),
+            [],
             document.DefaultLanguage,
             document.DialogueUi);
+    }
+
+    private static NovelProject MapVersion4(Version4ProjectDocument document)
+    {
+        var scenes = MapScenes(document.Scenes, MapVersion4Scene);
+        var images = MapImages(document.Images);
+        if (document.Characters is null)
+        {
+            throw new ArgumentException("Коллекция персонажей проекта отсутствует.");
+        }
+
+        var characters = ImmutableArray.CreateBuilder<NovelCharacter>(document.Characters.Count);
+        foreach (var characterDocument in document.Characters)
+        {
+            characters.Add(MapCharacter(
+                characterDocument ?? throw new ArgumentException("Коллекция персонажей содержит null.")));
+        }
+
+        return CreateProject(
+            document.Id,
+            document.Name,
+            scenes,
+            images,
+            characters.MoveToImmutable(),
+            document.DefaultLanguage,
+            document.DialogueUi);
+    }
+
+    private static NovelProject MapVersion5(Version5ProjectDocument document)
+    {
+        var scenes = MapScenes(document.Scenes, MapVersion5Scene);
+        var images = MapImages(document.Images);
+        if (document.Characters is null)
+        {
+            throw new ArgumentException("Коллекция персонажей проекта отсутствует.");
+        }
+
+        var characters = ImmutableArray.CreateBuilder<NovelCharacter>(document.Characters.Count);
+        foreach (var characterDocument in document.Characters)
+        {
+            characters.Add(MapCharacter(
+                characterDocument ?? throw new ArgumentException("Коллекция персонажей содержит null.")));
+        }
+
+        return CreateProject(
+            document.Id,
+            document.Name,
+            scenes,
+            images,
+            characters.MoveToImmutable(),
+            document.DefaultLanguage,
+            document.DialogueUi);
+    }
+
+    private static NovelProject MapVersion6(Version6ProjectDocument document) =>
+        MapVersion5(document) with { ExplorerShowsFiles = document.ExplorerShowsFiles };
+
+    private static ImmutableArray<ImageAsset> MapImages(List<ImageDocument?>? imageDocuments)
+    {
+        if (imageDocuments is null)
+        {
+            throw new ArgumentException("Коллекция изображений проекта отсутствует.");
+        }
+
+        var images = ImmutableArray.CreateBuilder<ImageAsset>(imageDocuments.Count);
+        foreach (var imageDocument in imageDocuments)
+        {
+            images.Add(MapImage(
+                imageDocument ?? throw new ArgumentException("Коллекция изображений содержит null.")));
+        }
+
+        return images.MoveToImmutable();
     }
 
     private static NovelProject CreateProject(
@@ -220,6 +300,7 @@ public sealed class JsonProjectStore : IProjectStore
         string? name,
         ImmutableArray<NovelScene> scenes,
         ImmutableArray<ImageAsset> images,
+        ImmutableArray<NovelCharacter> characters,
         string? defaultLanguage,
         DialogueUiDocument? dialogueUi)
     {
@@ -232,6 +313,7 @@ public sealed class JsonProjectStore : IProjectStore
         {
             Scenes = scenes,
             Images = images,
+            Characters = characters,
             DefaultLanguage = defaultLanguage!,
             DialogueUi = new DialogueUiSettings
             {
@@ -263,22 +345,43 @@ public sealed class JsonProjectStore : IProjectStore
     }
 
     private static NovelScene MapVersion2Scene(Version2SceneDocument document) =>
-        CreateScene(document.Id, document.Name, document.Lines, document.DialogueCssOverride, null);
+        CreateScene(document.Id, document.Name, document.Lines, MapLegacyLine, document.DialogueCssOverride, null);
 
     private static NovelScene MapVersion3Scene(Version3SceneDocument document) =>
         CreateScene(
             document.Id,
             document.Name,
             document.Lines,
+            MapLegacyLine,
             document.DialogueCssOverride,
             document.BackgroundImageId);
 
-    private static NovelScene CreateScene(
+    private static NovelScene MapVersion4Scene(Version4SceneDocument document) =>
+        CreateScene(
+            document.Id,
+            document.Name,
+            document.Lines,
+            MapVersion4Line,
+            document.DialogueCssOverride,
+            document.BackgroundImageId);
+
+    private static NovelScene MapVersion5Scene(Version5SceneDocument document) =>
+        CreateScene(
+            document.Id,
+            document.Name,
+            document.Lines,
+            MapVersion5Line,
+            document.DialogueCssOverride,
+            document.BackgroundImageId);
+
+    private static NovelScene CreateScene<TLineDocument>(
         Guid id,
         string? name,
-        List<LineDocument?>? lineDocuments,
+        List<TLineDocument?>? lineDocuments,
+        Func<TLineDocument, DialogueLine> mapLine,
         string? dialogueCssOverride,
         Guid? backgroundImageId)
+        where TLineDocument : class
     {
         if (lineDocuments is null)
         {
@@ -288,7 +391,7 @@ public sealed class JsonProjectStore : IProjectStore
         var lines = ImmutableArray.CreateBuilder<DialogueLine>(lineDocuments.Count);
         foreach (var lineDocument in lineDocuments)
         {
-            lines.Add(MapLine(lineDocument ?? throw new ArgumentException("Коллекция реплик содержит null.")));
+            lines.Add(mapLine(lineDocument ?? throw new ArgumentException("Коллекция реплик содержит null.")));
         }
 
         return new NovelScene(id, name!)
@@ -299,22 +402,53 @@ public sealed class JsonProjectStore : IProjectStore
         };
     }
 
-    private static DialogueLine MapLine(LineDocument document)
+    private static DialogueLine MapLegacyLine(LegacyLineDocument document) =>
+        CreateLine(document.Id, document.TextKey, document.Texts, null, null, null);
+
+    private static DialogueLine MapVersion4Line(Version4LineDocument document) =>
+        CreateLine(
+            document.Id,
+            document.TextKey,
+            document.Texts,
+            document.SpeakerId,
+            document.CharacterStateId,
+            document.HideCharacterId);
+
+    private static DialogueLine MapVersion5Line(Version5LineDocument document) =>
+        CreateLine(document.Id, document.TextKey, document.Texts, document.SpeakerId, document.CharacterStateId, document.HideCharacterId) with
+        {
+            Placements = document.Placements?.Select(command => command is null
+                ? throw new ArgumentException("Команда размещения равна null.")
+                : new CharacterPlacementCommand(command.CharacterId, command.Placement is null ? null :
+                    new CharacterPlacement(command.Placement.X, command.Placement.Y, command.Placement.Scale, command.Placement.Layer))).ToImmutableArray()
+                ?? throw new ArgumentException("Коллекция размещений отсутствует."),
+        };
+
+    private static DialogueLine CreateLine(
+        Guid id,
+        string? textKey,
+        SortedDictionary<string, string?>? textDocuments,
+        Guid? speakerId,
+        Guid? characterStateId,
+        Guid? hideCharacterId)
     {
-        if (document.Texts is null)
+        if (textDocuments is null)
         {
             throw new ArgumentException("Словарь переводов реплики отсутствует.");
         }
 
         var texts = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
-        foreach (var (language, text) in document.Texts)
+        foreach (var (language, text) in textDocuments)
         {
             texts.Add(language, text!);
         }
 
-        return new DialogueLine(document.Id, document.TextKey!)
+        return new DialogueLine(id, textKey!)
         {
             Texts = texts.ToImmutable(),
+            SpeakerId = speakerId,
+            CharacterStateId = characterStateId,
+            HideCharacterId = hideCharacterId,
         };
     }
 
@@ -325,13 +459,36 @@ public sealed class JsonProjectStore : IProjectStore
         document.PixelWidth,
         document.PixelHeight);
 
-    private static Version3ProjectDocument MapForSave(NovelProject project) => new()
+    private static NovelCharacter MapCharacter(CharacterDocument document)
     {
+        if (document.States is null)
+        {
+            throw new ArgumentException("Коллекция состояний персонажа отсутствует.");
+        }
+
+        var states = ImmutableArray.CreateBuilder<CharacterState>(document.States.Count);
+        foreach (var stateDocument in document.States)
+        {
+            var state = stateDocument ?? throw new ArgumentException("Коллекция состояний персонажа содержит null.");
+            states.Add(new CharacterState(state.Id, state.Name!, state.ImageId));
+        }
+
+        return new NovelCharacter(document.Id, document.Name!)
+        {
+            States = states.MoveToImmutable(),
+            DefaultStateId = document.DefaultStateId,
+        };
+    }
+
+    private static Version6ProjectDocument MapForSave(NovelProject project) => new()
+    {
+        ExplorerShowsFiles = project.ExplorerShowsFiles,
         FormatVersion = project.FormatVersion,
         Id = project.Id,
         Name = project.Name,
-        Scenes = project.Scenes.Select(scene => (Version3SceneDocument?)MapSceneForSave(scene)).ToList(),
+        Scenes = project.Scenes.Select(scene => (Version5SceneDocument?)MapSceneForSave(scene)).ToList(),
         Images = project.Images.Select(image => (ImageDocument?)MapImageForSave(image)).ToList(),
+        Characters = project.Characters.Select(character => (CharacterDocument?)MapCharacterForSave(character)).ToList(),
         DefaultLanguage = project.DefaultLanguage,
         DialogueUi = new DialogueUiDocument
         {
@@ -342,16 +499,16 @@ public sealed class JsonProjectStore : IProjectStore
         },
     };
 
-    private static Version3SceneDocument MapSceneForSave(NovelScene scene) => new()
+    private static Version5SceneDocument MapSceneForSave(NovelScene scene) => new()
     {
         Id = scene.Id,
         Name = scene.Name,
-        Lines = scene.Lines.Select(line => (LineDocument?)MapLineForSave(line)).ToList(),
+        Lines = scene.Lines.Select(line => (Version5LineDocument?)MapLineForSave(line)).ToList(),
         DialogueCssOverride = scene.DialogueCssOverride,
         BackgroundImageId = scene.BackgroundImageId,
     };
 
-    private static LineDocument MapLineForSave(DialogueLine line)
+    private static Version5LineDocument MapLineForSave(DialogueLine line)
     {
         var texts = new SortedDictionary<string, string?>(StringComparer.Ordinal);
         foreach (var (language, text) in line.Texts)
@@ -359,11 +516,20 @@ public sealed class JsonProjectStore : IProjectStore
             texts.Add(language, text);
         }
 
-        return new LineDocument
+        return new Version5LineDocument
         {
             Id = line.Id,
             TextKey = line.TextKey,
             Texts = texts,
+            SpeakerId = line.SpeakerId,
+            CharacterStateId = line.CharacterStateId,
+            HideCharacterId = line.HideCharacterId,
+            Placements = line.Placements.Select(command => (PlacementCommandDocument?)new PlacementCommandDocument
+            {
+                CharacterId = command.CharacterId,
+                Placement = command.Placement is null ? null : new PlacementDocument
+                { X = command.Placement.X, Y = command.Placement.Y, Scale = command.Placement.Scale, Layer = command.Placement.Layer },
+            }).ToList(),
         };
     }
 
@@ -374,6 +540,19 @@ public sealed class JsonProjectStore : IProjectStore
         RelativePath = image.RelativePath,
         PixelWidth = image.PixelWidth,
         PixelHeight = image.PixelHeight,
+    };
+
+    private static CharacterDocument MapCharacterForSave(NovelCharacter character) => new()
+    {
+        Id = character.Id,
+        Name = character.Name,
+        States = character.States.Select(state => (CharacterStateDocument?)new CharacterStateDocument
+        {
+            Id = state.Id,
+            Name = state.Name,
+            ImageId = state.ImageId,
+        }).ToList(),
+        DefaultStateId = character.DefaultStateId,
     };
 
     private sealed class VersionProbe
@@ -439,6 +618,66 @@ public sealed class JsonProjectStore : IProjectStore
         public DialogueUiDocument? DialogueUi { get; init; }
     }
 
+    private sealed class Version4ProjectDocument
+    {
+        [JsonRequired]
+        public int FormatVersion { get; init; }
+
+        [JsonRequired]
+        public Guid Id { get; init; }
+
+        [JsonRequired]
+        public string? Name { get; init; }
+
+        [JsonRequired]
+        public List<Version4SceneDocument?>? Scenes { get; init; }
+
+        [JsonRequired]
+        public List<ImageDocument?>? Images { get; init; }
+
+        [JsonRequired]
+        public List<CharacterDocument?>? Characters { get; init; }
+
+        [JsonRequired]
+        public string? DefaultLanguage { get; init; }
+
+        [JsonRequired]
+        public DialogueUiDocument? DialogueUi { get; init; }
+    }
+
+    private sealed class Version6ProjectDocument : Version5ProjectDocument
+    {
+        [JsonRequired]
+        public bool ExplorerShowsFiles { get; init; }
+    }
+
+    private class Version5ProjectDocument
+    {
+        [JsonRequired]
+        public int FormatVersion { get; init; }
+
+        [JsonRequired]
+        public Guid Id { get; init; }
+
+        [JsonRequired]
+        public string? Name { get; init; }
+
+        [JsonRequired]
+        public List<Version5SceneDocument?>? Scenes { get; init; }
+
+        [JsonRequired]
+        public List<ImageDocument?>? Images { get; init; }
+
+        [JsonRequired]
+        public List<CharacterDocument?>? Characters { get; init; }
+
+        [JsonRequired]
+        public string? DefaultLanguage { get; init; }
+
+        [JsonRequired]
+        public DialogueUiDocument? DialogueUi { get; init; }
+    }
+
     private sealed class Version2SceneDocument
     {
         [JsonRequired]
@@ -448,7 +687,7 @@ public sealed class JsonProjectStore : IProjectStore
         public string? Name { get; init; }
 
         [JsonRequired]
-        public List<LineDocument?>? Lines { get; init; }
+        public List<LegacyLineDocument?>? Lines { get; init; }
 
         [JsonRequired]
         public string? DialogueCssOverride { get; init; }
@@ -463,7 +702,7 @@ public sealed class JsonProjectStore : IProjectStore
         public string? Name { get; init; }
 
         [JsonRequired]
-        public List<LineDocument?>? Lines { get; init; }
+        public List<LegacyLineDocument?>? Lines { get; init; }
 
         [JsonRequired]
         public string? DialogueCssOverride { get; init; }
@@ -472,7 +711,43 @@ public sealed class JsonProjectStore : IProjectStore
         public Guid? BackgroundImageId { get; init; }
     }
 
-    private sealed class LineDocument
+    private sealed class Version4SceneDocument
+    {
+        [JsonRequired]
+        public Guid Id { get; init; }
+
+        [JsonRequired]
+        public string? Name { get; init; }
+
+        [JsonRequired]
+        public List<Version4LineDocument?>? Lines { get; init; }
+
+        [JsonRequired]
+        public string? DialogueCssOverride { get; init; }
+
+        [JsonRequired]
+        public Guid? BackgroundImageId { get; init; }
+    }
+
+    private sealed class Version5SceneDocument
+    {
+        [JsonRequired]
+        public Guid Id { get; init; }
+
+        [JsonRequired]
+        public string? Name { get; init; }
+
+        [JsonRequired]
+        public List<Version5LineDocument?>? Lines { get; init; }
+
+        [JsonRequired]
+        public string? DialogueCssOverride { get; init; }
+
+        [JsonRequired]
+        public Guid? BackgroundImageId { get; init; }
+    }
+
+    private sealed class LegacyLineDocument
     {
         [JsonRequired]
         public Guid Id { get; init; }
@@ -482,6 +757,65 @@ public sealed class JsonProjectStore : IProjectStore
 
         [JsonRequired]
         public SortedDictionary<string, string?>? Texts { get; init; }
+    }
+
+    private sealed class Version4LineDocument
+    {
+        [JsonRequired]
+        public Guid Id { get; init; }
+
+        [JsonRequired]
+        public string? TextKey { get; init; }
+
+        [JsonRequired]
+        public SortedDictionary<string, string?>? Texts { get; init; }
+
+        [JsonRequired]
+        public Guid? SpeakerId { get; init; }
+
+        [JsonRequired]
+        public Guid? CharacterStateId { get; init; }
+
+        [JsonRequired]
+        public Guid? HideCharacterId { get; init; }
+    }
+
+    private sealed class Version5LineDocument
+    {
+        [JsonRequired]
+        public Guid Id { get; init; }
+
+        [JsonRequired]
+        public string? TextKey { get; init; }
+
+        [JsonRequired]
+        public SortedDictionary<string, string?>? Texts { get; init; }
+
+        [JsonRequired]
+        public Guid? SpeakerId { get; init; }
+
+        [JsonRequired]
+        public Guid? CharacterStateId { get; init; }
+
+        [JsonRequired]
+        public Guid? HideCharacterId { get; init; }
+
+        [JsonRequired]
+        public List<PlacementCommandDocument?>? Placements { get; init; }
+    }
+
+    private sealed class PlacementCommandDocument
+    {
+        [JsonRequired] public Guid CharacterId { get; init; }
+        [JsonRequired] public PlacementDocument? Placement { get; init; }
+    }
+
+    private sealed class PlacementDocument
+    {
+        [JsonRequired] public double X { get; init; }
+        [JsonRequired] public double Y { get; init; }
+        [JsonRequired] public double Scale { get; init; }
+        [JsonRequired] public int Layer { get; init; }
     }
 
     private sealed class ImageDocument
@@ -500,6 +834,33 @@ public sealed class JsonProjectStore : IProjectStore
 
         [JsonRequired]
         public int PixelHeight { get; init; }
+    }
+
+    private sealed class CharacterDocument
+    {
+        [JsonRequired]
+        public Guid Id { get; init; }
+
+        [JsonRequired]
+        public string? Name { get; init; }
+
+        [JsonRequired]
+        public List<CharacterStateDocument?>? States { get; init; }
+
+        [JsonRequired]
+        public Guid? DefaultStateId { get; init; }
+    }
+
+    private sealed class CharacterStateDocument
+    {
+        [JsonRequired]
+        public Guid Id { get; init; }
+
+        [JsonRequired]
+        public string? Name { get; init; }
+
+        [JsonRequired]
+        public Guid ImageId { get; init; }
     }
 
     private sealed class DialogueUiDocument
