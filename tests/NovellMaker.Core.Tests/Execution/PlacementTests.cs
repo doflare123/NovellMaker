@@ -117,6 +117,7 @@ public sealed class PlacementTests
             var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
             json["formatVersion"] = 4;
             json.AsObject().Remove("explorerShowsFiles");
+            foreach (var oldScene in json["scenes"]!.AsArray()) { oldScene!.AsObject().Remove("actions"); oldScene.AsObject().Remove("useActions"); oldScene.AsObject().Remove("scriptBlocks"); }
             foreach (var line in json["scenes"]![0]!["lines"]!.AsArray()) line!.AsObject().Remove("placements");
             await File.WriteAllTextAsync(path, json.ToJsonString());
             var before = await File.ReadAllBytesAsync(path);

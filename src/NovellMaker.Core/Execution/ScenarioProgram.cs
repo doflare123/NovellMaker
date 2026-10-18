@@ -1,0 +1,123 @@
+using System.Collections.Immutable;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using NovellMaker.Core.Projects;
+using NovellMaker.Core.Scenes;
+
+namespace NovellMaker.Core.Execution;
+
+public static class ScenarioProgram
+{
+    /// <summary>Legacy dialogue cues compile to ordinary actions; no second interpreter.</summary>
+    public static ImmutableArray<ScenarioAction> Compile(NovelScene scene)
+    {
+        if (scene.HasLegacyActionScript) return scene.Actions;
+        var actions = ImmutableArray.CreateBuilder<ScenarioAction>();
+        void Blocks(Guid? line, ScriptPhase phase) => actions.AddRange(scene.ScriptBlocks.Where(b => b.LineId == line && b.Phase == phase).Select(b => b.Action));
+        Blocks(null, ScriptPhase.SceneStart);
+        foreach (var line in scene.Lines)
+        {
+            var cue = 0;
+            Guid Id() => new(MD5.HashData(Encoding.UTF8.GetBytes($"{line.Id}/cue/{cue++}")));
+            actions.Add(new LineEntryAction(LineEntryId(line.Id), line.Id));
+            foreach (var placement in line.Placements) actions.Add(new PlaceAction(Id(), placement.CharacterId, placement.Placement));
+            if (line.HideCharacterId is { } hidden) actions.Add(new HideAction(Id(), hidden));
+            if (line.CharacterStateId is { } state) actions.Add(new StateAction(Id(), line.SpeakerId ?? Guid.Empty, state));
+            if (line.SpeakerId is { } speaker) actions.Add(new ShowAction(Id(), speaker));
+            Blocks(line.Id, ScriptPhase.BeforeLine);
+            actions.Add(new TextAction(Id(), line.Id));
+            Blocks(line.Id, ScriptPhase.DuringLine);
+            actions.Add(new WaitAction(Id(), "input"));
+            Blocks(line.Id, ScriptPhase.AfterLine);
+        }
+        Blocks(null, ScriptPhase.SceneEnd);
+        return actions.ToImmutable();
+    }
+
+    public static Guid LineEntryId(Guid lineId) => new(MD5.HashData(Encoding.UTF8.GetBytes($"{lineId}/entry")));
+
+    public static void Validate(NovelProject project)
+    {
+        var ids = new HashSet<Guid> { project.Id };
+        ids.UnionWith(project.Images.Select(i => i.Id));
+        ids.UnionWith(project.Characters.Select(c => c.Id));
+        ids.UnionWith(project.Characters.SelectMany(c => c.States).Select(s => s.Id));
+        ids.UnionWith(project.Scenes.Select(s => s.Id));
+        ids.UnionWith(project.Scenes.SelectMany(s => s.Lines).Select(l => l.Id));
+        foreach (var scene in project.Scenes)
+        {
+            if (scene.Actions.IsDefault || scene.ScriptBlocks.IsDefault) throw new ArgumentException("Коллекция скрипта отсутствует.");
+            if (scene.HasLegacyActionScript && !scene.ScriptBlocks.IsEmpty) throw new ArgumentException("Поток прежнего формата нельзя смешивать с привязками фраз.");
+            foreach (var block in scene.ScriptBlocks)
+                if (block is null || block.Action is null || !Enum.IsDefined(block.Phase) ||
+                    (block.Phase is ScriptPhase.SceneStart or ScriptPhase.SceneEnd ? block.LineId is not null : !scene.Lines.Any(l => l.Id == block.LineId)))
+                    throw new ArgumentException("Блок скрипта имеет неверную привязку к фразе.");
+            foreach (var action in scene.Actions.Concat(scene.ScriptBlocks.Select(b => b.Action)))
+            {
+                if (action is null || action.Id == Guid.Empty || !ids.Add(action.Id))
+                    throw new ArgumentException("Действие отсутствует или имеет пустой/повторный ID.");
+                var valid = IsValidAction(project, scene, action);
+                if (!valid) throw new ArgumentException($"Некорректное действие {action.Id} ({action.GetType().Name}) в сцене «{scene.Name}».");
+            }
+            var compiled = Compile(scene);
+            if (compiled.Select(a => a.Id).Distinct().Count() != compiled.Length)
+                throw new ArgumentException($"Блок сцены «{scene.Name}» использует ID автоматической команды фразы.");
+        }
+    }
+
+    internal static bool IsValidAction(NovelProject project, NovelScene scene, ScenarioAction action)
+    {
+        bool ObjectExists(Guid id) => project.Characters.Any(c => c.Id == id);
+        bool TargetExists(Guid sceneId, Guid actionId) => project.Scenes.Any(s => s.Id == sceneId && Compile(s).Any(a => a.Id == actionId));
+        return action switch
+        {
+            TextAction a => scene.Lines.Any(l => l.Id == a.LineId),
+            LineEntryAction a => scene.Lines.Any(l => l.Id == a.LineId),
+            ShowAction a => ObjectExists(a.ObjectId),
+            HideAction a => ObjectExists(a.ObjectId),
+            StateAction a => project.Characters.Any(c => c.Id == a.ObjectId && c.States.Any(s => s.Id == a.StateId)),
+            PlaceAction a => ObjectExists(a.ObjectId) && (a.Placement is null || a.Placement.IsValid),
+            MoveAction a => ObjectExists(a.ObjectId) && a.Target is { IsValid: true } && Duration(a.Seconds),
+            WaitAction a => Duration(a.Seconds) && (a.Mode switch { "input" or "actions" => true, "timer" => true,
+                "interaction" => a.Token != Guid.Empty, _ => false }),
+            ChoiceAction a => !a.Options.IsDefaultOrEmpty && a.Options.Length <= 8 && a.Options.All(o => o is not null && o.Id != Guid.Empty &&
+                !string.IsNullOrWhiteSpace(o.Text) && TargetExists(o.TargetSceneId, o.TargetActionId)) && a.Options.Select(o => o.Id).Distinct().Count() == a.Options.Length,
+            JumpAction a => TargetExists(a.SceneId, a.ActionId),
+            BranchAction a => !string.IsNullOrWhiteSpace(a.Variable) && a.EqualsValue is not null && TargetExists(a.SceneId, a.ActionId),
+            SetAction a => !string.IsNullOrWhiteSpace(a.Variable) && a.Value is not null,
+            ScriptAction a => !string.IsNullOrWhiteSpace(a.Name) && a.Source is not null && a.Source.Length <= LuaActionScript.MaximumSourceLength && a.References is not null &&
+                a.References.All(r => System.Text.RegularExpressions.Regex.IsMatch(r.Key, "^[A-Za-z_][A-Za-z0-9_]*$") && r.Value != Guid.Empty),
+            HotspotAction a => a.ObjectId != Guid.Empty && a.Label is not null && double.IsFinite(a.X) && double.IsFinite(a.Y) &&
+                a.X >= 0 && a.Y >= 0 && a.Width > 0 && a.Height > 0 && a.X + a.Width <= 1 && a.Y + a.Height <= 1,
+            _ => false,
+        };
+    }
+
+    internal static bool Duration(double value) => double.IsFinite(value) && value is >= 0 and <= 86400;
+
+    // Canonical property ordering also covers dictionaries after a JSON round trip.
+    public static string Fingerprint(NovelProject project)
+    {
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(project));
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream)) Write(document.RootElement, writer);
+        return Convert.ToHexString(SHA256.HashData(stream.ToArray()));
+    }
+
+    private static void Write(JsonElement element, Utf8JsonWriter writer)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            writer.WriteStartObject();
+            foreach (var property in element.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal))
+            { writer.WritePropertyName(property.Name); Write(property.Value, writer); }
+            writer.WriteEndObject();
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        { writer.WriteStartArray(); foreach (var item in element.EnumerateArray()) Write(item, writer); writer.WriteEndArray(); }
+        else element.WriteTo(writer);
+    }
+}
+
+

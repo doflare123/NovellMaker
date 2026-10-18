@@ -284,7 +284,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
 
     private void NotifyCommands()
     {
-        foreach (var command in new[] { NewCommand, OpenCommand, SaveCommand, SaveAsCommand, CloseProjectCommand, RefreshGitCommand })
+        foreach (var command in new[] { NewCommand, OpenCommand, SaveCommand, SaveAsCommand, CloseProjectCommand, RefreshGitCommand, OpenExampleCommand })
             command.NotifyCanExecuteChanged();
     }
 

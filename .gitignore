@@ -6,5 +6,8 @@
 artifacts/
 *.user
 *.suo
-/docs
+/docs/*
+!/docs/actions-and-state.md
+!/docs/lua-api.md
+!/docs/verification-actions-2026-10-18.md
 /novell_test

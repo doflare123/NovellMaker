@@ -10,7 +10,7 @@ namespace NovellMaker.Core.Projects;
 /// </summary>
 public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
 {
-    public const int CurrentFormatVersion = 6;
+    public const int CurrentFormatVersion = 8;
 
     public int FormatVersion { get; init; } = ValidateFormatVersion(FormatVersion);
 
@@ -39,6 +39,7 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
         ValidateId(project.Id);
         ValidateName(project.Name);
         ValidateGraph(project);
+        NovellMaker.Core.Execution.ScenarioProgram.Validate(project);
     }
 
     public bool ContentEquals(NovelProject? other)

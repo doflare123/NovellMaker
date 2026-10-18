@@ -97,7 +97,20 @@ public sealed partial class SceneDocumentViewModel
 
     private void RefreshPlayback()
     {
-        SampleFrame = IsEditingLanguageValid && Session.Project is { } project ? new ScenePlayer(project, Id, editingLanguage, SelectedLine?.Id).Frame : null;
+        SampleFrame = null;
+        if (IsEditingLanguageValid && Session.Project is { } project)
+        {
+            if (!scene.HasLegacyActionScript && !scene.ScriptBlocks.IsEmpty)
+            {
+                // Static composition of the selected phrase. Dynamic Lua/control flow runs through F6.
+                var composition = scene with { ScriptBlocks = scene.ScriptBlocks.Where(b => b.Action is ShowAction or HideAction or StateAction or PlaceAction).ToImmutableArray() };
+                var player = new ScenarioPlayer(project with { Scenes = project.Scenes.Replace(scene, composition) }, Id, editingLanguage);
+                for (var i = 0; i < scene.Lines.Length && player.State.LineId != SelectedLine?.Id; i++)
+                    if (!player.Advance()) break;
+                SampleFrame = player.Frame;
+            }
+            else SampleFrame = new ScenePlayer(project, Id, editingLanguage, SelectedLine?.Id).Frame;
+        }
         RefreshPlacement();
         Changed(nameof(SampleFrame));
         Changed(nameof(PlaybackDiagnostics));

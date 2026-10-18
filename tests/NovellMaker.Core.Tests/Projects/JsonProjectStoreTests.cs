@@ -155,7 +155,7 @@ public sealed class JsonProjectStoreTests
         var path = Path.Combine(directory.Path, "future.novell");
         var json = """
             {
-              "formatVersion": 7,
+              "formatVersion": 9,
               "id": "9a4b7915-17df-48ac-84fb-69d00f4bab41",
               "name": "Проект из будущего",
               "futureFeature": { "nested": true }
@@ -166,7 +166,7 @@ public sealed class JsonProjectStoreTests
         var exception = await Assert.ThrowsExactlyAsync<ProjectFormatException>(() =>
             new JsonProjectStore().LoadAsync(path));
 
-        StringAssert.Contains(exception.Message, "7");
+        StringAssert.Contains(exception.Message, "9");
         StringAssert.Contains(exception.Message, "не поддерживается");
     }
 
@@ -253,7 +253,7 @@ public sealed class JsonProjectStoreTests
         await store.SaveAsync(path, migrated);
 
         var savedJson = await File.ReadAllTextAsync(path);
-        StringAssert.Contains(savedJson, "\"formatVersion\": 6");
+        StringAssert.Contains(savedJson, $"\"formatVersion\": {NovelProject.CurrentFormatVersion}");
         CollectionAssert.AreNotEqual(originalBytes, await File.ReadAllBytesAsync(path));
     }
 

@@ -188,6 +188,18 @@ internal static class DialogueTextureRenderer
         return new RenderedTexture(CreateTexture(graphicsDevice, bitmap), width, height);
     }
 
+    public static RenderedTexture RenderButton(GraphicsDevice device, string text, int width, int height)
+    {
+        using var bitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(bitmap);
+        canvas.Clear(new SKColor(40, 45, 52, 245));
+        using var typeface = CreateTypeface("Segoe UI");
+        using var font = new SKFont(typeface, 18);
+        using var paint = new SKPaint { IsAntialias = true, Color = new SKColor(230, 231, 233) };
+        canvas.DrawText(text, 12, height / 2f - (font.Metrics.Ascent + font.Metrics.Descent) / 2, font, paint);
+        return new RenderedTexture(CreateTexture(device, bitmap), width, height);
+    }
+
     private static List<TextLine> LayoutRuns(
         IReadOnlyList<TextRun> runs,
         SKFont font,

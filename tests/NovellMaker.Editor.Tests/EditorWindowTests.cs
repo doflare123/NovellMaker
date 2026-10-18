@@ -32,6 +32,58 @@ public sealed class UiAppBuilder
 [DoNotParallelize]
 public sealed class EditorWindowTests
 {
+    [TestMethod]
+    public Task PhraseScriptBlocksApplyUndoSelectAndEditLuaWithNamedReferences() => WithUi(async () =>
+    {
+        var session = CreateSession(out var dialogs, out _);
+        var window = CreateWindow(session); window.Show(); Dispatcher.UIThread.RunJobs();
+        Click(window, Find<Button>(window, "OpenExampleButton"));
+        await UntilAsync(() => session.ActiveScene is not null && !session.IsBusy);
+        Assert.AreEqual(4, session.ActiveScene!.SelectedSection);
+        var inspector = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single();
+        var blocks = Find<ListBox>(inspector, "ScriptBlocks");
+        Assert.AreEqual(2, blocks.ItemCount);
+        blocks.SelectedIndex = 1; Dispatcher.UIThread.RunJobs();
+        var before = session.Project!.Scenes[0].ScriptBlocks[1];
+        var seconds = inspector.GetVisualDescendants().OfType<NumericUpDown>().Last(); seconds.Value = 3;
+        Click(window, Find<Button>(inspector, "ApplyScriptBlock"));
+        Assert.AreEqual(3, ((NovellMaker.Core.Execution.MoveAction)session.Project.Scenes[0].ScriptBlocks[1].Action).Seconds);
+        session.Undo(); Dispatcher.UIThread.RunJobs(); Assert.AreEqual(before, session.Project.Scenes[0].ScriptBlocks[1]);
+        session.Redo(); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(3, ((NovellMaker.Core.Execution.MoveAction)session.Project.Scenes[0].ScriptBlocks[1].Action).Seconds);
+        session.ActiveScene.SelectedSection = 0; Dispatcher.UIThread.RunJobs();
+        StringAssert.Contains(session.ActiveScene.SelectedPhraseScriptSummary, "Во время: 1");
+        Click(window, Find<Button>(window, "OpenPhraseScriptButton"));
+        Assert.AreEqual(4, session.ActiveScene.SelectedSection);
+        var phrases = Find<ComboBox>(inspector, "ScriptPhrasePicker"); phrases.SelectedIndex = 3; Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(session.Project.Scenes[0].Lines[2].Id, session.ActiveScene.SelectedLine!.Id);
+        blocks.SelectedIndex = 3; Dispatcher.UIThread.RunJobs();
+        var source = Find<TextBox>(inspector, "LuaSourceBox"); StringAssert.Contains(source.Text!, "refs.correct");
+        Assert.IsFalse(source.Text!.Contains(session.Project.Characters[0].Id.ToString(), StringComparison.Ordinal));
+        source.Text += "\n-- "; source.SelectionStart = source.SelectionEnd = source.Text.Length;
+        Find<TextBox>(inspector, "LuaReferenceAlias").Text = "traveller";
+        var scriptScroll = Find<ScrollViewer>(inspector, "ScriptInspectorScroll");
+        scriptScroll.Offset = new Vector(0, scriptScroll.Extent.Height);
+        Dispatcher.UIThread.RunJobs();
+        Click(window, Find<Button>(inspector, "InsertLuaReference"));
+        Capture(window, "editor-phrase-script-insert.png");
+        Assert.IsTrue(source.Text!.Contains("refs.traveller"), Find<TextBlock>(inspector, "ScriptError").Text);
+        Click(window, Find<Button>(inspector, "ApplyScriptBlock"));
+        Assert.IsTrue(string.IsNullOrEmpty(Find<TextBlock>(inspector, "ScriptError").Text), Find<TextBlock>(inspector, "ScriptError").Text);
+        var lua = session.Project.Scenes[0].ScriptBlocks.Select(b => b.Action).OfType<NovellMaker.Core.Execution.ScriptAction>().Single(a => a.Name == "terminal-result.lua");
+        Assert.AreEqual(session.Project.Characters[0].Id, lua.References["traveller"]);
+        StringAssert.Contains(lua.Source, "refs.traveller");
+        scriptScroll.Offset = default; Dispatcher.UIThread.RunJobs();
+        Capture(window, "editor-phrase-script.png");
+        var count = session.Project.Scenes[0].ScriptBlocks.Length;
+        var remove = inspector.GetVisualDescendants().OfType<Button>().Single(b => Equals(b.Content, "Удалить"));
+        Click(window, remove); Assert.AreEqual(count, session.Project.Scenes[0].ScriptBlocks.Length);
+        dialogs.AcceptDeletion = true; Click(window, remove);
+        await UntilAsync(() => session.Project.Scenes[0].ScriptBlocks.Length == count - 1);
+        session.Undo(); Assert.AreEqual(count, session.Project.Scenes[0].ScriptBlocks.Length);
+        session.Dispose(); window.Hide();
+    });
+
     [ThreadStatic] private static List<MainWindow>? windows;
     [TestMethod]
     public Task WindowStartsDarkWithNoDocumentAndSaveDisabled() => WithUi(async () =>
@@ -1049,3 +1101,4 @@ public sealed class EditorWindowTests
                 [new GitFileChange("test-ui.novell", " ", "M")], "Git: 1 изменённый файл"));
     }
 }
+

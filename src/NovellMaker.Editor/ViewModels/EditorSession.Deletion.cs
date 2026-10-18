@@ -7,6 +7,16 @@ namespace NovellMaker.Editor.ViewModels;
 
 public sealed partial class EditorSession
 {
+    public async Task DeleteActionAsync(Guid sceneId, Guid actionId)
+    {
+        if (!CanEdit || project is null) return;
+        var before = project;
+        var scene = project.Scenes.FirstOrDefault(s => s.Id == sceneId);
+        var action = scene?.Actions.Concat(scene.ScriptBlocks.Select(b => b.Action)).FirstOrDefault(a => a.Id == actionId);
+        if (scene is null || action is null || !await dialogs.ConfirmDeleteAsync("Действие сценария", "Действие и прямые переходы на него будут удалены. Текст Lua нужно проверить отдельно. Ctrl+Z отменяет удаление.")) return;
+        if (!ReferenceEquals(project, before)) return;
+        EditProject(ActionReferences.Prune(project with { Scenes = project.Scenes.Replace(scene, scene with { Actions = scene.Actions.Remove(action), ScriptBlocks = scene.ScriptBlocks.Where(b => b.Action.Id != actionId).ToImmutableArray() }) }));
+    }
     private ImmutableArray<ProjectFileDeletion> deletedFiles = [];
     private sealed record DeletionPlan(string Name, string Message, NovelProject Updated, string? FilePath = null);
 
@@ -29,7 +39,7 @@ public sealed partial class EditorSession
         if (plan.FilePath is { } path && (File.Exists(path) || Directory.Exists(path)))
             file = await Task.Run(() => ProjectFileDeletion.Create(ProjectDirectory!, path, projectPath!));
         RecordEdit(null);
-        project = plan.Updated;
+        project = ActionReferences.Prune(plan.Updated);
         if (file is not null) deletedFiles = deletedFiles.Add(file);
         assetRevision++; fileExplorerRoot = null;
         NotifyProjectChanged();

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using NovellMaker.Core.Execution;
 
 namespace NovellMaker.Core.Scenes;
 
@@ -13,6 +14,14 @@ public sealed record NovelScene(Guid Id, string Name)
 
     public ImmutableArray<DialogueLine> Lines { get; init; } = [];
 
+    public ImmutableArray<ScenarioAction> Actions { get; init; } = [];
+    public ImmutableArray<ScriptBlock> ScriptBlocks { get; init; } = [];
+    public bool UseActions { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasActionScript => HasLegacyActionScript || !ScriptBlocks.IsEmpty;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasLegacyActionScript => UseActions || !Actions.IsEmpty;
+
     public string? DialogueCssOverride { get; init; }
 
     public Guid? BackgroundImageId { get; init; }
@@ -26,7 +35,10 @@ public sealed record NovelScene(Guid Id, string Name)
             !string.Equals(Name, other.Name, StringComparison.Ordinal) ||
             !string.Equals(DialogueCssOverride, other.DialogueCssOverride, StringComparison.Ordinal) ||
             BackgroundImageId != other.BackgroundImageId ||
-            Lines.IsDefault != other.Lines.IsDefault)
+            UseActions != other.UseActions ||
+            Lines.IsDefault != other.Lines.IsDefault ||
+            !System.Text.Json.JsonSerializer.Serialize(ScriptBlocks).Equals(System.Text.Json.JsonSerializer.Serialize(other.ScriptBlocks), StringComparison.Ordinal) ||
+            !System.Text.Json.JsonSerializer.Serialize(Actions).Equals(System.Text.Json.JsonSerializer.Serialize(other.Actions), StringComparison.Ordinal))
         {
             return false;
         }

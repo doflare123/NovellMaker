@@ -48,7 +48,7 @@ public sealed class CharacterPersistenceTests
         Assert.AreEqual(alice.Id, actual.Scenes[0].Lines[0].SpeakerId);
         Assert.AreEqual(sadState.Id, actual.Scenes[0].Lines[0].CharacterStateId);
         Assert.AreEqual(bob.Id, actual.Scenes[0].Lines[0].HideCharacterId);
-        StringAssert.Contains(await File.ReadAllTextAsync(path), "\"formatVersion\": 6");
+        StringAssert.Contains(await File.ReadAllTextAsync(path), $"\"formatVersion\": {NovelProject.CurrentFormatVersion}");
     }
 
     [TestMethod]

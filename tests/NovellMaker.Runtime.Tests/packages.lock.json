@@ -116,6 +116,11 @@
         "resolved": "2.32.10.2",
         "contentHash": "mtnmWr50KgH2Ui9fPscHPMI3sXgb5NBRnPS7igi4ViJ23ROdP+MLi/j9CmLWX47KuXvI3Bp5BElCDVwRUlswgg=="
       },
+      "MoonSharp": {
+        "type": "Transitive",
+        "resolved": "2.0.0",
+        "contentHash": "uiAcRh7d+53k3xW9pFDJfAFVw4RnjHVCJG05M3oPAVEVwPtFavhg1H/IpC6So4X1j9kJlzuLlA3OghhPcIvc5A=="
+      },
       "MSTest.Analyzers": {
         "type": "Transitive",
         "resolved": "4.3.2",
@@ -151,7 +156,10 @@
         "contentHash": "XOpbx/4CReO2wYsq2s6rbvdauc6dntG4Zv499sHGTJ87bwZaFXszFkwql3+FIZMc8kUPeaj3Mx2ezIJmo8a1Kg=="
       },
       "novellmaker.core": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "MoonSharp": "[2.0.0, )"
+        }
       },
       "novellmaker.runtime": {
         "type": "Project",

@@ -43,12 +43,21 @@ internal sealed class RuntimeGame : Game
     private int initialVisibleCharacterCount;
     private int afterNextVisibleCharacterCount;
     private int afterPreviousVisibleCharacterCount;
+    private readonly List<(Guid Id, Rectangle Bounds, RenderedTexture Texture)> interactionButtons = [];
+    private string interactionKey = "";
+    private readonly RuntimeSmokeStep[]? smokePlan;
+    private readonly List<RuntimeActionTrace> actionTrace = [];
+    private RenderedTexture? actionHelp;
+    private string saveMessage = "F7 — сохранить · F8 — загрузить · Enter — продолжить";
+    private string SavePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "NovellMaker", "Saves", player.Execution.State.ProjectId + ".json");
 
     public RuntimeGame(RuntimeArguments arguments, ScenePlayer player, bool showNavigationControls)
     {
         this.arguments = arguments ?? throw new ArgumentNullException(nameof(arguments));
         this.player = player ?? throw new ArgumentNullException(nameof(player));
         this.showNavigationControls = showNavigationControls;
+        if (arguments.SmokePlanPath is { } plan) smokePlan = JsonSerializer.Deserialize<RuntimeSmokeStep[]>(File.ReadAllText(plan)) ?? throw new ArgumentException("Пустой smoke-план.");
         graphics = new GraphicsDeviceManager(this)
         {
             PreferredBackBufferWidth = LogicalWidth,
@@ -86,10 +95,19 @@ internal sealed class RuntimeGame : Game
     protected override void Update(GameTime gameTime)
     {
         lineElapsed += gameTime.ElapsedGameTime;
+        if (player.UsesActions)
+        {
+            var line = player.Frame.LineId;
+            if (smokePlan is null) player.Tick(gameTime.ElapsedGameTime);
+            if (line != player.Frame.LineId) lineElapsed = TimeSpan.Zero;
+            RefreshFrameResources();
+            RefreshTextTextures();
+            RefreshInteractions();
+        }
 
         if (arguments.SmokeOutputPath is not null)
         {
-            AdvanceSmokeSequence();
+            if (smokePlan is null) AdvanceSmokeSequence(); else AdvanceActionSmoke();
         }
         else
         {
@@ -99,6 +117,8 @@ internal sealed class RuntimeGame : Game
             {
                 Exit();
             }
+            else if (player.UsesActions && Pressed(keyboard, Keys.F7)) SaveGame();
+            else if (player.UsesActions && Pressed(keyboard, Keys.F8)) LoadGame();
             else if (Pressed(keyboard, Keys.Right) || Pressed(keyboard, Keys.Enter) ||
                      Pressed(keyboard, Keys.Space))
             {
@@ -108,19 +128,19 @@ internal sealed class RuntimeGame : Game
             {
                 ApplyAction(RuntimeAction.Previous);
             }
-            else if (showNavigationControls && mouse.LeftButton == ButtonState.Pressed &&
+            else if (mouse.LeftButton == ButtonState.Pressed &&
                      previousMouse.LeftButton == ButtonState.Released)
             {
                 var letterbox = RuntimeInputMapper.CalculateLetterbox(
                     GraphicsDevice.PresentationParameters.BackBufferWidth,
                     GraphicsDevice.PresentationParameters.BackBufferHeight);
-                if (RuntimeInputMapper.TryMapWindowToLogical(new Point(mouse.X, mouse.Y), letterbox, out var logical) &&
-                    RuntimeInputMapper.HitTestNavigation(
+                if (RuntimeInputMapper.TryMapWindowToLogical(new Point(mouse.X, mouse.Y), letterbox, out var logical))
+                {
+                    if (!ClickLogical(logical) && showNavigationControls && RuntimeInputMapper.HitTestNavigation(
                         logical,
                         player.Frame.CanPrevious,
                         player.Frame.CanNext) is { } action)
-                {
-                    ApplyAction(action);
+                    { ApplyAction(action); }
                 }
             }
 
@@ -151,6 +171,8 @@ internal sealed class RuntimeGame : Game
         DrawDialogue(spriteBatch, player.Frame);
         DrawDiagnostics(spriteBatch);
         DrawNavigationControls(spriteBatch);
+        foreach (var button in interactionButtons) spriteBatch.Draw(button.Texture.Texture, button.Bounds, Color.White);
+        if (actionHelp is not null) spriteBatch.Draw(actionHelp.Texture, new Vector2(16, 16), Color.White);
         spriteBatch.End();
 
         GraphicsDevice.SetRenderTarget(null);
@@ -167,7 +189,7 @@ internal sealed class RuntimeGame : Game
         spriteBatch.End();
 
         drawFrames++;
-        if (arguments.SmokeOutputPath is not null && drawFrames >= 4 && !smokeWritten)
+        if (arguments.SmokeOutputPath is not null && drawFrames >= Math.Max(4, (smokePlan?.Length ?? 0) + 1) && !smokeWritten)
         {
             WriteSmokeArtifacts(sceneTarget);
             smokeWritten = true;
@@ -179,6 +201,8 @@ internal sealed class RuntimeGame : Game
 
     protected override void UnloadContent()
     {
+        actionHelp?.Dispose();
+        foreach (var button in interactionButtons) button.Texture.Dispose();
         diagnosticsTexture?.Dispose();
         dialogueTexture?.Dispose();
         navigationTexture?.Dispose();
@@ -212,6 +236,35 @@ internal sealed class RuntimeGame : Game
         }
     }
 
+    private bool ClickLogical(Point logical)
+    {
+        var hit = interactionButtons.FirstOrDefault(b => b.Bounds.Contains(logical));
+        if (hit.Id == Guid.Empty) return false;
+        var changed = player.Execution.State.Choice is not null ? player.Choose(hit.Id) : player.Click(hit.Id);
+        if (changed) { lineElapsed = TimeSpan.Zero; RefreshFrameResources(); RefreshTextTextures(); RefreshInteractions(); }
+        return changed;
+    }
+
+    private void AdvanceActionSmoke()
+    {
+        var index = drawFrames - 1;
+        if (index < 0 || index >= smokePlan!.Length) return;
+        var step = smokePlan[index];
+        var success = true;
+        var path = Path.ChangeExtension(arguments.SmokeReportPath!, ".save.json");
+        switch (step.Kind)
+        {
+            case "tick": player.Tick(TimeSpan.FromSeconds(step.Seconds)); break;
+            case "next": success = ApplyAction(RuntimeAction.Next); break;
+            case "click": success = ClickLogical(new Point(step.X, step.Y)); break;
+            case "save": GameSave.SaveAsync(path, player.Execution).GetAwaiter().GetResult(); break;
+            case "load": player.LoadSave(File.ReadAllText(path)); break;
+            default: throw new ArgumentException("Неизвестный шаг smoke-плана.");
+        }
+        RefreshFrameResources(); RefreshTextTextures(); RefreshInteractions();
+        actionTrace.Add(new(step.Kind, success, player.Execution.State, player.Frame.Text));
+    }
+
     private bool ApplyAction(RuntimeAction action)
     {
         var changed = action switch
@@ -233,6 +286,52 @@ internal sealed class RuntimeGame : Game
 
     private bool Pressed(KeyboardState keyboard, Keys key) =>
         keyboard.IsKeyDown(key) && previousKeyboard.IsKeyUp(key);
+
+    private void SaveGame()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(SavePath)!);
+            GameSave.SaveAsync(SavePath, player.Execution).GetAwaiter().GetResult();
+            saveMessage = "Игра сохранена · F8 — загрузить · Enter — продолжить";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        { saveMessage = "Не удалось сохранить: " + error.Message; }
+        RefreshInteractions();
+    }
+
+    private void LoadGame()
+    {
+        try
+        {
+            player.LoadSave(File.ReadAllText(SavePath));
+            saveMessage = "Игра загружена · F7 — сохранить · Enter — продолжить";
+            lineElapsed = TimeSpan.Zero;
+            RefreshFrameResources(); RefreshTextTextures();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        { saveMessage = "Не удалось загрузить: " + error.Message; }
+        RefreshInteractions();
+    }
+
+    private void RefreshInteractions()
+    {
+        var state = player.Execution.State;
+        var buttons = new List<(Guid Id, string Label, Rectangle Bounds)>();
+        if (state.Choice is { } choice)
+            buttons.AddRange(choice.Options.Select((o, i) => (o.Id, o.Text, new Rectangle(380, 140 + i * 48, 520, 44))));
+        else if (state.Wait?.Mode == "interaction")
+            buttons.AddRange(state.Hotspots.Where(h => h.Enabled && (state.Wait.Token is null || state.Wait.Token == h.ObjectId)).Select(h =>
+                (h.ObjectId, h.Label, new Rectangle((int)(h.X * LogicalWidth), (int)(h.Y * LogicalHeight), Math.Max(1, (int)(h.Width * LogicalWidth)), Math.Max(1, (int)(h.Height * LogicalHeight))))));
+        var key = System.Text.Json.JsonSerializer.Serialize(buttons.Select(b => new { b.Id, b.Label, b.Bounds.X, b.Bounds.Y, b.Bounds.Width, b.Bounds.Height })) + saveMessage + state.Completed;
+        if (key == interactionKey) return;
+        interactionKey = key;
+        foreach (var button in interactionButtons) button.Texture.Dispose();
+        interactionButtons.Clear();
+        foreach (var b in buttons) interactionButtons.Add((b.Id, b.Bounds, DialogueTextureRenderer.RenderButton(GraphicsDevice, b.Label, b.Bounds.Width, b.Bounds.Height)));
+        actionHelp?.Dispose();
+        actionHelp = DialogueTextureRenderer.RenderButton(GraphicsDevice, state.Completed ? "Сценарий завершён · F8 — загрузить · Escape — закрыть" : saveMessage, 1040, 40);
+    }
 
     private void RefreshFrameResources()
     {
@@ -279,7 +378,7 @@ internal sealed class RuntimeGame : Game
     private void RefreshTextTextures()
     {
         var frame = player.Frame;
-        var frameKey = new FrameRenderKey(frame.LineId, frame.SpeakerName, frame.Text, frame.Style);
+        var frameKey = new FrameRenderKey(frame.LineId, frame.SpeakerName, frame.Text, frame.Style, frame.CanNext, frame.CanPrevious);
         if (frameKey != renderedFrameKey)
         {
             dialogueTexture?.Dispose();
@@ -365,7 +464,7 @@ internal sealed class RuntimeGame : Game
             return;
         }
 
-        var sample = frame.Style.Sample(lineElapsed);
+        var sample = frame.Style.Sample(player.UsesActions ? TimeSpan.FromSeconds(player.Execution.State.Time - player.Execution.State.TextStartedAt) : lineElapsed);
         var center = new Vector2(
             (float)frame.Style.Left + (dialogueTexture.Width / 2f) + (float)sample.TranslateX,
             LogicalHeight - (float)frame.Style.Bottom - (dialogueTexture.Height / 2f) + (float)sample.TranslateY);
@@ -391,7 +490,7 @@ internal sealed class RuntimeGame : Game
         var scale = Math.Min(1f, (LogicalWidth - 32f) / diagnosticsTexture.Width);
         batch.Draw(
             diagnosticsTexture.Texture,
-            new Vector2(16, 16),
+            new Vector2(16, player.UsesActions ? 64 : 16),
             sourceRectangle: null,
             Color.White,
             rotation: 0,
@@ -449,7 +548,7 @@ internal sealed class RuntimeGame : Game
             InitialVisibleCharacterCount: initialVisibleCharacterCount,
             AfterNextVisibleCharacterCount: afterNextVisibleCharacterCount,
             AfterPreviousVisibleCharacterCount: afterPreviousVisibleCharacterCount,
-            Diagnostics: CurrentDiagnostics());
+            Diagnostics: CurrentDiagnostics()) { ActionTrace = actionTrace };
         var options = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -462,7 +561,7 @@ internal sealed class RuntimeGame : Game
         Guid? LineId,
         string SpeakerName,
         string Text,
-        NovellMaker.Core.Styling.DialogueStyle Style);
+        NovellMaker.Core.Styling.DialogueStyle Style, bool CanNext, bool CanPrevious);
 }
 
 internal sealed record RuntimeSmokeReport(
@@ -477,4 +576,9 @@ internal sealed record RuntimeSmokeReport(
     int InitialVisibleCharacterCount,
     int AfterNextVisibleCharacterCount,
     int AfterPreviousVisibleCharacterCount,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics)
+{
+    public IReadOnlyList<RuntimeActionTrace> ActionTrace { get; init; } = [];
+}
+internal sealed record RuntimeSmokeStep(string Kind, double Seconds = 0, int X = 0, int Y = 0);
+internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState State, string Text);

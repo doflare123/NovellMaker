@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Immutable;
 using NovellMaker.Core.Scenes;
 using NovellMaker.Core.Styling;
 
@@ -20,7 +21,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         get => selectedSection;
         set
         {
-            if (value is < 0 or > 3 || selectedSection == value) return;
+            if (value is < 0 or > 4 || selectedSection == value) return;
             selectedSection = value;
             Changed();
         }
@@ -39,6 +40,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         PreviousLineCommand = EditorSession.Command(() => Navigate(-1), () => Session.IsIdle && CanPrevious);
         NextLineCommand = EditorSession.Command(() => Navigate(1), () => Session.IsIdle && CanNext);
         CloseCommand = EditorSession.Command(() => Session.CloseDocument(this), () => Session.IsIdle);
+        OpenPhraseScriptCommand = EditorSession.Command(() => SelectedSection = 4, () => Session.IsIdle && SelectedLine is not null);
         Synchronize(scene);
     }
 
@@ -56,6 +58,8 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
     public AsyncCommand MoveDownCommand { get; }
     public AsyncCommand PreviousLineCommand { get; }
     public AsyncCommand NextLineCommand { get; }
+    public AsyncCommand OpenPhraseScriptCommand { get; }
+    public string SelectedPhraseScriptSummary => SelectedLine?.ScriptSummary ?? "Выберите фразу.";
     public bool CanEditLine => Session.CanEdit && SelectedLine is not null && IsEditingLanguageValid;
     public bool CanPrevious => SelectedIndex > 0;
     public bool CanNext => SelectedIndex >= 0 && SelectedIndex < Lines.Count - 1;
@@ -189,7 +193,22 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
             Texts = source.Texts, SpeakerId = source.SpeakerId,
             CharacterStateId = source.CharacterStateId, HideCharacterId = source.HideCharacterId, Placements = source.Placements
         };
-        Session.UpdateScene(scene with { Lines = scene.Lines.Insert(SelectedIndex + 1, copy) });
+        var oldEntry = NovellMaker.Core.Execution.ScenarioProgram.LineEntryId(source.Id);
+        var newEntry = NovellMaker.Core.Execution.ScenarioProgram.LineEntryId(copy.Id);
+        NovellMaker.Core.Execution.ScenarioAction Clone(NovellMaker.Core.Execution.ScenarioAction action)
+        {
+            var result = action with { Id = Guid.NewGuid() };
+            return result switch
+            {
+                NovellMaker.Core.Execution.JumpAction j when j.SceneId == scene.Id && j.ActionId == oldEntry => j with { ActionId = newEntry },
+                NovellMaker.Core.Execution.BranchAction b when b.SceneId == scene.Id && b.ActionId == oldEntry => b with { ActionId = newEntry },
+                NovellMaker.Core.Execution.ChoiceAction c => c with { Options = c.Options.Select(o => o with { Id = Guid.NewGuid(), TargetActionId = o.TargetSceneId == scene.Id && o.TargetActionId == oldEntry ? newEntry : o.TargetActionId }).ToImmutableArray() },
+                NovellMaker.Core.Execution.ScriptAction s => s with { References = s.References.ToImmutableDictionary(p => p.Key, p => p.Value == source.Id ? copy.Id : p.Value) },
+                _ => result,
+            };
+        }
+        var blocks = scene.ScriptBlocks.Where(b => b.LineId == source.Id).Select(b => b with { LineId = copy.Id, Action = Clone(b.Action) });
+        Session.UpdateScene(scene with { Lines = scene.Lines.Insert(SelectedIndex + 1, copy), ScriptBlocks = scene.ScriptBlocks.AddRange(blocks) });
         SelectLine(copy.Id);
     }
 
@@ -237,6 +256,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
             }
             else if (!ReferenceEquals(Lines[index], row)) Lines.Move(Lines.IndexOf(row), index);
             row.Refresh(model, index + 1, editingLanguage);
+            row.RefreshScript(scene.ScriptBlocks.Where(b => b.LineId == model.Id).ToArray());
         }
         if (selectedLine is null || !Lines.Contains(selectedLine)) SelectedLine = Lines.FirstOrDefault();
         if (sampledCss != Css)
@@ -256,7 +276,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         RefreshCharacterBindings();
         RefreshPlayback();
         foreach (var property in new[] { nameof(SelectedLine), nameof(LineText), nameof(SelectedTextKey), nameof(SampleText),
-                     nameof(CanEditLine), nameof(CanPrevious), nameof(CanNext), nameof(NavigationPosition) }) Changed(property);
+                     nameof(CanEditLine), nameof(CanPrevious), nameof(CanNext), nameof(NavigationPosition), nameof(SelectedPhraseScriptSummary) }) Changed(property);
         Session.NotifySelectionChanged();
         NotifyCommands();
     }
@@ -265,7 +285,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
     {
         foreach (var property in new[] { nameof(CanEditLine), nameof(CanEditCss), nameof(CanChooseState) }) Changed(property);
         foreach (var command in new[] { AddLineCommand, DeleteLineCommand, DuplicateLineCommand, MoveUpCommand, MoveDownCommand,
-                     PreviousLineCommand, NextLineCommand, CloseCommand }) command?.NotifyCanExecuteChanged();
+                     PreviousLineCommand, NextLineCommand, CloseCommand, OpenPhraseScriptCommand }) command?.NotifyCanExecuteChanged();
     }
 }
 
@@ -278,6 +298,17 @@ public sealed class DialogueLineViewModel(DialogueLine model) : System.Component
     public string TextKey => Model.TextKey;
     public int Number { get; private set; }
     public string Label { get; private set; } = "";
+    public string ScriptSummary { get; private set; } = "Без дополнительных блоков";
+    public bool HasScript { get; private set; }
+
+    internal void RefreshScript(ScriptBlock[] blocks)
+    {
+        HasScript = blocks.Length > 0;
+        ScriptSummary = HasScript ? string.Join(" · ", blocks.GroupBy(b => b.Phase).OrderBy(g => g.Key).Select(g =>
+            (g.Key switch { ScriptPhase.BeforeLine => "До", ScriptPhase.DuringLine => "Во время", _ => "После" }) + ": " + g.Count())) : "Без дополнительных блоков";
+        PropertyChanged?.Invoke(this, new(nameof(ScriptSummary)));
+        PropertyChanged?.Invoke(this, new(nameof(HasScript)));
+    }
 
     internal void Refresh(DialogueLine line, int number, string language)
     {

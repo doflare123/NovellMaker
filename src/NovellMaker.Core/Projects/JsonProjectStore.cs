@@ -2,10 +2,12 @@ using System.Collections.Immutable;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using System.Text.Unicode;
 using NovellMaker.Core.Assets;
 using NovellMaker.Core.Characters;
 using NovellMaker.Core.Scenes;
+using NovellMaker.Core.Execution;
 
 namespace NovellMaker.Core.Projects;
 
@@ -16,6 +18,22 @@ public sealed class JsonProjectStore : IProjectStore
 
     private static readonly JsonSerializerOptions VersionProbeSerializerOptions =
         CreateSerializerOptions(JsonUnmappedMemberHandling.Skip);
+    private static readonly JsonSerializerOptions Version7SerializerOptions = CreateVersion7Options();
+
+    private static JsonSerializerOptions CreateVersion7Options()
+    {
+        var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
+        var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(info =>
+        {
+            if (info.Type == typeof(ScriptAction))
+                foreach (var property in info.Properties.Where(p => p.Name == "references").ToArray()) info.Properties.Remove(property);
+            if (info.Type == typeof(ScenarioAction) && info.PolymorphismOptions is { } polymorphism)
+                foreach (var type in polymorphism.DerivedTypes.Where(t => t.DerivedType == typeof(LineEntryAction)).ToArray()) polymorphism.DerivedTypes.Remove(type);
+        });
+        options.TypeInfoResolver = resolver;
+        return options;
+    }
 
     public async Task<NovelProject> LoadAsync(
         string path,
@@ -70,6 +88,8 @@ public sealed class JsonProjectStore : IProjectStore
                     cancellationToken).ConfigureAwait(false)),
                 5 => MapVersion5(await DeserializeRequiredAsync<Version5ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 6 => MapVersion6(await DeserializeRequiredAsync<Version6ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
+                7 => MapVersion7(await DeserializeRequiredAsync<Version7ProjectDocument>(stream, cancellationToken, Version7SerializerOptions).ConfigureAwait(false)),
+                8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 _ => throw new ProjectFormatException(
                     $"Некорректная версия формата проекта: {versionProbe.FormatVersion}."),
             };
@@ -166,18 +186,20 @@ public sealed class JsonProjectStore : IProjectStore
             PropertyNameCaseInsensitive = false,
             UnmappedMemberHandling = unmappedMemberHandling,
             AllowDuplicateProperties = false,
+            RespectRequiredConstructorParameters = true,
             Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
             WriteIndented = true,
         };
 
     private static async Task<TDocument> DeserializeRequiredAsync<TDocument>(
         Stream stream,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        JsonSerializerOptions? options = null)
         where TDocument : class
     {
         var document = await JsonSerializer.DeserializeAsync<TDocument>(
             stream,
-            StrictSerializerOptions,
+            options ?? StrictSerializerOptions,
             cancellationToken).ConfigureAwait(false);
 
         return document ?? throw new ProjectFormatException("Файл проекта не содержит объекта проекта.");
@@ -277,6 +299,21 @@ public sealed class JsonProjectStore : IProjectStore
 
     private static NovelProject MapVersion6(Version6ProjectDocument document) =>
         MapVersion5(document) with { ExplorerShowsFiles = document.ExplorerShowsFiles };
+
+    private static NovelProject MapVersion7(Version7ProjectDocument document) =>
+        CreateProject(document.Id, document.Name,
+            MapScenes(document.Scenes, s => MapVersion5Scene(s) with { Actions = s.Actions ?? throw new ArgumentException("Коллекция действий отсутствует."), UseActions = s.UseActions }),
+            MapImages(document.Images),
+            document.Characters?.Select(c => MapCharacter(c ?? throw new ArgumentException("Персонаж null."))).ToImmutableArray()
+                ?? throw new ArgumentException("Коллекция персонажей отсутствует."),
+            document.DefaultLanguage, document.DialogueUi) with { ExplorerShowsFiles = document.ExplorerShowsFiles };
+
+    private static NovelProject MapVersion8(Version8ProjectDocument document) =>
+        CreateProject(document.Id, document.Name,
+            MapScenes(document.Scenes, s => MapVersion5Scene(s) with { Actions = s.Actions ?? throw new ArgumentException("Нет действий."), UseActions = s.UseActions,
+                ScriptBlocks = s.ScriptBlocks ?? throw new ArgumentException("Нет блоков скрипта.") }),
+            MapImages(document.Images), document.Characters?.Select(c => MapCharacter(c ?? throw new ArgumentException("Персонаж null."))).ToImmutableArray()
+                ?? throw new ArgumentException("Нет персонажей."), document.DefaultLanguage, document.DialogueUi) with { ExplorerShowsFiles = document.ExplorerShowsFiles };
 
     private static ImmutableArray<ImageAsset> MapImages(List<ImageDocument?>? imageDocuments)
     {
@@ -480,13 +517,13 @@ public sealed class JsonProjectStore : IProjectStore
         };
     }
 
-    private static Version6ProjectDocument MapForSave(NovelProject project) => new()
+    private static Version8ProjectDocument MapForSave(NovelProject project) => new()
     {
         ExplorerShowsFiles = project.ExplorerShowsFiles,
         FormatVersion = project.FormatVersion,
         Id = project.Id,
         Name = project.Name,
-        Scenes = project.Scenes.Select(scene => (Version5SceneDocument?)MapSceneForSave(scene)).ToList(),
+        Scenes = project.Scenes.Select(scene => (Version8SceneDocument?)MapSceneForSave(scene)).ToList(),
         Images = project.Images.Select(image => (ImageDocument?)MapImageForSave(image)).ToList(),
         Characters = project.Characters.Select(character => (CharacterDocument?)MapCharacterForSave(character)).ToList(),
         DefaultLanguage = project.DefaultLanguage,
@@ -499,13 +536,16 @@ public sealed class JsonProjectStore : IProjectStore
         },
     };
 
-    private static Version5SceneDocument MapSceneForSave(NovelScene scene) => new()
+    private static Version8SceneDocument MapSceneForSave(NovelScene scene) => new()
     {
         Id = scene.Id,
         Name = scene.Name,
         Lines = scene.Lines.Select(line => (Version5LineDocument?)MapLineForSave(line)).ToList(),
         DialogueCssOverride = scene.DialogueCssOverride,
         BackgroundImageId = scene.BackgroundImageId,
+        Actions = scene.Actions,
+        UseActions = scene.UseActions,
+        ScriptBlocks = scene.ScriptBlocks,
     };
 
     private static Version5LineDocument MapLineForSave(DialogueLine line)
@@ -651,6 +691,43 @@ public sealed class JsonProjectStore : IProjectStore
         public bool ExplorerShowsFiles { get; init; }
     }
 
+    private sealed class Version7ProjectDocument
+    {
+        [JsonRequired] public int FormatVersion { get; init; }
+        [JsonRequired] public Guid Id { get; init; }
+        [JsonRequired] public string? Name { get; init; }
+        [JsonRequired] public List<Version7SceneDocument?>? Scenes { get; init; }
+        [JsonRequired] public List<ImageDocument?>? Images { get; init; }
+        [JsonRequired] public List<CharacterDocument?>? Characters { get; init; }
+        [JsonRequired] public string? DefaultLanguage { get; init; }
+        [JsonRequired] public bool ExplorerShowsFiles { get; init; }
+        [JsonRequired] public DialogueUiDocument? DialogueUi { get; init; }
+    }
+
+    private class Version7SceneDocument : Version5SceneDocument
+    {
+        [JsonRequired] public ImmutableArray<ScenarioAction>? Actions { get; init; }
+        [JsonRequired] public bool UseActions { get; init; }
+    }
+
+    private sealed class Version8SceneDocument : Version7SceneDocument
+    {
+        [JsonRequired] public ImmutableArray<ScriptBlock>? ScriptBlocks { get; init; }
+    }
+
+    private sealed class Version8ProjectDocument
+    {
+        [JsonRequired] public int FormatVersion { get; init; }
+        [JsonRequired] public Guid Id { get; init; }
+        [JsonRequired] public string? Name { get; init; }
+        [JsonRequired] public List<Version8SceneDocument?>? Scenes { get; init; }
+        [JsonRequired] public List<ImageDocument?>? Images { get; init; }
+        [JsonRequired] public List<CharacterDocument?>? Characters { get; init; }
+        [JsonRequired] public string? DefaultLanguage { get; init; }
+        [JsonRequired] public bool ExplorerShowsFiles { get; init; }
+        [JsonRequired] public DialogueUiDocument? DialogueUi { get; init; }
+    }
+
     private class Version5ProjectDocument
     {
         [JsonRequired]
@@ -729,7 +806,7 @@ public sealed class JsonProjectStore : IProjectStore
         public Guid? BackgroundImageId { get; init; }
     }
 
-    private sealed class Version5SceneDocument
+    private class Version5SceneDocument
     {
         [JsonRequired]
         public Guid Id { get; init; }

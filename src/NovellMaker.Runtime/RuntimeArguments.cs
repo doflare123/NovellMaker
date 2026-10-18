@@ -11,6 +11,7 @@ internal sealed record RuntimeArguments(
     string? SmokeOutputPath,
     string? SmokeReportPath)
 {
+    public string? SmokePlanPath { get; init; }
     public static RuntimeArguments Parse(IReadOnlyList<string> arguments)
     {
         ArgumentNullException.ThrowIfNull(arguments);
@@ -25,7 +26,7 @@ internal sealed record RuntimeArguments(
             }
 
             if (option is not ("--project" or "--assets-root" or "--scene" or "--line" or
-                "--language" or "--smoke-output" or "--smoke-report"))
+                "--language" or "--smoke-output" or "--smoke-report" or "--smoke-plan"))
             {
                 throw new ArgumentException($"Неизвестный параметр «{option}».\n{Usage}");
             }
@@ -53,6 +54,7 @@ internal sealed record RuntimeArguments(
             throw new ArgumentException("Для smoke-проверки нужно одновременно указать --smoke-output и --smoke-report.");
         }
 
+        if (values.ContainsKey("--smoke-plan") && smokeOutput is null) throw new ArgumentException("--smoke-plan требует smoke-output/report.");
         return new RuntimeArguments(
             projectPath,
             assetsRoot,
@@ -60,7 +62,7 @@ internal sealed record RuntimeArguments(
             lineId,
             language,
             smokeOutput,
-            smokeReport);
+            smokeReport) { SmokePlanPath = values.ContainsKey("--smoke-plan") ? RequiredPath(values, "--smoke-plan", true) : null };
     }
 
     public static string Usage =>

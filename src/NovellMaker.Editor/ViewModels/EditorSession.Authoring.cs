@@ -126,7 +126,7 @@ public sealed partial class EditorSession
     {
         if (!CanEdit || project is null || ActiveScene is not { } active) return;
         var scene = project.Scenes.FirstOrDefault(item => item.Id == active.Id);
-        if (scene is not null) EditProject(project with { Scenes = project.Scenes.Remove(scene) });
+        if (scene is not null) EditProject(Services.ActionReferences.Prune(project with { Scenes = project.Scenes.Remove(scene) }));
     }
 
     internal void UpdateScene(NovelScene scene, string? group = null)
@@ -135,7 +135,13 @@ public sealed partial class EditorSession
         var index = -1;
         for (var position = 0; position < project.Scenes.Length; position++)
             if (project.Scenes[position].Id == scene.Id) { index = position; break; }
-        if (index >= 0) EditProject(project with { Scenes = project.Scenes.SetItem(index, scene) }, group);
+        if (index >= 0)
+        {
+            var old = project.Scenes[index];
+            var updated = project with { Scenes = project.Scenes.SetItem(index, scene) };
+            if (scene.Lines.Length < old.Lines.Length) updated = Services.ActionReferences.Prune(updated);
+            EditProject(updated, group);
+        }
     }
 
     internal NovelScene? SavedScene(Guid id) => savedProject?.Scenes.FirstOrDefault(scene => scene.Id == id);

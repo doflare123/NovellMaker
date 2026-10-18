@@ -96,13 +96,21 @@
           "Microsoft.TestPlatform.ObjectModel": "18.8.1"
         }
       },
+      "MoonSharp": {
+        "type": "Transitive",
+        "resolved": "2.0.0",
+        "contentHash": "uiAcRh7d+53k3xW9pFDJfAFVw4RnjHVCJG05M3oPAVEVwPtFavhg1H/IpC6So4X1j9kJlzuLlA3OghhPcIvc5A=="
+      },
       "MSTest.Analyzers": {
         "type": "Transitive",
         "resolved": "4.3.2",
         "contentHash": "GNvrVI6/Y5pNoKnK1/VELBls3XiHNZaj+zh14LtwlCqFI8zXTW3vuBe0Jv2qEr9wxHlOAQQBTJPRoNRjneGrKQ=="
       },
       "novellmaker.core": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "MoonSharp": "[2.0.0, )"
+        }
       }
     }
   }

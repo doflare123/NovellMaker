@@ -432,6 +432,31 @@ public sealed class SceneAuthoringTests
         Assert.IsTrue(copy.ContentEquals(savedCopy));
     }
 
+    [TestMethod]
+    public async Task DuplicateMoveDeleteAndUndoKeepPhraseBlocksAttachedAndGiveCopiesNewIds()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var project = BuiltInExample.Create(directory.Path);
+        var path = Path.Combine(directory.Path, "phrase.novell");
+        await new JsonProjectStore().SaveAsync(path, project);
+        var session = await NewSessionAsync(new Dialogs { OpenPath = path });
+        await session.OpenProjectAsync(); session.OpenScene(project.Scenes[0].Id);
+        var document = session.ActiveScene!; var original = document.SelectedLine!.Id;
+        document.DuplicateLine(); var copy = document.SelectedLine!.Id;
+        var scene = session.Project!.Scenes[0];
+        var originals = scene.ScriptBlocks.Where(b => b.LineId == original).ToArray();
+        var copies = scene.ScriptBlocks.Where(b => b.LineId == copy).ToArray();
+        Assert.AreEqual(2, copies.Length); Assert.IsTrue(copies.All(c => originals.All(o => o.Action.Id != c.Action.Id)));
+        document.MoveLine(-1);
+        Assert.AreEqual(copy, session.Project.Scenes[0].Lines[0].Id);
+        Assert.AreEqual(copy, new NovellMaker.Core.Execution.ScenarioPlayer(session.Project, scene.Id, "ru").Frame.LineId);
+        document.DeleteLine(); Assert.IsFalse(session.Project.Scenes[0].ScriptBlocks.Any(b => b.LineId == copy));
+        session.Undo(); Assert.AreEqual(2, session.Project.Scenes[0].ScriptBlocks.Count(b => b.LineId == copy));
+        session.Undo(); Assert.AreEqual(original, session.Project.Scenes[0].Lines[0].Id);
+        NovellMaker.Core.Execution.ScenarioProgram.Validate(session.Project);
+        session.Dispose();
+    }
+
     private static async Task<EditorSession> NewSessionAsync(Dialogs? dialogs = null)
     {
         var session = new EditorSession(new JsonProjectStore(), dialogs ?? new Dialogs(), new Git());

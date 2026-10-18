@@ -49,7 +49,8 @@
         <MenuItem Header="_Повторить" Command="{Binding RedoCommand}" InputGesture="Ctrl+Y" />
       </MenuItem>
       <MenuItem Header="_Сцена">
-        <MenuItem Header="_Запустить с выбранной реплики" Command="{Binding PreviewSceneCommand}" InputGesture="F6" />
+        <MenuItem Header="Открыть проверочный фрагмент" Command="{Binding OpenExampleCommand}" />
+        <MenuItem Header="_Запустить сцену" Command="{Binding PreviewSceneCommand}" InputGesture="F6" />
         <MenuItem Header="_Добавить сцену" Command="{Binding AddSceneCommand}" />
         <MenuItem Header="_Удалить текущую сцену" Command="{Binding DeleteSceneCommand}" />
       </MenuItem>
@@ -117,6 +118,7 @@
           <StackPanel IsVisible="{Binding !HasProject}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" MaxWidth="430" Margin="32">
             <TextBlock Text="NovellMaker" FontSize="28" FontWeight="Light" />
             <TextBlock Text="Создайте проект новеллы или откройте существующий файл проекта." Classes="muted" TextWrapping="Wrap" />
+            <Button Name="OpenExampleButton" Content="Открыть проверочный фрагмент" Command="{Binding OpenExampleCommand}" />
             <StackPanel Orientation="Horizontal" Spacing="8">
               <Button Content="Создать проект" Command="{Binding NewCommand}" />
               <Button Content="Открыть…" Command="{Binding OpenCommand}" />
