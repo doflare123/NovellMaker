@@ -11,6 +11,31 @@ public sealed class EditorDialogs(Window owner) : IEditorDialogs
     private static readonly FilePickerFileType ProjectType = new("Проект NovellMaker") { Patterns = ["*.novell"] };
     private static readonly FilePickerFileType ImageType = new("Изображение PNG или JPEG") { Patterns = ["*.png", "*.jpg", "*.jpeg"] };
 
+    private sealed record StartScene(Guid Id, string Name) { public override string ToString() => Name; }
+
+    public async Task<WindowsExportDestination?> PickWindowsExportAsync(NovellMaker.Core.Projects.NovelProject project)
+    {
+        var dialog = CreateDialog("Экспорт игры — Windows x64");
+        var scenes = project.Scenes.Select(s => new StartScene(s.Id, s.Name)).ToArray();
+        var picker = new ComboBox { Name = "ExportStartScene", ItemsSource = scenes, SelectedIndex = 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch };
+        var cancel = new Button { Content = "Отмена" };
+        var export = new Button { Content = "Выбрать папку и собрать…", Name = "ConfirmWindowsExport" };
+        cancel.Click += (_, _) => dialog.Close(false);
+        export.Click += (_, _) => dialog.Close(true);
+        dialog.Content = new StackPanel { Margin = new Thickness(24), Spacing = 16, Children =
+        {
+            new TextBlock { Text = "Автономная игра в новой папке. Используется текущий снимок проекта, включая несохранённые изменения. Редактор и SDK игроку не нужны. Язык: " + project.DefaultLanguage, TextWrapping = Avalonia.Media.TextWrapping.Wrap },
+            new TextBlock { Text = "Стартовая сцена:" }, picker,
+            new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, export } }
+        } };
+        dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(false); };
+        if (!await dialog.ShowDialog<bool>(owner) || picker.SelectedItem is not StartScene scene) return null;
+        var folders = await owner.StorageProvider.OpenFolderPickerAsync(new() { Title = "Куда поместить папку игры?", AllowMultiple = false });
+        if (folders.Count == 0) return null;
+        return new(Path.Combine(LocalPath(folders[0]), $"Game-{project.Id.ToString("N")[..8]}-{Guid.NewGuid().ToString("N")[..8]}"), scene.Id);
+    }
+
     public async Task<string?> PickImageAsync()
     {
         var files = await owner.StorageProvider.OpenFilePickerAsync(new()
@@ -77,7 +102,10 @@ public sealed class EditorDialogs(Window owner) : IEditorDialogs
         return await dialog.ShowDialog<bool>(owner);
     }
 
-    public async Task ShowErrorAsync(string title, string message)
+    public Task ShowErrorAsync(string title, string message) => ShowMessageAsync(title, message);
+    public Task ShowInformationAsync(string title, string message) => ShowMessageAsync(title, message);
+
+    private async Task ShowMessageAsync(string title, string message)
     {
         var dialog = CreateDialog(title);
         var close = new Button { Content = "Закрыть", HorizontalAlignment = HorizontalAlignment.Right };

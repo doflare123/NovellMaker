@@ -269,6 +269,7 @@ public sealed partial class EditorSession
         Changed(nameof(CanRedo));
         foreach (var command in new[] { AddSceneCommand, DeleteSceneCommand, UndoCommand, RedoCommand }) command?.NotifyCanExecuteChanged();
         PreviewSceneCommand?.NotifyCanExecuteChanged();
+        ExportWindowsCommand?.NotifyCanExecuteChanged();
         foreach (var document in sceneDocuments.Values) document.NotifyCommands();
     }
 

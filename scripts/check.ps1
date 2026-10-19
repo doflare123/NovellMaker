@@ -1,4 +1,4 @@
-param([switch]$CaptureScreenshots, [switch]$NativeRuntime)
+param([switch]$CaptureScreenshots, [switch]$NativeRuntime, [switch]$WindowsExport)
 
 $ErrorActionPreference = 'Stop'
 $env:AVALONIA_TELEMETRY_OPTOUT = '1'
@@ -6,6 +6,11 @@ $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
+    if ($WindowsExport) {
+        if (-not $IsWindows) { throw 'Windows export smoke requires Windows x64.' }
+        & (Join-Path $PSScriptRoot 'prepare-windows-export.ps1')
+        $env:NOVELLMAKER_EXPORT_SMOKE = '1'
+    }
     if ($CaptureScreenshots) {
         $env:NOVELLMAKER_CAPTURE_DIR = Join-Path (Get-Location) 'artifacts/screenshots'
     }

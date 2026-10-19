@@ -15,8 +15,24 @@
   </ItemGroup>
   <Target Name="CopyRuntimeHost" AfterTargets="Build">
     <ItemGroup>
-      <RuntimeHostFile Include="$(MSBuildProjectDirectory)/../NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/**/*" />
+      <RuntimeHostFile Include="$(MSBuildProjectDirectory)/../NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/**/*" Exclude="$(MSBuildProjectDirectory)/../NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/win-x64/**/*;$(MSBuildProjectDirectory)/../NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/publish/**/*" />
     </ItemGroup>
     <Copy SourceFiles="@(RuntimeHostFile)" DestinationFiles="@(RuntimeHostFile->'$(TargetDir)Runtime/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyWindowsExportTemplate" AfterTargets="Build">
+    <PropertyGroup>
+      <ExportTemplateRoot>$(MSBuildProjectDirectory)/../../artifacts/export-templates/win-x64/</ExportTemplateRoot>
+      <ExportTemplateOutput>$(TargetDir)ExportTemplates/win-x64/</ExportTemplateOutput>
+    </PropertyGroup>
+    <ItemGroup>
+      <ExportTemplateFile Include="$(ExportTemplateRoot)**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ExportTemplateFile)" DestinationFiles="@(ExportTemplateFile->'$(ExportTemplateOutput)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishWindowsExportTemplate" AfterTargets="Publish" DependsOnTargets="CopyWindowsExportTemplate">
+    <Copy SourceFiles="@(ExportTemplateFile)" DestinationFiles="@(ExportTemplateFile->'$(PublishDir)ExportTemplates/win-x64/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishRuntimeHost" AfterTargets="Publish" DependsOnTargets="CopyRuntimeHost">
+    <Copy SourceFiles="@(RuntimeHostFile)" DestinationFiles="@(RuntimeHostFile->'$(PublishDir)Runtime/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 </Project>

@@ -10,4 +10,11 @@ artifacts/
 !/docs/actions-and-state.md
 !/docs/lua-api.md
 !/docs/verification-actions-2026-10-18.md
+!/docs/windows-export.md
+!/docs/history.md
+!/docs/scene-preview.md
+!/docs/images.md
+!/docs/dialogue-styles.md
+!/docs/workspace.md
+!/docs/verification-export-2026-10-18.md
 /novell_test

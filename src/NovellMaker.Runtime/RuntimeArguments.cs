@@ -1,4 +1,5 @@
 using System.Globalization;
+using NovellMaker.Core.Projects;
 
 namespace NovellMaker.Runtime;
 
@@ -12,7 +13,8 @@ internal sealed record RuntimeArguments(
     string? SmokeReportPath)
 {
     public string? SmokePlanPath { get; init; }
-    public static RuntimeArguments Parse(IReadOnlyList<string> arguments)
+    public GamePackage? Package { get; init; }
+    public static RuntimeArguments Parse(IReadOnlyList<string> arguments, string? packageDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
 
@@ -37,6 +39,18 @@ internal sealed record RuntimeArguments(
             }
         }
 
+        GamePackage? package = null;
+        if (!values.ContainsKey("--project"))
+        {
+            var directory = Path.GetFullPath(packageDirectory ?? AppContext.BaseDirectory);
+            package = GamePackage.Load(directory);
+            if (values.Keys.Any(k => k is not ("--smoke-output" or "--smoke-report" or "--smoke-plan")))
+                throw new ArgumentException("Упакованная игра использует стартовую сцену и язык из game.json.");
+            values.Add("--project", Path.Combine(directory, GamePackage.ProjectName));
+            values.Add("--assets-root", directory);
+            values.Add("--scene", package.StartSceneId.ToString());
+            values.Add("--language", package.Language);
+        }
         var projectPath = RequiredPath(values, "--project", requireFile: true);
         var assetsRoot = RequiredPath(values, "--assets-root", requireFile: false);
         var sceneId = RequiredGuid(values, "--scene");
@@ -62,7 +76,7 @@ internal sealed record RuntimeArguments(
             lineId,
             language,
             smokeOutput,
-            smokeReport) { SmokePlanPath = values.ContainsKey("--smoke-plan") ? RequiredPath(values, "--smoke-plan", true) : null };
+            smokeReport) { Package = package, SmokePlanPath = values.ContainsKey("--smoke-plan") ? RequiredPath(values, "--smoke-plan", true) : null };
     }
 
     public static string Usage =>

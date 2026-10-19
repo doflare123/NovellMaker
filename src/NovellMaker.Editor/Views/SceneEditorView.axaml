@@ -77,6 +77,7 @@
                 <TextBlock Text="{Binding NavigationPosition}" VerticalAlignment="Center" />
                 <Button Name="NextLineButton" Content="Вперёд" Command="{Binding NextLineCommand}" />
               </StackPanel>
+              <TextBlock Text="Навигация автора меняет выбранную фразу и статический показ. F6 запускает игру; Enter в игре продолжает ожидание ввода, F8 восстанавливает сохранённое состояние." Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </ScrollViewer>
         </Grid>

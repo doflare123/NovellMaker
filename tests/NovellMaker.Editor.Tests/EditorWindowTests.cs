@@ -33,6 +33,26 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task WindowsExportDialogShowsStartSceneAndCancelsWithoutOpeningFolderPicker() => WithUi(async () =>
+    {
+        var session = CreateSession(out _, out _);
+        var window = CreateWindow(session); window.Show();
+        await session.OpenExampleAsync(); Dispatcher.UIThread.RunJobs();
+        var dialogs = new EditorDialogs(window);
+        var result = dialogs.PickWindowsExportAsync(session.Project!);
+        Dispatcher.UIThread.RunJobs();
+        var dialog = window.OwnedWindows.Single();
+        var picker = Find<ComboBox>(dialog, "ExportStartScene");
+        Assert.AreEqual(session.Project!.Scenes.Length, picker.ItemCount);
+        StringAssert.Contains(picker.SelectedItem!.ToString()!, session.Project.Scenes[0].Name);
+        Capture(dialog, "editor-windows-export.png");
+        dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        window.KeyRelease(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        Assert.IsNull(await result);
+        window.Close(); session.Dispose();
+    });
+
+    [TestMethod]
     public Task PhraseScriptBlocksApplyUndoSelectAndEditLuaWithNamedReferences() => WithUi(async () =>
     {
         var session = CreateSession(out var dialogs, out _);
@@ -40,6 +60,8 @@ public sealed class EditorWindowTests
         Click(window, Find<Button>(window, "OpenExampleButton"));
         await UntilAsync(() => session.ActiveScene is not null && !session.IsBusy);
         Assert.AreEqual(4, session.ActiveScene!.SelectedSection);
+        Assert.IsTrue(session.ExportWindowsCommand.CanExecute(null));
+        Assert.IsNotNull(window.FindControl<MenuItem>("ExportWindowsMenu"));
         var inspector = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single();
         var blocks = Find<ListBox>(inspector, "ScriptBlocks");
         Assert.AreEqual(2, blocks.ItemCount);
@@ -59,6 +81,7 @@ public sealed class EditorWindowTests
         Assert.AreEqual(session.Project.Scenes[0].Lines[2].Id, session.ActiveScene.SelectedLine!.Id);
         blocks.SelectedIndex = 3; Dispatcher.UIThread.RunJobs();
         var source = Find<TextBox>(inspector, "LuaSourceBox"); StringAssert.Contains(source.Text!, "refs.correct");
+        StringAssert.Contains(Find<TextBlock>(inspector, "LuaQueueHelp").Text!, "следующий Lua-блок");
         Assert.IsFalse(source.Text!.Contains(session.Project.Characters[0].Id.ToString(), StringComparison.Ordinal));
         source.Text += "\n-- "; source.SelectionStart = source.SelectionEnd = source.Text.Length;
         Find<TextBox>(inspector, "LuaReferenceAlias").Text = "traveller";

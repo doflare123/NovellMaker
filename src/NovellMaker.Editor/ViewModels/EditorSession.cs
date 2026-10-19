@@ -42,6 +42,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         InitializeAssets();
         InitializeCharacters();
         InitializePreview();
+        InitializeExport();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -284,7 +285,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
 
     private void NotifyCommands()
     {
-        foreach (var command in new[] { NewCommand, OpenCommand, SaveCommand, SaveAsCommand, CloseProjectCommand, RefreshGitCommand, OpenExampleCommand })
+        foreach (var command in new[] { NewCommand, OpenCommand, SaveCommand, SaveAsCommand, CloseProjectCommand, RefreshGitCommand, OpenExampleCommand, ExportWindowsCommand })
             command.NotifyCanExecuteChanged();
     }
 

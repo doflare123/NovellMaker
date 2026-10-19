@@ -40,6 +40,7 @@ public sealed class ScenarioActionsView : UserControl
     {
         var root = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
         var top = new StackPanel { Spacing = 6 };
+        top.Children.Add(context);
         var scope = new Grid { ColumnDefinitions = new ColumnDefinitions("*,8,190") };
         scope.Children.Add(anchors); Grid.SetColumn(phases, 2); scope.Children.Add(phases); top.Children.Add(scope);
         var toolbar = new WrapPanel(); top.Children.Add(toolbar);
@@ -123,7 +124,7 @@ public sealed class ScenarioActionsView : UserControl
         phases.SelectedIndex = anchor?.LineId is not null ? 1 : 0;
         context.Text = scene?.HasLegacyActionScript == true
             ? "Импортированный сценарий: сохранён исходный порядок. Карточки показывают текст и смысл команд; новые сцены используют привязки к фразам."
-            : anchor?.LineId is not null ? "Сначала применяются говорящий и размещение, затем текст показывается автоматически. «Во время» запускается при показе; «После продолжения» — после ввода игрока."
+            : anchor?.LineId is not null ? "Говорящий и размещение → «До» → текст → блоки «Во время» по очереди → ожидание продолжения → «После». Ожидание в блоке задерживает следующие блоки; запущенные движения продолжаются параллельно."
             : anchor?.End == true ? "Блоки после последней фразы." : "Блоки перед первой фразой.";
         ToolTip.SetTip(anchors, context.Text);
         Row[] rows = scene is null ? [] : scene.HasLegacyActionScript
@@ -245,6 +246,8 @@ public sealed class ScenarioActionsView : UserControl
         { var input = new CheckBox { IsChecked = boolean.GetValue<bool>() }; parent.Children.Add(input); return () => JsonValue.Create(input.IsChecked == true); }
         var text = new TextBox { Name = name == "Source" ? "LuaSourceBox" : null, Text = value?.ToString() ?? "", AcceptsReturn = name == "Source", MinHeight = name == "Source" ? 190 : 32, TextWrapping = TextWrapping.Wrap, FontFamily = name == "Source" ? FontFamily.Parse("Consolas,monospace") : FontFamily.Default };
         parent.Children.Add(text);
+        if (name == "Source") parent.Children.Add(new TextBlock { Name = "LuaQueueHelp", TextWrapping = TextWrapping.Wrap,
+            Text = "Lua сначала вычисляет весь блок и формирует очередь. game.wait / wait_click задерживают исполнение команд, а не вычисления Lua. Чтобы прочитать результат ожидания, добавьте следующий Lua-блок. Локальные переменные между блоками не сохраняются; используйте game.set/get." });
         if (name == "Source" && action is ScriptAction script) LuaReferences(parent, text, script);
         return () => JsonValue.Create(text.Text ?? "");
     }

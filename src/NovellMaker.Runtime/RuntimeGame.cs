@@ -49,8 +49,8 @@ internal sealed class RuntimeGame : Game
     private readonly List<RuntimeActionTrace> actionTrace = [];
     private RenderedTexture? actionHelp;
     private string saveMessage = "F7 — сохранить · F8 — загрузить · Enter — продолжить";
-    private string SavePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "NovellMaker", "Saves", player.Execution.State.ProjectId + ".json");
+    private string SavePath => RuntimeStorage.SavePath(player.Execution.State.ProjectId, arguments.Package is not null);
+    private bool UsesGameState => player.UsesActions || player.IsGamePlayback;
 
     public RuntimeGame(RuntimeArguments arguments, ScenePlayer player, bool showNavigationControls)
     {
@@ -67,7 +67,7 @@ internal sealed class RuntimeGame : Game
         IsFixedTimeStep = arguments.SmokeOutputPath is null;
         IsMouseVisible = true;
         Window.AllowUserResizing = true;
-        Window.Title = "NovellMaker — предпросмотр сцены";
+        Window.Title = arguments.Package?.Title ?? "NovellMaker — предпросмотр сцены";
         Content.RootDirectory = "Content";
     }
 
@@ -95,7 +95,7 @@ internal sealed class RuntimeGame : Game
     protected override void Update(GameTime gameTime)
     {
         lineElapsed += gameTime.ElapsedGameTime;
-        if (player.UsesActions)
+        if (UsesGameState)
         {
             var line = player.Frame.LineId;
             if (smokePlan is null) player.Tick(gameTime.ElapsedGameTime);
@@ -117,8 +117,8 @@ internal sealed class RuntimeGame : Game
             {
                 Exit();
             }
-            else if (player.UsesActions && Pressed(keyboard, Keys.F7)) SaveGame();
-            else if (player.UsesActions && Pressed(keyboard, Keys.F8)) LoadGame();
+            else if (UsesGameState && Pressed(keyboard, Keys.F7)) SaveGame();
+            else if (UsesGameState && Pressed(keyboard, Keys.F8)) LoadGame();
             else if (Pressed(keyboard, Keys.Right) || Pressed(keyboard, Keys.Enter) ||
                      Pressed(keyboard, Keys.Space))
             {
@@ -259,6 +259,8 @@ internal sealed class RuntimeGame : Game
             case "click": success = ClickLogical(new Point(step.X, step.Y)); break;
             case "save": GameSave.SaveAsync(path, player.Execution).GetAwaiter().GetResult(); break;
             case "load": player.LoadSave(File.ReadAllText(path)); break;
+            case "quicksave": success = SaveGame(); break;
+            case "quickload": success = LoadGame(); break;
             default: throw new ArgumentException("Неизвестный шаг smoke-плана.");
         }
         RefreshFrameResources(); RefreshTextTextures(); RefreshInteractions();
@@ -287,8 +289,9 @@ internal sealed class RuntimeGame : Game
     private bool Pressed(KeyboardState keyboard, Keys key) =>
         keyboard.IsKeyDown(key) && previousKeyboard.IsKeyUp(key);
 
-    private void SaveGame()
+    private bool SaveGame()
     {
+        var success = true;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SavePath)!);
@@ -296,12 +299,14 @@ internal sealed class RuntimeGame : Game
             saveMessage = "Игра сохранена · F8 — загрузить · Enter — продолжить";
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
-        { saveMessage = "Не удалось сохранить: " + error.Message; }
+        { saveMessage = "Не удалось сохранить: " + error.Message; success = false; }
         RefreshInteractions();
+        return success;
     }
 
-    private void LoadGame()
+    private bool LoadGame()
     {
+        var success = true;
         try
         {
             player.LoadSave(File.ReadAllText(SavePath));
@@ -310,8 +315,9 @@ internal sealed class RuntimeGame : Game
             RefreshFrameResources(); RefreshTextTextures();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
-        { saveMessage = "Не удалось загрузить: " + error.Message; }
+        { saveMessage = "Не удалось загрузить: " + error.Message; success = false; }
         RefreshInteractions();
+        return success;
     }
 
     private void RefreshInteractions()
@@ -464,7 +470,7 @@ internal sealed class RuntimeGame : Game
             return;
         }
 
-        var sample = frame.Style.Sample(player.UsesActions ? TimeSpan.FromSeconds(player.Execution.State.Time - player.Execution.State.TextStartedAt) : lineElapsed);
+        var sample = frame.Style.Sample(UsesGameState ? TimeSpan.FromSeconds(player.Execution.State.Time - player.Execution.State.TextStartedAt) : lineElapsed);
         var center = new Vector2(
             (float)frame.Style.Left + (dialogueTexture.Width / 2f) + (float)sample.TranslateX,
             LogicalHeight - (float)frame.Style.Bottom - (dialogueTexture.Height / 2f) + (float)sample.TranslateY);
@@ -490,7 +496,7 @@ internal sealed class RuntimeGame : Game
         var scale = Math.Min(1f, (LogicalWidth - 32f) / diagnosticsTexture.Width);
         batch.Draw(
             diagnosticsTexture.Texture,
-            new Vector2(16, player.UsesActions ? 64 : 16),
+            new Vector2(16, UsesGameState ? 64 : 16),
             sourceRectangle: null,
             Color.White,
             rotation: 0,
@@ -548,7 +554,9 @@ internal sealed class RuntimeGame : Game
             InitialVisibleCharacterCount: initialVisibleCharacterCount,
             AfterNextVisibleCharacterCount: afterNextVisibleCharacterCount,
             AfterPreviousVisibleCharacterCount: afterPreviousVisibleCharacterCount,
-            Diagnostics: CurrentDiagnostics()) { ActionTrace = actionTrace };
+            Diagnostics: CurrentDiagnostics()) { ActionTrace = actionTrace, SavePath = SavePath,
+                Packaged = arguments.Package is not null, WindowTitle = Window.Title,
+                RuntimeLibraryPath = typeof(object).Assembly.Location };
         var options = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -579,6 +587,10 @@ internal sealed record RuntimeSmokeReport(
     IReadOnlyList<string> Diagnostics)
 {
     public IReadOnlyList<RuntimeActionTrace> ActionTrace { get; init; } = [];
+    public string? SavePath { get; init; }
+    public bool Packaged { get; init; }
+    public string? WindowTitle { get; init; }
+    public string? RuntimeLibraryPath { get; init; }
 }
 internal sealed record RuntimeSmokeStep(string Kind, double Seconds = 0, int X = 0, int Y = 0);
 internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState State, string Text);

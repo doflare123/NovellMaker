@@ -21,6 +21,23 @@ public sealed class RuntimeArgumentsTests
     }
 
     [TestMethod]
+    public async Task PackagedLaunchUsesExecutableDirectoryAndManifestRatherThanWorkingDirectory()
+    {
+        var package = new NovellMaker.Core.Projects.GamePackage(1, Guid.NewGuid(), Guid.NewGuid(), "ru", "Игра");
+        await package.SaveAsync(temporaryDirectory);
+        await File.WriteAllTextAsync(Path.Combine(temporaryDirectory, "game.novell"), "{}");
+        var result = RuntimeArguments.Parse([], temporaryDirectory);
+        Assert.AreEqual(package, result.Package);
+        Assert.AreEqual(package.StartSceneId, result.SceneId);
+        Assert.AreEqual(temporaryDirectory, result.AssetsRoot);
+        Assert.IsNull(result.LineId);
+        Assert.AreNotEqual(RuntimeStorage.SavePath(package.ProjectId, false), RuntimeStorage.SavePath(package.ProjectId, true));
+        StringAssert.Contains(RuntimeStorage.SavePath(package.ProjectId, true), package.ProjectId.ToString());
+        await File.WriteAllTextAsync(Path.Combine(temporaryDirectory, "game.json"), "{\"Version\":99}");
+        Assert.Throws<Exception>(() => RuntimeArguments.Parse([], temporaryDirectory));
+    }
+
+    [TestMethod]
     public void Parse_ValidInvocation_NormalizesPathsAndKeepsStableIds()
     {
         var projectPath = Path.Combine(temporaryDirectory, "preview.novell");

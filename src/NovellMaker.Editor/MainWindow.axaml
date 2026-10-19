@@ -48,6 +48,9 @@
         <MenuItem Header="_Отменить" Command="{Binding UndoCommand}" InputGesture="Ctrl+Z" />
         <MenuItem Header="_Повторить" Command="{Binding RedoCommand}" InputGesture="Ctrl+Y" />
       </MenuItem>
+      <MenuItem Header="_Сборка">
+        <MenuItem Name="ExportWindowsMenu" Header="Экспорт игры для Windows x64…" Command="{Binding ExportWindowsCommand}" />
+      </MenuItem>
       <MenuItem Header="_Сцена">
         <MenuItem Header="Открыть проверочный фрагмент" Command="{Binding OpenExampleCommand}" />
         <MenuItem Header="_Запустить сцену" Command="{Binding PreviewSceneCommand}" InputGesture="F6" />
