@@ -33,6 +33,30 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task WindowsInstallerDialogValidatesVersionAndCancelsWithoutSaving() => WithUi(async () =>
+    {
+        var session = CreateSession(out _, out _);
+        var window = CreateWindow(session); window.Show();
+        await session.OpenExampleAsync(); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(OperatingSystem.IsWindows(), session.ExportWindowsInstallerCommand.CanExecute(null));
+        Assert.IsNotNull(window.FindControl<MenuItem>("ExportWindowsInstallerMenu"));
+        var result = new EditorDialogs(window).PickWindowsInstallerAsync(session.Project!);
+        Dispatcher.UIThread.RunJobs();
+        var dialog = window.OwnedWindows.Single();
+        Assert.AreEqual(session.Project!.Scenes.Length, Find<ComboBox>(dialog, "InstallerStartScene").ItemCount);
+        Find<TextBox>(dialog, "InstallerVersion").Text = "1.2";
+        Click(dialog, Find<Button>(dialog, "ConfirmInstallerExport"));
+        Assert.IsFalse(result.IsCompleted);
+        StringAssert.Contains(Find<TextBlock>(dialog, "InstallerValidation").Text!, "три или четыре");
+        Find<TextBox>(dialog, "InstallerVersion").Text = "1.2.3";
+        Capture(dialog, "editor-windows-installer.png");
+        dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        window.KeyRelease(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        Assert.IsNull(await result);
+        window.Close(); session.Dispose();
+    });
+
+    [TestMethod]
     public Task WindowsExportDialogShowsStartSceneAndCancelsWithoutOpeningFolderPicker() => WithUi(async () =>
     {
         var session = CreateSession(out _, out _);

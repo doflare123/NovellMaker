@@ -35,4 +35,13 @@
   <Target Name="PublishRuntimeHost" AfterTargets="Publish" DependsOnTargets="CopyRuntimeHost">
     <Copy SourceFiles="@(RuntimeHostFile)" DestinationFiles="@(RuntimeHostFile->'$(PublishDir)Runtime/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
+  <Target Name="CopyWindowsInstallerCompiler" AfterTargets="Build">
+    <ItemGroup>
+      <InstallerCompilerFile Include="$(MSBuildProjectDirectory)/../../artifacts/build-tools/nsis-3.13/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(InstallerCompilerFile)" DestinationFiles="@(InstallerCompilerFile->'$(TargetDir)BuildTools/NSIS/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishWindowsInstallerCompiler" AfterTargets="Publish" DependsOnTargets="CopyWindowsInstallerCompiler">
+    <Copy SourceFiles="@(InstallerCompilerFile)" DestinationFiles="@(InstallerCompilerFile->'$(PublishDir)BuildTools/NSIS/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

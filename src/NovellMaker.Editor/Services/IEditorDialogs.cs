@@ -2,6 +2,7 @@ namespace NovellMaker.Editor.Services;
 
 public enum UnsavedChangesDecision { Save, Discard, Cancel }
 public sealed record WindowsExportDestination(string Directory, Guid StartSceneId);
+public sealed record WindowsInstallerDestination(string FilePath, Guid StartSceneId, Export.WindowsInstallerOptions Options);
 
 public interface IEditorDialogs
 {
@@ -13,4 +14,5 @@ public interface IEditorDialogs
     Task ShowInformationAsync(string title, string message) => Task.CompletedTask;
     Task<string?> PickImageAsync() => Task.FromResult<string?>(null);
     Task<WindowsExportDestination?> PickWindowsExportAsync(NovellMaker.Core.Projects.NovelProject project) => Task.FromResult<WindowsExportDestination?>(null);
+    Task<WindowsInstallerDestination?> PickWindowsInstallerAsync(NovellMaker.Core.Projects.NovelProject project) => Task.FromResult<WindowsInstallerDestination?>(null);
 }

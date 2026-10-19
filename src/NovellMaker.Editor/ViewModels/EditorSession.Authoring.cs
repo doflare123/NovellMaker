@@ -270,6 +270,7 @@ public sealed partial class EditorSession
         foreach (var command in new[] { AddSceneCommand, DeleteSceneCommand, UndoCommand, RedoCommand }) command?.NotifyCanExecuteChanged();
         PreviewSceneCommand?.NotifyCanExecuteChanged();
         ExportWindowsCommand?.NotifyCanExecuteChanged();
+        ExportWindowsInstallerCommand?.NotifyCanExecuteChanged();
         foreach (var document in sceneDocuments.Values) document.NotifyCommands();
     }
 

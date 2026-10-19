@@ -1,4 +1,4 @@
-param([switch]$CaptureScreenshots, [switch]$NativeRuntime, [switch]$WindowsExport)
+param([switch]$CaptureScreenshots, [switch]$NativeRuntime, [switch]$WindowsExport, [switch]$WindowsInstaller)
 
 $ErrorActionPreference = 'Stop'
 $env:AVALONIA_TELEMETRY_OPTOUT = '1'
@@ -6,7 +6,13 @@ $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
-    if ($WindowsExport) {
+    if ($WindowsInstaller) {
+        if (-not $IsWindows) { throw 'Windows installer smoke requires Windows x64.' }
+        & (Join-Path $PSScriptRoot 'prepare-windows-installer.ps1')
+        $env:NOVELLMAKER_INSTALLER_SMOKE = '1'
+        $env:NOVELLMAKER_EXPORT_SMOKE = '1'
+    }
+    elseif ($WindowsExport) {
         if (-not $IsWindows) { throw 'Windows export smoke requires Windows x64.' }
         & (Join-Path $PSScriptRoot 'prepare-windows-export.ps1')
         $env:NOVELLMAKER_EXPORT_SMOKE = '1'

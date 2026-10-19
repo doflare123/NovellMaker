@@ -50,6 +50,7 @@
       </MenuItem>
       <MenuItem Header="_Сборка">
         <MenuItem Name="ExportWindowsMenu" Header="Экспорт игры для Windows x64…" Command="{Binding ExportWindowsCommand}" />
+        <MenuItem Name="ExportWindowsInstallerMenu" Header="Установщик игры EXE…" Command="{Binding ExportWindowsInstallerCommand}" />
       </MenuItem>
       <MenuItem Header="_Сцена">
         <MenuItem Header="Открыть проверочный фрагмент" Command="{Binding OpenExampleCommand}" />

@@ -13,6 +13,52 @@ public sealed class EditorDialogs(Window owner) : IEditorDialogs
 
     private sealed record StartScene(Guid Id, string Name) { public override string ToString() => Name; }
 
+    public async Task<WindowsInstallerDestination?> PickWindowsInstallerAsync(NovellMaker.Core.Projects.NovelProject project)
+    {
+        var dialog = CreateDialog("Установщик игры EXE — Windows x64");
+        var picker = new ComboBox { Name = "InstallerStartScene", ItemsSource = project.Scenes.Select(s => new StartScene(s.Id, s.Name)).ToArray(), SelectedIndex = 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch };
+        var version = new TextBox { Name = "InstallerVersion", Text = "1.0.0" };
+        var iconLabel = new TextBlock { Name = "InstallerIconPath", Text = "Стандартная иконка", TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+        string? iconPath = null;
+        var icon = new Button { Content = "Выбрать ICO…", Name = "PickInstallerIcon" };
+        icon.Click += async (_, _) =>
+        {
+            try
+            {
+                var icons = await dialog.StorageProvider.OpenFilePickerAsync(new() { Title = "Иконка установщика и ярлыка", AllowMultiple = false,
+                    FileTypeFilter = [new FilePickerFileType("Иконка Windows") { Patterns = ["*.ico"] }] });
+                if (icons.Count > 0) { iconPath = LocalPath(icons[0]); iconLabel.Text = iconPath; }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { iconLabel.Text = error.Message; }
+        };
+        var clearIcon = new Button { Content = "Сбросить" };
+        clearIcon.Click += (_, _) => { iconPath = null; iconLabel.Text = "Стандартная иконка"; };
+        var errorText = new TextBlock { Name = "InstallerValidation", Foreground = Avalonia.Media.Brushes.Orange, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+        var cancel = new Button { Content = "Отмена" };
+        var export = new Button { Content = "Собрать EXE…", Name = "ConfirmInstallerExport" };
+        cancel.Click += (_, _) => dialog.Close(false);
+        export.Click += (_, _) =>
+        {
+            try { _ = new Export.WindowsInstallerOptions(version.Text ?? "").ValidateVersion(); dialog.Close(true); }
+            catch (ArgumentException error) { errorText.Text = error.Message; }
+        };
+        dialog.Content = new StackPanel { Margin = new Thickness(24), Spacing = 12, Children =
+        {
+            new TextBlock { Text = "Один EXE для передачи игроку: игра и .NET внутри. Установка для текущего пользователя, ярлык в меню «Пуск» и удаление через параметры Windows. Сохранения остаются при удалении. Используются текущие изменения проекта.", TextWrapping = Avalonia.Media.TextWrapping.Wrap },
+            new TextBlock { Text = "Стартовая сцена:" }, picker,
+            new TextBlock { Text = "Версия сборки (например 1.0.0):" }, version,
+            new TextBlock { Text = "Иконка установщика и ярлыка (необязательно):" }, iconLabel,
+            new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { icon, clearIcon } }, errorText,
+            new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, export } }
+        } };
+        dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(false); };
+        if (!await dialog.ShowDialog<bool>(owner) || picker.SelectedItem is not StartScene scene) return null;
+        var file = await owner.StorageProvider.SaveFilePickerAsync(new() { Title = "Сохранить установщик игры", SuggestedFileName = $"Game-{project.Id.ToString("N")[..8]}-Setup.exe",
+            DefaultExtension = "exe", FileTypeChoices = [new FilePickerFileType("Установщик Windows") { Patterns = ["*.exe"] }], ShowOverwritePrompt = false });
+        return file is null ? null : new(LocalPath(file), scene.Id, new(version.Text ?? "", iconPath));
+    }
+
     public async Task<WindowsExportDestination?> PickWindowsExportAsync(NovellMaker.Core.Projects.NovelProject project)
     {
         var dialog = CreateDialog("Экспорт игры — Windows x64");
