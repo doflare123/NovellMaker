@@ -71,7 +71,7 @@ public sealed class PhraseScriptTests
             var loaded = await store.LoadAsync(path); Assert.IsTrue(project.ContentEquals(loaded));
             var player = new ScenarioPlayer(loaded, scene.Id, "ru"); var save = GameSave.Serialize(player); player.Advance(); GameSave.Load(player, save);
             Assert.AreEqual(scene.Lines[0].Id, player.Frame.LineId);
-            var node = JsonNode.Parse(await File.ReadAllTextAsync(path))!; node["formatVersion"] = 7;
+            var node = JsonNode.Parse(await File.ReadAllTextAsync(path))!; node["formatVersion"] = 7; node.AsObject().Remove("audio");
             node["scenes"]![0]!.AsObject().Remove("scriptBlocks");
             await File.WriteAllTextAsync(path, node.ToJsonString()); var bytes = await File.ReadAllBytesAsync(path);
             loaded = await store.LoadAsync(path); Assert.IsTrue(loaded.Scenes[0].ScriptBlocks.IsEmpty);
@@ -113,7 +113,7 @@ public sealed class PhraseScriptTests
         {
             var store = new JsonProjectStore(); await store.SaveAsync(path, project);
             var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
-            json["formatVersion"] = 7; json["scenes"]![0]!.AsObject().Remove("scriptBlocks");
+            json["formatVersion"] = 7; json.AsObject().Remove("audio"); json["scenes"]![0]!.AsObject().Remove("scriptBlocks");
             var script = json["scenes"]![0]!["actions"]![0]!.AsObject(); script.Remove("references");
             await File.WriteAllTextAsync(path, json.ToJsonString()); var bytes = await File.ReadAllBytesAsync(path);
             var migrated = await store.LoadAsync(path); Assert.IsTrue(project.ContentEquals(migrated));

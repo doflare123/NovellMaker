@@ -98,8 +98,13 @@ public sealed partial class EditorSession
                 ? ProjectFileDeletion.IsWithin(full, Path.GetFullPath(Path.Combine(root, image.RelativePath)))
                 : string.Equals(full, Path.GetFullPath(Path.Combine(root, image.RelativePath)), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
                 .Select(image => image.Id).ToHashSet();
-            return new(Path.GetFileName(full), directory ? "Папка и всё её содержимое будут удалены с диска. Зарегистрированные изображения в этой папке и их привязки будут удалены из проекта."
-                : "Файл будет удалён с диска. Будет сохранена резервная копия для отмены.", RemoveImages(project, images), full);
+            var audio = project.Audio.Assets.Where(asset => directory
+                ? ProjectFileDeletion.IsWithin(full, Path.GetFullPath(Path.Combine(root, asset.RelativePath)))
+                : string.Equals(full, Path.GetFullPath(Path.Combine(root, asset.RelativePath)), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)).Select(a => a.Id).ToHashSet();
+            var withoutAssets = RemoveImages(project, images);
+            withoutAssets = withoutAssets with { Audio = withoutAssets.Audio with { Assets = withoutAssets.Audio.Assets.Where(a => !audio.Contains(a.Id)).ToImmutableArray() } };
+            return new(Path.GetFileName(full), directory ? "Папка и всё её содержимое будут удалены с диска. Зарегистрированные изображения и звуки в этой папке и их привязки будут удалены из проекта."
+                : "Файл будет удалён с диска. Будет сохранена резервная копия для отмены.", withoutAssets, full);
         }
         // Project roots, virtual category folders and Git rows are not deletable objects.
         return null;

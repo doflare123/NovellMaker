@@ -457,6 +457,33 @@ public sealed class SceneAuthoringTests
         session.Dispose();
     }
 
+    [TestMethod]
+    public async Task AudioImportBindingsDuplicationDeletionUndoAndSaveAsPreserveStableIds()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var wave = Path.Combine(directory.Path, "voice.wav"); File.WriteAllBytes(wave, NovellMaker.Testing.AudioFixture.Wave());
+        var dialogs = new Dialogs { SavePath = Path.Combine(directory.Path, "audio.novell"), AudioPath = wave };
+        using var session = await NewSessionAsync(dialogs); session.AddScene(); session.ActiveScene!.AddLine();
+        await session.ImportAudioAsync(); Assert.AreEqual(0, dialogs.Errors.Count);
+        var doc = session.ActiveScene!; var id = session.Project!.Audio.Assets[0].Id; var line = doc.SelectedLine!.Id;
+        var option = doc.AudioOptions.Single(o => o.Id == id);
+        doc.SceneSound = option; doc.LineVoice = option; doc.LineEffect = option; doc.SoundVolume = 35; doc.VoiceMuted = true;
+        Assert.AreEqual(id, session.Project.Audio.Voices[line]["ru"]); Assert.IsTrue(session.IsDirty);
+        doc.DuplicateLine(); var copy = doc.SelectedLine!.Id; Assert.AreEqual(id, session.Project.Audio.Voices[copy]["ru"]);
+        doc.MoveLine(-1); Assert.AreEqual(copy, session.Project.Scenes[0].Lines[0].Id);
+        doc.DeleteLine(); Assert.IsFalse(session.Project.Audio.Voices.ContainsKey(copy));
+        session.Undo(); Assert.AreEqual(id, session.Project.Audio.Voices[copy]["ru"]);
+        var saveRoot = Path.Combine(directory.Path, "copy"); Directory.CreateDirectory(saveRoot);
+        dialogs.SavePath = Path.Combine(saveRoot, "audio.novell"); await session.SaveAsync(true);
+        Assert.AreEqual(0, dialogs.Errors.Count);
+        Assert.IsTrue(File.Exists(Path.Combine(saveRoot, session.Project.Audio.Assets[0].RelativePath)));
+        var loaded = await new JsonProjectStore().LoadAsync(dialogs.SavePath); Assert.IsTrue(loaded.ContentEquals(session.Project));
+        await session.DeleteSceneAsync(doc.Id); // confirmation rejected: bindings must survive
+        Assert.AreEqual(id, session.Project.Audio.SceneSounds[doc.Id]);
+        session.DeleteActiveScene(); Assert.AreEqual(0, session.Project.Audio.Voices.Count); Assert.AreEqual(0, session.Project.Audio.SceneSounds.Count);
+        session.Undo(); Assert.AreEqual(id, session.Project.Audio.SceneSounds[doc.Id]);
+    }
+
     private static async Task<EditorSession> NewSessionAsync(Dialogs? dialogs = null)
     {
         var session = new EditorSession(new JsonProjectStore(), dialogs ?? new Dialogs(), new Git());
@@ -466,6 +493,8 @@ public sealed class SceneAuthoringTests
 
     private sealed class Dialogs : IEditorDialogs
     {
+        public string? AudioPath { get; set; }
+        public Task<string?> PickAudioAsync() => Task.FromResult(AudioPath);
         public string? OpenPath { get; set; }
         public string? SavePath { get; set; }
         public List<(string Title, string Message)> Errors { get; } = [];

@@ -159,6 +159,31 @@
         </ScrollViewer>
       </TabItem>
       <TabItem Header="Скрипт"><views:ScenarioActionsView IsEnabled="{Binding Session.CanEdit}" /></TabItem>
+      <TabItem Name="AudioTab" Header="Звук">
+        <ScrollViewer Name="AudioScroll">
+          <StackPanel Margin="0,12,0,0" Spacing="10" IsEnabled="{Binding Session.CanEdit}">
+            <Button Name="ImportAudioButton" Content="Импортировать PCM WAV…" Click="ImportAudio" HorizontalAlignment="Left" />
+            <TextBlock Text="PCM WAV 16 bit, mono/stereo, 8000–48000 Гц. Все записи читаются потоком." Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="sound — музыка и окружение сцены (цикл)" />
+            <ComboBox Name="SceneSoundPicker" ItemsSource="{Binding AudioOptions}" SelectedItem="{Binding SceneSound, Mode=TwoWay}" HorizontalAlignment="Stretch" />
+            <TextBlock Text="Фраза для эффекта и озвучки" />
+            <ComboBox ItemsSource="{Binding Lines}" SelectedItem="{Binding SelectedLine, Mode=TwoWay}" HorizontalAlignment="Stretch">
+              <ComboBox.ItemTemplate><DataTemplate DataType="vm:DialogueLineViewModel"><TextBlock Text="{Binding Label}" /></DataTemplate></ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="effect — эффект при показе фразы" />
+            <ComboBox Name="LineEffectPicker" ItemsSource="{Binding AudioOptions}" SelectedItem="{Binding LineEffect, Mode=TwoWay}" IsEnabled="{Binding CanEditLine}" HorizontalAlignment="Stretch" />
+            <TextBlock Text="voice — озвучка фразы на выбранном языке" />
+            <TextBox Text="{Binding EditingLanguage, Mode=TwoWay}" PlaceholderText="Язык озвучки" />
+            <ComboBox Name="LineVoicePicker" ItemsSource="{Binding AudioOptions}" SelectedItem="{Binding LineVoice, Mode=TwoWay}" IsEnabled="{Binding CanEditLine}" HorizontalAlignment="Stretch" />
+            <TextBlock Text="Микшер проекта, громкость в %" Classes="section" />
+            <Grid ColumnDefinitions="*,120,130"><TextBlock Text="Master — общий" VerticalAlignment="Center" /><NumericUpDown Name="MasterAudioVolume" Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding MasterVolume, Mode=TwoWay}" /><CheckBox Name="MasterAudioMute" Grid.Column="2" Content="Выключить" IsChecked="{Binding MasterMuted, Mode=TwoWay}" /></Grid>
+            <Grid ColumnDefinitions="*,120,130"><TextBlock Text="sound — музыка и окружение" VerticalAlignment="Center" /><NumericUpDown Name="SoundAudioVolume" Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding SoundVolume, Mode=TwoWay}" /><CheckBox Name="SoundAudioMute" Grid.Column="2" Content="Выключить" IsChecked="{Binding SoundMuted, Mode=TwoWay}" /></Grid>
+            <Grid ColumnDefinitions="*,120,130"><TextBlock Text="effect — эффекты" VerticalAlignment="Center" /><NumericUpDown Name="EffectAudioVolume" Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding EffectVolume, Mode=TwoWay}" /><CheckBox Name="EffectAudioMute" Grid.Column="2" Content="Выключить" IsChecked="{Binding EffectMuted, Mode=TwoWay}" /></Grid>
+            <Grid ColumnDefinitions="*,120,130"><TextBlock Text="voice — речь" VerticalAlignment="Center" /><NumericUpDown Name="VoiceAudioVolume" Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding VoiceVolume, Mode=TwoWay}" /><CheckBox Name="VoiceAudioMute" Grid.Column="2" Content="Выключить" IsChecked="{Binding VoiceMuted, Mode=TwoWay}" /></Grid>
+            <TextBlock Text="Проверка: F6. Продолжение останавливает voice; эффекты доигрывают. Переход останавливает voice/effect, смена сцены заменяет sound. Загрузка: фон с начала, без повтора voice/effect. В игре F9 — микшер, P — пауза звука и сценария." Classes="muted" TextWrapping="Wrap" />
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
     </TabControl>
   </DockPanel>
 </UserControl>

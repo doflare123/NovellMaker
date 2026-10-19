@@ -21,7 +21,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         get => selectedSection;
         set
         {
-            if (value is < 0 or > 4 || selectedSection == value) return;
+            if (value is < 0 or > 5 || selectedSection == value) return;
             selectedSection = value;
             Changed();
         }
@@ -49,7 +49,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
     public override bool CanClose => true;
     public override AsyncCommand CloseCommand { get; }
     public override string Header => (string.IsNullOrWhiteSpace(Name) ? "Сцена без названия" : Name) + (IsModified ? " *" : "");
-    public bool IsModified => !scene.ContentEquals(Session.SavedScene(Id));
+    public bool IsModified => !scene.ContentEquals(Session.SavedScene(Id)) || Session.IsAudioModified;
     public ObservableCollection<DialogueLineViewModel> Lines { get; } = [];
     public AsyncCommand AddLineCommand { get; }
     public AsyncCommand DeleteLineCommand { get; }
@@ -208,7 +208,10 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
             };
         }
         var blocks = scene.ScriptBlocks.Where(b => b.LineId == source.Id).Select(b => b with { LineId = copy.Id, Action = Clone(b.Action) });
-        Session.UpdateScene(scene with { Lines = scene.Lines.Insert(SelectedIndex + 1, copy), ScriptBlocks = scene.ScriptBlocks.AddRange(blocks) });
+        var audio = Audio;
+        if (audio.Voices.TryGetValue(source.Id, out var voices)) audio = audio with { Voices = audio.Voices.SetItem(copy.Id, voices) };
+        if (audio.LineEffects.TryGetValue(source.Id, out var effect)) audio = audio with { LineEffects = audio.LineEffects.SetItem(copy.Id, effect) };
+        Session.UpdateScene(scene with { Lines = scene.Lines.Insert(SelectedIndex + 1, copy), ScriptBlocks = scene.ScriptBlocks.AddRange(blocks) }, audio: audio);
         SelectLine(copy.Id);
     }
 
@@ -235,6 +238,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         var unchanged = ReferenceEquals(scene, updated) && sampledCss == Css;
         scene = updated;
         RefreshBackground();
+        RefreshAudio();
         if (unchanged)
         {
             RefreshCharacterBindings();
@@ -275,6 +279,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
     {
         RefreshCharacterBindings();
         RefreshPlayback();
+        RefreshAudio();
         foreach (var property in new[] { nameof(SelectedLine), nameof(LineText), nameof(SelectedTextKey), nameof(SampleText),
                      nameof(CanEditLine), nameof(CanPrevious), nameof(CanNext), nameof(NavigationPosition), nameof(SelectedPhraseScriptSummary) }) Changed(property);
         Session.NotifySelectionChanged();

@@ -39,6 +39,6 @@ internal static class ActionReferences
             int Count(NovelProject p) => p.Scenes.Sum(s => s.Actions.Length + s.ScriptBlocks.Length);
             removed = Count(source) != Count(project);
         } while (removed);
-        return project;
+        return project with { Audio = project.Audio.Prune(project) };
     }
 }

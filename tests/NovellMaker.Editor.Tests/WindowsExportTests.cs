@@ -22,7 +22,7 @@ public sealed class WindowsExportTests
         root = Path.Combine(Path.GetTempPath(), "NovellMaker.Export.Tests", Guid.NewGuid().ToString("N"));
         source = Path.Combine(root, "source");
         template = Path.Combine(root, "template"); Directory.CreateDirectory(template);
-        project = BuiltInExample.Create(source);
+        project = NovellMaker.Testing.AudioFixture.Attach(BuiltInExample.Create(source), source);
         // Small template fixtures exercise packaging and failure handling. A separate test launches the real host.
         foreach (var file in new[] { "NovellMaker.Runtime.exe", "NovellMaker.Runtime.dll", "NovellMaker.Core.dll",
                      "NovellMaker.Runtime.deps.json", "coreclr.dll", "hostfxr.dll", "hostpolicy.dll", "System.Private.CoreLib.dll", "SDL2.dll", "openal.dll", "libSkiaSharp.dll" })
@@ -60,6 +60,8 @@ public sealed class WindowsExportTests
         Assert.IsTrue(edited.ContentEquals(await new JsonProjectStore().LoadAsync(Path.Combine(destination, GamePackage.ProjectName))));
         foreach (var image in project.Images)
             CollectionAssert.AreEqual(await File.ReadAllBytesAsync(Path.Combine(source, image.RelativePath)), await File.ReadAllBytesAsync(Path.Combine(destination, image.RelativePath)));
+        foreach (var sound in project.Audio.Assets)
+            CollectionAssert.AreEqual(File.ReadAllBytes(Path.Combine(source, sound.RelativePath)), File.ReadAllBytes(Path.Combine(destination, sound.RelativePath)));
         Assert.IsFalse(File.Exists(Path.Combine(destination, "private.txt")));
         Assert.IsFalse(File.Exists(Path.Combine(destination, "native.pdb")));
         CollectionAssert.AreEqual(originalBytes, await File.ReadAllBytesAsync(original));
@@ -83,6 +85,15 @@ public sealed class WindowsExportTests
         await File.WriteAllBytesAsync(image, bytes);
         await exporter.ExportAsync(project, source, project.Scenes[0].Id, destination);
         Assert.IsTrue(File.Exists(Path.Combine(destination, "NovellMaker.Runtime.exe")));
+    }
+
+    [TestMethod]
+    public async Task InvalidAudioLeavesNoPartialExport()
+    {
+        File.WriteAllText(Path.Combine(source, project.Audio.Assets[0].RelativePath), "corrupt");
+        var destination = Path.Combine(root, "bad-audio");
+        await Assert.ThrowsAsync<InvalidDataException>(() => new WindowsExportService(template, new ImageAssetService()).ExportAsync(project, source, project.Scenes[0].Id, destination));
+        Assert.IsFalse(Directory.Exists(destination)); Assert.HasCount(0, Directory.GetDirectories(root, ".novell-export-*"));
     }
 
     [TestMethod]
@@ -120,12 +131,13 @@ public sealed class WindowsExportTests
         var moved = Path.Combine(root, "перенесённая игра"); Directory.Move(destination, moved);
         // Removing authoring assets proves the exported game cannot fall back to the project directory.
         foreach (var image in project.Images) File.Delete(Path.Combine(source, image.RelativePath));
+        foreach (var sound in project.Audio.Assets) File.Delete(Path.Combine(source, sound.RelativePath));
         var captures = Path.Combine(repo.FullName, "artifacts", "screenshots", "export"); Directory.CreateDirectory(captures);
         var report = Path.Combine(captures, "report.json");
         var plan = Path.Combine(root, "plan.json");
         await File.WriteAllTextAsync(plan, "[{\"Kind\":\"tick\",\"Seconds\":2},{\"Kind\":\"quicksave\"},{\"Kind\":\"tick\",\"Seconds\":3},{\"Kind\":\"quickload\"},{\"Kind\":\"next\"},{\"Kind\":\"click\",\"X\":650,\"Y\":300},{\"Kind\":\"quicksave\"},{\"Kind\":\"click\",\"X\":500,\"Y\":300},{\"Kind\":\"quickload\"},{\"Kind\":\"click\",\"X\":500,\"Y\":300}]");
         var start = new ProcessStartInfo(Path.Combine(moved, "NovellMaker.Runtime.exe"))
-        { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true, WindowStyle = ProcessWindowStyle.Hidden };
+        { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, StandardErrorEncoding = System.Text.Encoding.UTF8, RedirectStandardOutput = true, WindowStyle = ProcessWindowStyle.Hidden };
         start.Environment["DOTNET_ROOT"] = Path.Combine(root, "no-dotnet");
         start.Environment["DOTNET_ROOT_X64"] = Path.Combine(root, "no-dotnet");
         start.Environment["DOTNET_MULTILEVEL_LOOKUP"] = "0";
@@ -146,6 +158,9 @@ public sealed class WindowsExportTests
         StringAssert.Contains(trace[9].GetProperty("Text").GetString()!, "Ветка успеха");
         Assert.AreEqual(0, json.RootElement.GetProperty("Diagnostics").GetArrayLength());
         Assert.IsTrue(json.RootElement.GetProperty("Packaged").GetBoolean());
+        Assert.IsGreaterThan(0L, json.RootElement.GetProperty("AudioSubmittedBytes").GetInt64());
+        Assert.AreEqual(5, json.RootElement.GetProperty("AudioOpenedSources").GetInt32(), "Initial sound/voice/effect and two loads must restart only sound.");
+        Assert.AreEqual(1, json.RootElement.GetProperty("AudioSources").GetInt32());
         Assert.AreEqual(project.Name, json.RootElement.GetProperty("WindowTitle").GetString());
         var quicksave = json.RootElement.GetProperty("SavePath").GetString()!;
         Assert.IsTrue(File.Exists(quicksave));

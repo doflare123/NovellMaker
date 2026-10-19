@@ -83,6 +83,9 @@ public sealed class NativeRuntimeSmokeTests
         {
             var root = report.RootElement;
             Assert.IsTrue(root.GetProperty("Loaded").GetBoolean());
+            Assert.IsGreaterThan(0L, root.GetProperty("AudioSubmittedBytes").GetInt64());
+            Assert.IsGreaterThanOrEqualTo(3, root.GetProperty("AudioOpenedSources").GetInt32());
+            Assert.AreEqual(3, root.GetProperty("AudioSources").GetInt32());
             Assert.IsGreaterThanOrEqualTo(4, root.GetProperty("DrawFrames").GetInt32());
             Assert.AreEqual(fixture.StartLineId, root.GetProperty("InitialLineId").GetGuid());
             Assert.AreEqual(fixture.NextLineId, root.GetProperty("AfterNextLineId").GetGuid());
@@ -104,6 +107,33 @@ public sealed class NativeRuntimeSmokeTests
             Assert.AreEqual(new SKColor(245, 158, 45), bitmap.GetPixel(780, 100), "Larger sprite must remain visible outside the overlap.");
             Assert.AreEqual(new SKColor(22, 58, 112), bitmap.GetPixel(340, 200), "Automatic left-hand position must be empty.");
         }
+    }
+
+    [TestMethod]
+    public async Task NativeMixerChangesVolumeAndMuteThroughActualButtons()
+    {
+        if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1") Assert.Inconclusive("Set NOVELLMAKER_NATIVE_SMOKE=1.");
+        var artifacts = Path.Combine(FindRepositoryRoot(), "artifacts", "screenshots");
+        var fixtureDirectory = Path.Combine(artifacts, "audio-mixer-fixture");
+        var images = Path.Combine(fixtureDirectory, "Assets", "Images"); Directory.CreateDirectory(images);
+        var fixture = await CreateFixtureAsync(fixtureDirectory, images, false);
+        var png = Path.Combine(artifacts, "runtime-audio-mixer.png"); var report = Path.ChangeExtension(png, ".json");
+        var plan = Path.Combine(fixtureDirectory, "mixer-plan.json");
+        await File.WriteAllTextAsync(plan, """[{"Kind":"mixer"},{"Kind":"click","X":760,"Y":170},{"Kind":"click","X":1000,"Y":380}]""");
+        var runtime = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
+        var start = CreateStartInfo(runtime, fixture.ProjectPath, fixtureDirectory, fixture.SceneId, fixture.StartLineId, png, report);
+        start.ArgumentList.Add("--smoke-plan"); start.ArgumentList.Add(plan);
+        using var process = Process.Start(start)!; var stderr = process.StandardError.ReadToEndAsync(); var stdout = process.StandardOutput.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        try { await process.WaitForExitAsync(timeout.Token); } catch (OperationCanceledException) { process.Kill(true); await process.WaitForExitAsync(); Assert.Fail("Mixer smoke timed out."); }
+        Assert.AreEqual(0, process.ExitCode, await stderr + await stdout);
+        using var json = JsonDocument.Parse(File.ReadAllText(report)); var root = json.RootElement;
+        Assert.IsTrue(root.GetProperty("ActionTrace").EnumerateArray().All(t => t.GetProperty("Success").GetBoolean()));
+        var mixer = root.GetProperty("AudioMixer");
+        Assert.AreEqual(0.9f, mixer.GetProperty("Master").GetProperty("Volume").GetSingle());
+        Assert.IsTrue(mixer.GetProperty("Voice").GetProperty("Muted").GetBoolean());
+        Assert.AreEqual(3, root.GetProperty("AudioOpenedSources").GetInt32());
+        Assert.AreEqual(0, root.GetProperty("Diagnostics").GetArrayLength());
     }
 
     private static ProcessStartInfo CreateStartInfo(
@@ -213,6 +243,11 @@ public sealed class NativeRuntimeSmokeTests
                     "left: 32px; bottom: 32px; }",
             },
         };
+        project = NovellMaker.Testing.AudioFixture.Attach(project, fixtureDirectory);
+        project = project with { Audio = project.Audio with {
+            Voices = project.Audio.Voices.SetItem(third.Id, project.Audio.Voices[scene.Lines[0].Id]),
+            LineEffects = project.Audio.LineEffects.SetItem(third.Id, project.Audio.Assets[0].Id)
+        } };
         var projectPath = Path.Combine(fixtureDirectory, "runtime-smoke.novell");
         await new JsonProjectStore().SaveAsync(projectPath, project);
         return new RuntimeFixture(projectPath, scene.Id, third.Id, fourth.Id);

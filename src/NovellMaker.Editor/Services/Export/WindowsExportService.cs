@@ -36,6 +36,7 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
         {
             await new JsonProjectStore().SaveAsync(Path.Combine(staging, GamePackage.ProjectName), project);
             await images.CopyAsync(assetsRoot, staging, project.Images);
+            await AudioAssetService.CopyAsync(assetsRoot, staging, project.Audio.Assets);
             foreach (var path in Directory.EnumerateFiles(templateDirectory, "*", SearchOption.AllDirectories))
             {
                 if (Path.GetExtension(path).Equals(".pdb", StringComparison.OrdinalIgnoreCase)) continue;

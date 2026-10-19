@@ -170,6 +170,9 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         if (ProjectDirectory is { } sourceRoot && snapshot.Images.Length > 0 &&
             !string.Equals(sourceRoot, Path.GetDirectoryName(path), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
             await imageAssets.CopyAsync(sourceRoot, Path.GetDirectoryName(path)!, snapshot.Images);
+        if (ProjectDirectory is { } audioRoot && snapshot.Audio.Assets.Length > 0 &&
+            !string.Equals(audioRoot, Path.GetDirectoryName(path), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            await Services.Assets.AudioAssetService.CopyAsync(audioRoot, Path.GetDirectoryName(path)!, snapshot.Audio.Assets);
         await store.SaveAsync(path, snapshot);
         if ((deletedFiles.Length > 0 || undo.Any(s => s.DeletedFiles.Length > 0) || redo.Any(s => s.DeletedFiles.Length > 0)) && projectPath is not null && !string.Equals(Path.GetDirectoryName(path), ProjectDirectory,
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))

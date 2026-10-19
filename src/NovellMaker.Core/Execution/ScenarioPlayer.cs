@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using NovellMaker.Core.Audio;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Scenes;
 using NovellMaker.Core.Styling;
@@ -13,6 +14,10 @@ public sealed class ScenarioPlayer
     private readonly Dictionary<Guid, ImmutableArray<ScenarioAction>> programs;
     public GameState State { get; private set; }
     public NovelProject Project => project;
+    private readonly Queue<AudioEvent> audioEvents = new();
+    private void Audio(AudioEventKind kind, Guid? line = null) => audioEvents.Enqueue(new(kind, State.SceneId, line));
+    public AudioEvent[] DrainAudioEvents() { var result = audioEvents.ToArray(); audioEvents.Clear(); return result; }
+
 
     public void Cancel()
     {
@@ -29,12 +34,14 @@ public sealed class ScenarioPlayer
         programs = project.Scenes.ToDictionary(s => s.Id, ScenarioProgram.Compile);
         if (!programs.TryGetValue(sceneId, out var actions)) throw new ArgumentException($"Сцена {sceneId} отсутствует.", nameof(sceneId));
         State = new GameState { ProjectId = project.Id, Revision = ScenarioProgram.Fingerprint(project), SceneId = sceneId, NextActionId = actions.FirstOrDefault()?.Id };
+        Audio(AudioEventKind.Scene);
         Pump();
     }
 
     public bool Advance()
     {
         if (State.Wait?.Mode != "input" || State.Error is not null) return false;
+        Audio(AudioEventKind.Continue);
         State = State with { Wait = null };
         Pump();
         return true;
@@ -134,7 +141,7 @@ public sealed class ScenarioPlayer
                 { action = State.QueuedActions[0]; State = State with { QueuedActions = State.QueuedActions.RemoveAt(0) }; }
                 else
                 {
-                    if (State.NextActionId is not { } next) { State = State with { Completed = true }; return; }
+                    if (State.NextActionId is not { } next) { State = State with { Completed = true }; Audio(AudioEventKind.Stop); return; }
                     var actions = programs[State.SceneId];
                     var index = Find(actions, next);
                     if (index < 0) throw new InvalidOperationException($"Действие {next} отсутствует.");
@@ -156,7 +163,7 @@ public sealed class ScenarioPlayer
             case LineEntryAction: break;
             case TextAction a:
                 if (!project.Scenes.First(s => s.Id == State.SceneId).Lines.Any(l => l.Id == a.LineId)) throw new InvalidOperationException($"Реплика {a.LineId} отсутствует.");
-                State = State with { LineId = a.LineId, TextStartedAt = State.Time }; break;
+                State = State with { LineId = a.LineId, TextStartedAt = State.Time }; Audio(AudioEventKind.Line, a.LineId); break;
             case ShowAction a: Show(a.ObjectId); break;
             case HideAction a:
                 if (!project.Characters.Any(c => c.Id == a.ObjectId)) Diagnostic($"Скрываемый персонаж {a.ObjectId} отсутствует.");
@@ -234,18 +241,23 @@ public sealed class ScenarioPlayer
     private void Jump(Guid sceneId, Guid actionId)
     {
         if (!programs.TryGetValue(sceneId, out var actions) || Find(actions, actionId) < 0) throw new InvalidOperationException($"Переход {sceneId}/{actionId} отсутствует.");
+        Audio(AudioEventKind.Jump);
+        var changedScene = sceneId != State.SceneId;
         State = State with { SceneId = sceneId, NextActionId = actionId, QueuedActions = [], LineId = sceneId == State.SceneId ? State.LineId : null, Hotspots = [], Completed = false };
+        if (changedScene) Audio(AudioEventKind.Scene);
     }
 
     public void Restore(GameState state)
     {
         GameSave.Validate(state, project);
         State = state;
+        audioEvents.Clear();
+        Audio(state.Completed || state.Error is not null ? AudioEventKind.Stop : AudioEventKind.Restore);
     }
 
     private static int Find(ImmutableArray<ScenarioAction> actions, Guid id)
     { for (var i = 0; i < actions.Length; i++) if (actions[i].Id == id) return i; return -1; }
     private void Diagnostic(string message) => State = State with { Diagnostics = State.Diagnostics.Add(message) };
-    private void Fail(string message) => State = State with { Error = message, Diagnostics = State.Diagnostics.Add(message) };
+    private void Fail(string message) { State = State with { Error = message, Diagnostics = State.Diagnostics.Add(message) }; Audio(AudioEventKind.Stop); }
     private static double Lerp(double a, double b, double t) => a + (b - a) * t;
 }

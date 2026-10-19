@@ -9,7 +9,7 @@ using NovellMaker.Core.Execution;
 
 namespace NovellMaker.Runtime;
 
-internal sealed class RuntimeGame : Game
+internal sealed partial class RuntimeGame : Game
 {
     private const int LogicalWidth = RuntimeInputMapper.LogicalWidth;
     private const int LogicalHeight = RuntimeInputMapper.LogicalHeight;
@@ -48,7 +48,7 @@ internal sealed class RuntimeGame : Game
     private readonly RuntimeSmokeStep[]? smokePlan;
     private readonly List<RuntimeActionTrace> actionTrace = [];
     private RenderedTexture? actionHelp;
-    private string saveMessage = "F7 — сохранить · F8 — загрузить · Enter — продолжить";
+    private string saveMessage = "F7/F8 — слот · Enter — дальше · F9 — звук · P — пауза";
     private string SavePath => RuntimeStorage.SavePath(player.Execution.State.ProjectId, arguments.Package is not null);
     private bool UsesGameState => player.UsesActions || player.IsGamePlayback;
 
@@ -73,6 +73,7 @@ internal sealed class RuntimeGame : Game
 
     protected override void LoadContent()
     {
+        InitializeAudio();
         spriteBatch = new SpriteBatch(GraphicsDevice);
         sceneTarget = new RenderTarget2D(
             GraphicsDevice,
@@ -94,11 +95,12 @@ internal sealed class RuntimeGame : Game
 
     protected override void Update(GameTime gameTime)
     {
-        lineElapsed += gameTime.ElapsedGameTime;
+        SynchronizeAudio();
+        if (!audioPaused && !showMixer) lineElapsed += gameTime.ElapsedGameTime;
         if (UsesGameState)
         {
             var line = player.Frame.LineId;
-            if (smokePlan is null) player.Tick(gameTime.ElapsedGameTime);
+            if (smokePlan is null && !audioPaused && !showMixer) player.Tick(gameTime.ElapsedGameTime);
             if (line != player.Frame.LineId) lineElapsed = TimeSpan.Zero;
             RefreshFrameResources();
             RefreshTextTextures();
@@ -117,14 +119,16 @@ internal sealed class RuntimeGame : Game
             {
                 Exit();
             }
+            else if (Pressed(keyboard, Keys.F9)) ToggleMixer();
+            else if (Pressed(keyboard, Keys.P)) { audioPaused = !audioPaused; audio!.Pause(audioPaused || showMixer); RefreshMixer(); }
             else if (UsesGameState && Pressed(keyboard, Keys.F7)) SaveGame();
             else if (UsesGameState && Pressed(keyboard, Keys.F8)) LoadGame();
-            else if (Pressed(keyboard, Keys.Right) || Pressed(keyboard, Keys.Enter) ||
-                     Pressed(keyboard, Keys.Space))
+            else if (!audioPaused && !showMixer && (Pressed(keyboard, Keys.Right) || Pressed(keyboard, Keys.Enter) ||
+                     Pressed(keyboard, Keys.Space)))
             {
                 ApplyAction(RuntimeAction.Next);
             }
-            else if (Pressed(keyboard, Keys.Left))
+            else if (!audioPaused && !showMixer && Pressed(keyboard, Keys.Left))
             {
                 ApplyAction(RuntimeAction.Previous);
             }
@@ -136,7 +140,8 @@ internal sealed class RuntimeGame : Game
                     GraphicsDevice.PresentationParameters.BackBufferHeight);
                 if (RuntimeInputMapper.TryMapWindowToLogical(new Point(mouse.X, mouse.Y), letterbox, out var logical))
                 {
-                    if (!ClickLogical(logical) && showNavigationControls && RuntimeInputMapper.HitTestNavigation(
+                    if (showMixer) { ClickMixer(logical); }
+                    else if (!audioPaused && !ClickLogical(logical) && showNavigationControls && RuntimeInputMapper.HitTestNavigation(
                         logical,
                         player.Frame.CanPrevious,
                         player.Frame.CanNext) is { } action)
@@ -148,6 +153,7 @@ internal sealed class RuntimeGame : Game
             previousMouse = mouse;
         }
 
+        SynchronizeAudio();
         base.Update(gameTime);
     }
 
@@ -173,6 +179,7 @@ internal sealed class RuntimeGame : Game
         DrawNavigationControls(spriteBatch);
         foreach (var button in interactionButtons) spriteBatch.Draw(button.Texture.Texture, button.Bounds, Color.White);
         if (actionHelp is not null) spriteBatch.Draw(actionHelp.Texture, new Vector2(16, 16), Color.White);
+        DrawMixer(spriteBatch);
         spriteBatch.End();
 
         GraphicsDevice.SetRenderTarget(null);
@@ -201,6 +208,8 @@ internal sealed class RuntimeGame : Game
 
     protected override void UnloadContent()
     {
+        audio?.Dispose();
+        foreach (var button in mixerButtons) button.Texture.Dispose();
         actionHelp?.Dispose();
         foreach (var button in interactionButtons) button.Texture.Dispose();
         diagnosticsTexture?.Dispose();
@@ -256,7 +265,8 @@ internal sealed class RuntimeGame : Game
         {
             case "tick": player.Tick(TimeSpan.FromSeconds(step.Seconds)); break;
             case "next": success = ApplyAction(RuntimeAction.Next); break;
-            case "click": success = ClickLogical(new Point(step.X, step.Y)); break;
+            case "click": success = showMixer ? ClickMixer(new Point(step.X, step.Y)) : ClickLogical(new Point(step.X, step.Y)); break;
+            case "mixer": ToggleMixer(); break;
             case "save": GameSave.SaveAsync(path, player.Execution).GetAwaiter().GetResult(); break;
             case "load": player.LoadSave(File.ReadAllText(path)); break;
             case "quicksave": success = SaveGame(); break;
@@ -416,7 +426,7 @@ internal sealed class RuntimeGame : Game
     }
 
     private IReadOnlyList<string> CurrentDiagnostics() =>
-        player.Frame.Diagnostics.Concat(assetDiagnostics.Values.Order(StringComparer.Ordinal)).ToArray();
+        player.Frame.Diagnostics.Concat(assetDiagnostics.Values.Order(StringComparer.Ordinal)).Concat(audio?.Diagnostics ?? []).ToArray();
 
     private void DrawBackground(SpriteBatch batch, ImageAsset? background)
     {
@@ -556,7 +566,7 @@ internal sealed class RuntimeGame : Game
             AfterPreviousVisibleCharacterCount: afterPreviousVisibleCharacterCount,
             Diagnostics: CurrentDiagnostics()) { ActionTrace = actionTrace, SavePath = SavePath,
                 Packaged = arguments.Package is not null, WindowTitle = Window.Title,
-                RuntimeLibraryPath = typeof(object).Assembly.Location };
+                RuntimeLibraryPath = typeof(object).Assembly.Location, AudioSources = audio?.ActiveSources ?? 0, AudioSubmittedBytes = audioBackend.SubmittedBytes, AudioOpenedSources = audioBackend.OpenedSources, AudioMixer = Enum.GetValues<NovellMaker.Core.Audio.AudioGroup>().ToDictionary(g => g, g => audio!.Bus(g)) };
         var options = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -591,6 +601,10 @@ internal sealed record RuntimeSmokeReport(
     public bool Packaged { get; init; }
     public string? WindowTitle { get; init; }
     public string? RuntimeLibraryPath { get; init; }
+    public int AudioSources { get; init; }
+    public long AudioSubmittedBytes { get; init; }
+    public int AudioOpenedSources { get; init; }
+    public Dictionary<NovellMaker.Core.Audio.AudioGroup, NovellMaker.Core.Audio.AudioBus> AudioMixer { get; init; } = [];
 }
 internal sealed record RuntimeSmokeStep(string Kind, double Seconds = 0, int X = 0, int Y = 0);
 internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState State, string Text);

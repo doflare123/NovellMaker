@@ -41,6 +41,7 @@ public static class ScenarioProgram
     {
         var ids = new HashSet<Guid> { project.Id };
         ids.UnionWith(project.Images.Select(i => i.Id));
+        ids.UnionWith(project.Audio.Assets.Select(a => a.Id));
         ids.UnionWith(project.Characters.Select(c => c.Id));
         ids.UnionWith(project.Characters.SelectMany(c => c.States).Select(s => s.Id));
         ids.UnionWith(project.Scenes.Select(s => s.Id));

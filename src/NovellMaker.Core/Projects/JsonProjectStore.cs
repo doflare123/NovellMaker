@@ -89,6 +89,7 @@ public sealed class JsonProjectStore : IProjectStore
                 5 => MapVersion5(await DeserializeRequiredAsync<Version5ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 6 => MapVersion6(await DeserializeRequiredAsync<Version6ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 7 => MapVersion7(await DeserializeRequiredAsync<Version7ProjectDocument>(stream, cancellationToken, Version7SerializerOptions).ConfigureAwait(false)),
+                9 => MapVersion9(await DeserializeRequiredAsync<Version9ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 _ => throw new ProjectFormatException(
                     $"Некорректная версия формата проекта: {versionProbe.FormatVersion}."),
@@ -315,6 +316,9 @@ public sealed class JsonProjectStore : IProjectStore
             MapImages(document.Images), document.Characters?.Select(c => MapCharacter(c ?? throw new ArgumentException("Персонаж null."))).ToImmutableArray()
                 ?? throw new ArgumentException("Нет персонажей."), document.DefaultLanguage, document.DialogueUi) with { ExplorerShowsFiles = document.ExplorerShowsFiles };
 
+    private static NovelProject MapVersion9(Version9ProjectDocument document) =>
+        MapVersion8(document) with { Audio = document.Audio ?? throw new ArgumentException("Нет звука.") };
+
     private static ImmutableArray<ImageAsset> MapImages(List<ImageDocument?>? imageDocuments)
     {
         if (imageDocuments is null)
@@ -517,8 +521,9 @@ public sealed class JsonProjectStore : IProjectStore
         };
     }
 
-    private static Version8ProjectDocument MapForSave(NovelProject project) => new()
+    private static Version9ProjectDocument MapForSave(NovelProject project) => new()
     {
+        Audio = project.Audio,
         ExplorerShowsFiles = project.ExplorerShowsFiles,
         FormatVersion = project.FormatVersion,
         Id = project.Id,
@@ -715,7 +720,7 @@ public sealed class JsonProjectStore : IProjectStore
         [JsonRequired] public ImmutableArray<ScriptBlock>? ScriptBlocks { get; init; }
     }
 
-    private sealed class Version8ProjectDocument
+    private class Version8ProjectDocument
     {
         [JsonRequired] public int FormatVersion { get; init; }
         [JsonRequired] public Guid Id { get; init; }
@@ -726,6 +731,11 @@ public sealed class JsonProjectStore : IProjectStore
         [JsonRequired] public string? DefaultLanguage { get; init; }
         [JsonRequired] public bool ExplorerShowsFiles { get; init; }
         [JsonRequired] public DialogueUiDocument? DialogueUi { get; init; }
+    }
+
+    private sealed class Version9ProjectDocument : Version8ProjectDocument
+    {
+        [JsonRequired] public NovellMaker.Core.Audio.AudioProject? Audio { get; init; }
     }
 
     private class Version5ProjectDocument

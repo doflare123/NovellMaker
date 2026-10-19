@@ -129,7 +129,7 @@ public sealed partial class EditorSession
         if (scene is not null) EditProject(Services.ActionReferences.Prune(project with { Scenes = project.Scenes.Remove(scene) }));
     }
 
-    internal void UpdateScene(NovelScene scene, string? group = null)
+    internal void UpdateScene(NovelScene scene, string? group = null, NovellMaker.Core.Audio.AudioProject? audio = null)
     {
         if (project is null) return;
         var index = -1;
@@ -138,7 +138,7 @@ public sealed partial class EditorSession
         if (index >= 0)
         {
             var old = project.Scenes[index];
-            var updated = project with { Scenes = project.Scenes.SetItem(index, scene) };
+            var updated = project with { Scenes = project.Scenes.SetItem(index, scene), Audio = audio ?? project.Audio };
             if (scene.Lines.Length < old.Lines.Length) updated = Services.ActionReferences.Prune(updated);
             EditProject(updated, group);
         }
@@ -155,6 +155,7 @@ public sealed partial class EditorSession
 
     private void EditProject(NovelProject updated, string? group = null)
     {
+        updated = updated with { Audio = updated.Audio.Prune(updated) };
         if (project is null || project.ContentEquals(updated)) return;
         RecordEdit(group);
         project = updated;

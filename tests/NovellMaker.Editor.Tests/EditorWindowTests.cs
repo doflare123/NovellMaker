@@ -33,6 +33,31 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task AudioTabImportsAndBindsVoiceAndMixerControls() => WithUi(async () =>
+    {
+        var session = CreateSession(out var dialogs, out _);
+        var window = CreateWindow(session); window.Show(); await session.OpenExampleAsync();
+        var wave = Path.Combine(session.ProjectDirectory!, "voice-source.wav"); File.WriteAllBytes(wave, NovellMaker.Testing.AudioFixture.Wave());
+        dialogs.AudioPath = wave;
+        session.ActiveScene!.SelectedSection = 5; Dispatcher.UIThread.RunJobs();
+        Click(window, Find<Button>(window, "ImportAudioButton"));
+        for (var i = 0; i < 30 && session.IsBusy; i++) { await Task.Delay(20); Dispatcher.UIThread.RunJobs(); }
+        Assert.AreEqual(1, session.Project!.Audio.Assets.Length);
+        var voice = Find<ComboBox>(window, "LineVoicePicker"); voice.SelectedIndex = 1; Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(session.Project.Audio.Assets[0].Id, session.Project.Audio.Voices[session.ActiveScene.SelectedLine!.Id]["ru"]);
+        Find<ComboBox>(window, "SceneSoundPicker").SelectedIndex = 1; Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(session.Project.Audio.Assets[0].Id, session.Project.Audio.SceneSounds[session.ActiveScene.Id]);
+        Capture(window, "editor-audio.png");
+        Find<NumericUpDown>(window, "SoundAudioVolume").Value = 40;
+        Find<CheckBox>(window, "VoiceAudioMute").IsChecked = true; Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(0.4f, session.Project.Audio.Mixer[NovellMaker.Core.Audio.AudioGroup.Sound].Volume);
+        Assert.IsTrue(session.Project.Audio.Mixer[NovellMaker.Core.Audio.AudioGroup.Voice].Muted);
+        Find<ScrollViewer>(window, "AudioScroll").Offset = new Vector(0, 1000); Dispatcher.UIThread.RunJobs();
+        Capture(window, "editor-audio-mixer.png");
+        window.Close(); session.Dispose();
+    });
+
+    [TestMethod]
     public Task WindowsInstallerDialogValidatesVersionAndCancelsWithoutSaving() => WithUi(async () =>
     {
         var session = CreateSession(out _, out _);
@@ -1107,6 +1132,8 @@ public sealed class EditorWindowTests
         public int SavePickerCalls { get; private set; }
         public int ConfirmationCalls { get; private set; }
         public string SavePath { get; set; } = Path.Combine(Path.GetTempPath(), "test-ui.novell");
+        public string? AudioPath { get; set; }
+        public Task<string?> PickAudioAsync() => Task.FromResult(AudioPath);
         public string? ImagePath { get; set; }
         public bool AcceptDeletion { get; set; }
         public List<string> Deletions { get; } = [];

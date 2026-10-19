@@ -13,4 +13,5 @@
   <ItemGroup>
     <ProjectReference Include="../../src/NovellMaker.Runtime/NovellMaker.Runtime.csproj" />
   </ItemGroup>
+  <ItemGroup><Compile Include="../AudioFixture.cs" Link="AudioFixture.cs" /></ItemGroup>
 </Project>

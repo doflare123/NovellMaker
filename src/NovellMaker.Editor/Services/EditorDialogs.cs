@@ -82,6 +82,16 @@ public sealed class EditorDialogs(Window owner) : IEditorDialogs
         return new(Path.Combine(LocalPath(folders[0]), $"Game-{project.Id.ToString("N")[..8]}-{Guid.NewGuid().ToString("N")[..8]}"), scene.Id);
     }
 
+    public async Task<string?> PickAudioAsync()
+    {
+        var files = await owner.StorageProvider.OpenFilePickerAsync(new()
+        {
+            Title = "Импортировать звук PCM WAV", AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("PCM WAV 16 bit, mono/stereo, 8000–48000 Гц") { Patterns = ["*.wav"] }]
+        });
+        return files.Count > 0 ? LocalPath(files[0]) : null;
+    }
+
     public async Task<string?> PickImageAsync()
     {
         var files = await owner.StorageProvider.OpenFilePickerAsync(new()
