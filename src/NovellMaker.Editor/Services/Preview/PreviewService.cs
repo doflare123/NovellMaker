@@ -41,7 +41,8 @@ public sealed class PreviewService : IPreviewService
         {
             await new JsonProjectStore().SaveAsync(snapshotPath, request.Project);
             ObjectDisposedException.ThrowIf(disposed, this);
-            var start = new ProcessStartInfo(runtime) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true };
+            var start = new ProcessStartInfo(runtime) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true,
+                StandardErrorEncoding = System.Text.Encoding.UTF8 };
             if (hidden && OperatingSystem.IsWindows()) start.WindowStyle = ProcessWindowStyle.Hidden;
             foreach (var argument in new[] { "--project", snapshotPath, "--assets-root", request.AssetsRoot, "--scene", request.SceneId.ToString(), "--language", request.Language }) start.ArgumentList.Add(argument);
             if (request.LineId is { } line) { start.ArgumentList.Add("--line"); start.ArgumentList.Add(line.ToString()); }

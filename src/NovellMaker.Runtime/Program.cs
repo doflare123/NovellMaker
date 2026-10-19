@@ -12,6 +12,7 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
         if (args.Length == 1 && args[0] is "--help" or "-h")
         {
             Console.Out.WriteLine(RuntimeArguments.Usage);

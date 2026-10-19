@@ -36,7 +36,7 @@ public sealed class GitStatusService : IGitStatusService
         {
             repositoryResult = await RunGitAsync(
                 projectRoot,
-                ["rev-parse", "--is-inside-work-tree", "--show-toplevel"],
+                ["rev-parse", "--is-inside-work-tree", "--show-toplevel", "--show-prefix"],
                 cancellationToken);
         }
         catch (Win32Exception exception) when (IsExecutableMissing(exception))
@@ -71,9 +71,9 @@ public sealed class GitStatusService : IGitStatusService
         }
 
         var repositoryOutput = repositoryResult.StandardOutput
-            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            .Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
 
-        if (repositoryOutput.Length < 2 || !string.Equals(repositoryOutput[0], "true", StringComparison.OrdinalIgnoreCase))
+        if (repositoryOutput.Length < 3 || !string.Equals(repositoryOutput[0], "true", StringComparison.OrdinalIgnoreCase))
         {
             return new(
                 GitAvailability.NotRepository,
@@ -86,6 +86,11 @@ public sealed class GitStatusService : IGitStatusService
         try
         {
             repositoryRoot = Path.GetFullPath(repositoryOutput[1]);
+            // Git resolves ancestor symlinks (e.g. /var -> /private/var on macOS).
+            // Use its project prefix so both paths used for filtering share that spelling.
+            projectRoot = repositoryOutput[2].Length == 0
+                ? repositoryRoot
+                : Path.GetFullPath(repositoryOutput[2], repositoryRoot);
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {

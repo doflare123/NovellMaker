@@ -79,7 +79,8 @@ public sealed class GitStatusTests
         var snapshot = await new GitStatusService().GetStatusAsync(projectDirectory);
 
         Assert.AreEqual(GitAvailability.Available, snapshot.Availability);
-        Assert.AreEqual(System.IO.Path.GetFullPath(repository.Root), snapshot.RepositoryRoot);
+        Assert.AreEqual(repository.GitAllowFailure("rev-parse", "--show-toplevel").StandardOutput.TrimEnd('\r', '\n')
+            .Replace('/', System.IO.Path.DirectorySeparatorChar), snapshot.RepositoryRoot);
         Assert.AreEqual(5, snapshot.Changes.Count);
         AssertChange(snapshot, "staged.txt", "M", " ");
         AssertChange(snapshot, "unstaged.txt", " ", "M");
@@ -87,6 +88,19 @@ public sealed class GitStatusTests
         var renamed = AssertChange(snapshot, "renamed name.txt", "R", " ");
         Assert.AreEqual("original name.txt", renamed.OriginalPath);
         AssertChange(snapshot, "сцена 01.txt", "?", "?");
+    }
+
+    [TestMethod]
+    public async Task GetStatusAsync_ReportsChangesWhenProjectIsRepositoryRoot()
+    {
+        using var repository = GitRepository.Create();
+        repository.Write("сцены/новая.txt", "новая сцена");
+
+        var snapshot = await new GitStatusService().GetStatusAsync(repository.Root);
+
+        Assert.AreEqual(GitAvailability.Available, snapshot.Availability);
+        Assert.AreEqual(1, snapshot.Changes.Count);
+        AssertChange(snapshot, "сцены/новая.txt", "?", "?");
     }
 
     [TestMethod]
