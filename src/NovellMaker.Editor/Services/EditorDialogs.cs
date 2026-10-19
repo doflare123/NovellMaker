@@ -92,6 +92,30 @@ public sealed class EditorDialogs(Window owner) : IEditorDialogs
         return files.Count > 0 ? LocalPath(files[0]) : null;
     }
 
+    public async Task<string?> PickLuaScriptAsync()
+    {
+        var files = await owner.StorageProvider.OpenFilePickerAsync(new()
+        { Title = "Импортировать Lua (UTF-8)", AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("Lua") { Patterns = ["*.lua"] }] });
+        return files.Count > 0 ? LocalPath(files[0]) : null;
+    }
+
+    public async Task<string?> PickCodeEditorAsync()
+    {
+        var files = await owner.StorageProvider.OpenFilePickerAsync(new()
+        { Title = "Открывать Lua в редакторе", AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("Приложение редактора") { Patterns = OperatingSystem.IsWindows() ? ["*.exe"] : ["*"] }] });
+        return files.Count > 0 ? LocalPath(files[0]) : null;
+    }
+
+    public async Task<string?> PickSaveLuaScriptAsync(string suggestedName)
+    {
+        var file = await owner.StorageProvider.SaveFilePickerAsync(new()
+        { Title = "Выгрузить код в новый файл Lua", SuggestedFileName = suggestedName, DefaultExtension = "lua",
+            FileTypeChoices = [new FilePickerFileType("Lua") { Patterns = ["*.lua"] }], ShowOverwritePrompt = false });
+        return file is null ? null : LocalPath(file);
+    }
+
     public async Task<string?> PickImageAsync()
     {
         var files = await owner.StorageProvider.OpenFilePickerAsync(new()

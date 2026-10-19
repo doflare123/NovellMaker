@@ -17,6 +17,7 @@ public sealed partial class EditorSession
     public Task ExportWindowsInstallerAsync() => RunAsync(async () =>
     {
         if (project is null || !IsNameValid || !AreDocumentsValid) return;
+        ValidateExternalScriptsForRun();
         var destination = await dialogs.PickWindowsInstallerAsync(project);
         if (destination is null) return;
         var snapshot = project;
@@ -33,6 +34,7 @@ public sealed partial class EditorSession
     public Task ExportWindowsAsync() => RunAsync(async () =>
     {
         if (project is null || !IsNameValid || !AreDocumentsValid) return;
+        ValidateExternalScriptsForRun();
         var destination = await dialogs.PickWindowsExportAsync(project);
         if (destination is null) return;
         var snapshot = project;

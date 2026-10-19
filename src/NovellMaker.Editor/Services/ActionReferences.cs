@@ -22,6 +22,7 @@ internal static class ActionReferences
                 HideAction a when !Object(a.ObjectId) => null,
                 PlaceAction a when !Object(a.ObjectId) => null,
                 MoveAction a when !Object(a.ObjectId) => null,
+                RunScriptAction a when !source.Scripts.Any(s => s.Id == a.ScriptId) => null,
                 StateAction a when !source.Characters.Any(c => c.Id == a.ObjectId && c.States.Any(s => s.Id == a.StateId)) => null,
                 JumpAction a when !Target(a.SceneId, a.ActionId) => null,
                 BranchAction a when !Target(a.SceneId, a.ActionId) => null,

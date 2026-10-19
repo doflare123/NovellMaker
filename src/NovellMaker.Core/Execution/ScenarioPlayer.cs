@@ -131,11 +131,15 @@ public sealed class ScenarioPlayer
     private void Pump()
     {
         if (State.Error is not null) return;
+        GameState? failedLuaState = null;
         try
         {
+            var luaCalls = 0;
+            var luaTime = System.Diagnostics.Stopwatch.StartNew();
             for (var budget = 0; budget < 2048; budget++)
             {
                 if (State.Wait is not null || State.Choice is not null) return;
+                var before = State;
                 ScenarioAction? action;
                 if (!State.QueuedActions.IsEmpty)
                 { action = State.QueuedActions[0]; State = State with { QueuedActions = State.QueuedActions.RemoveAt(0) }; }
@@ -148,12 +152,16 @@ public sealed class ScenarioPlayer
                     action = actions[index];
                     State = State with { NextActionId = index + 1 < actions.Length ? actions[index + 1].Id : null };
                 }
+                if (action is ScriptAction or RunScriptAction) failedLuaState = before;
+                if (action is ScriptAction or RunScriptAction && (++luaCalls > 32 || luaTime.Elapsed.TotalSeconds > 5))
+                    throw new InvalidOperationException("Превышен лимит действий Lua за проход (32 вызова / 5 секунд).");
                 Execute(action);
+                failedLuaState = null;
             }
             Fail("Превышен лимит действий без ожидания; возможен цикл переходов.");
         }
         catch (Exception error) when (error is InvalidOperationException or ArgumentException or OverflowException)
-        { Fail($"Сцена {State.SceneId}: {error.Message}"); }
+        { if (failedLuaState is not null) State = failedLuaState; Fail($"Сцена {State.SceneId}: {error.Message}"); }
     }
 
     private void Execute(ScenarioAction action)
@@ -200,14 +208,29 @@ public sealed class ScenarioPlayer
             case BranchAction a: if (State.Variables.GetValueOrDefault(a.Variable) == a.EqualsValue) Jump(a.SceneId, a.ActionId); break;
             case SetAction a:
                 if (string.IsNullOrWhiteSpace(a.Variable) || a.Value is null) throw new InvalidOperationException("Некорректная переменная.");
-                State = State with { Variables = State.Variables.SetItem(a.Variable, a.Value) }; break;
+                var variables = State.Variables.SetItem(a.Variable, a.Value);
+                if (!LuaLimits.ValidVariables(variables)) throw new InvalidOperationException("Превышен бюджет переменных сценария.");
+                State = State with { Variables = variables }; break;
             case ScriptAction a:
-                State = State with { QueuedActions = LuaActionScript.Run(a, State, project).AddRange(State.QueuedActions) }; break;
+                RunScript(a); break;
+            case RunScriptAction a:
+                var resource = project.Scripts.FirstOrDefault(s => s.Id == a.ScriptId)
+                    ?? throw new InvalidOperationException($"Ресурс Lua {a.ScriptId} отсутствует.");
+                RunScript(new ScriptAction(a.Id, resource.Source, resource.Name) { References = resource.References }); break;
             case HotspotAction a:
                 if (!double.IsFinite(a.X) || !double.IsFinite(a.Y) || a.X < 0 || a.Y < 0 || a.Width <= 0 || a.Height <= 0 || !(a.X + a.Width <= 1) || !(a.Y + a.Height <= 1)) throw new InvalidOperationException("Некорректная область предмета.");
                 State = State with { Hotspots = State.Hotspots.Where(h => h.ObjectId != a.ObjectId).ToImmutableArray().Add(a) }; break;
             default: throw new InvalidOperationException("Неизвестное действие.");
         }
+    }
+
+    private void RunScript(ScriptAction action)
+    {
+        var commands = LuaActionScript.Run(action, State, project);
+        if (commands.Length + State.QueuedActions.Length > 4096)
+            throw new InvalidOperationException("Превышен лимит очереди Lua (4096 команд).");
+        if (!LuaLimits.ValidQueue(commands.Concat(State.QueuedActions))) throw new InvalidOperationException("Превышен размер очереди Lua.");
+        State = State with { QueuedActions = commands.AddRange(State.QueuedActions) };
     }
 
     private void Show(Guid id)

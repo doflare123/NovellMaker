@@ -59,7 +59,7 @@ public static class GameSave
             !double.IsFinite(state.Time) || state.Time < 0 || state.Time > TimeSpan.MaxValue.TotalSeconds || !double.IsFinite(state.TextStartedAt) || state.TextStartedAt < 0 || state.TextStartedAt > state.Time || state.Variables is null || state.ObjectStates is null || state.Placements is null ||
             state.VisibleObjects.IsDefault || state.ActiveActions.IsDefault || state.QueuedActions.IsDefault || state.Hotspots.IsDefault || state.Diagnostics.IsDefault)
             throw new ArgumentException("Некорректная позиция или коллекции сохранения.");
-        if (state.Variables.Any(p => string.IsNullOrWhiteSpace(p.Key) || p.Value is null) || state.Diagnostics.Any(d => d is null) ||
+        if (!LuaLimits.ValidVariables(state.Variables) || state.Diagnostics.Any(d => d is null) ||
             state.Placements.Any(p => !KnownObject(p.Key) || p.Value is not { IsValid: true }) ||
             state.ObjectStates.Any(p => !project.Characters.Any(c => c.Id == p.Key && c.States.Any(s => s.Id == p.Value))) ||
             state.VisibleObjects.Distinct().Count() != state.VisibleObjects.Length || state.VisibleObjects.Any(id =>
@@ -69,6 +69,7 @@ public static class GameSave
             state.ActiveActions.Select(a => a.ObjectId).Distinct().Count() != state.ActiveActions.Length)
             throw new ArgumentException("Некорректные объекты, переменные или активные действия сохранения.");
         if (state.Hotspots.Any(h => h is null) || state.QueuedActions.Any(a => a is null)) throw new ArgumentException("Сохранение содержит пустые команды.");
+        if (!LuaLimits.ValidQueue(state.QueuedActions)) throw new ArgumentException("Превышен бюджет очереди сохранения.");
         if (state.Wait is { } wait && (wait.ActionId == Guid.Empty || wait.Mode is not ("input" or "timer" or "interaction" or "actions") ||
             wait.Mode == "actions" && state.ActiveActions.IsEmpty || wait.Mode == "timer" && wait.Remaining <= 0 ||
             !ScenarioProgram.Duration(wait.Remaining) || wait.Mode == "interaction" && !state.Hotspots.Any(h => (wait.Token is null || h.ObjectId == wait.Token) && h.Enabled)) ||

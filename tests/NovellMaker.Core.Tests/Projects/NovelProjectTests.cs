@@ -57,7 +57,7 @@ public sealed class NovelProjectTests
     [TestMethod]
     [DataRow(0)]
     [DataRow(3)]
-    [DataRow(10)]
+    [DataRow(999)]
     public void Constructor_RejectsUnsupportedFormatVersion(int version)
     {
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>

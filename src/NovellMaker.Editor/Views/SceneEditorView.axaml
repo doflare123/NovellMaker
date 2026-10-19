@@ -4,20 +4,24 @@
              xmlns:views="using:NovellMaker.Editor.Views"
              x:Class="NovellMaker.Editor.Views.SceneEditorView" x:DataType="vm:SceneDocumentViewModel">
   <DockPanel Margin="12">
-    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,6">
       <StackPanel Spacing="4">
         <TextBlock Text="Название сцены" Classes="section" />
         <TextBox Name="SceneNameBox" Text="{Binding Name, Mode=TwoWay}" IsUndoEnabled="False" IsEnabled="{Binding Session.CanEdit}" />
         <TextBlock Text="{Binding NameValidation}" IsVisible="{Binding !IsNameValid}" Foreground="#D9B68C" />
       </StackPanel>
-      <StackPanel Grid.Column="1" Margin="12,16,0,0" Spacing="4">
-        <Button Name="PreviewSceneButton" Content="Запустить сцену" Command="{Binding Session.PreviewSceneCommand}" ToolTip.Tip="F6: с выбранной реплики; сцена с самостоятельными действиями — с начала" />
+      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Margin="8,16,0,0" Spacing="4">
+        <Button Name="PreviewSceneButton" Content="Запустить" Command="{Binding Session.PreviewSceneCommand}" ToolTip.Tip="F6: с выбранной реплики; сцена с самостоятельными действиями — с начала" />
         <Button Content="Удалить сцену" Command="{Binding Session.DeleteSceneCommand}" />
       </StackPanel>
     </Grid>
     <TabControl Name="SceneSections" SelectedIndex="{Binding SelectedSection, Mode=TwoWay}">
+      <TabControl.Styles>
+        <Style Selector="TabItem"><Setter Property="FontSize" Value="12" /><Setter Property="Padding" Value="7,5" /><Setter Property="MinHeight" Value="30" /></Style>
+      </TabControl.Styles>
+      <TabControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></TabControl.ItemsPanel>
       <TabItem>
-        <TabItem.Header><TextBlock Text="Реплики" FontSize="13" /></TabItem.Header>
+        <TabItem.Header><TextBlock Text="Реплики" FontSize="12" /></TabItem.Header>
         <Grid ColumnDefinitions="180,5,*" Margin="0,10,0,0">
           <DockPanel>
             <StackPanel DockPanel.Dock="Top" Spacing="5" Margin="0,0,8,8">
@@ -46,31 +50,13 @@
           <GridSplitter Grid.Column="1" ResizeDirection="Columns" Background="#363A40" />
           <ScrollViewer Grid.Column="2">
             <StackPanel Margin="12,0,0,0" Spacing="8">
-              <TextBlock Text="Говорящий персонаж" Classes="section" />
-              <ComboBox Name="SpeakerPicker" ItemsSource="{Binding SpeakerOptions}" SelectedItem="{Binding SelectedSpeaker, Mode=TwoWay}" IsEnabled="{Binding CanEditLine}" HorizontalAlignment="Stretch">
-                <ComboBox.ItemTemplate><DataTemplate DataType="vm:CharacterOption"><TextBlock Text="{Binding Name}" /></DataTemplate></ComboBox.ItemTemplate>
-              </ComboBox>
-              <Grid ColumnDefinitions="*,8,*">
-                <StackPanel Spacing="4">
-                  <TextBlock Text="Состояние говорящего" Classes="section" />
-                  <ComboBox Name="CharacterStatePicker" ItemsSource="{Binding StateOptions}" SelectedItem="{Binding SelectedCharacterState, Mode=TwoWay}" IsEnabled="{Binding CanChooseState}" HorizontalAlignment="Stretch">
-                    <ComboBox.ItemTemplate><DataTemplate DataType="vm:CharacterOption"><TextBlock Text="{Binding Name}" /></DataTemplate></ComboBox.ItemTemplate>
-                  </ComboBox>
-                </StackPanel>
-                <StackPanel Grid.Column="2" Spacing="4">
-                  <TextBlock Text="Скрыть перед репликой" Classes="section" />
-                  <ComboBox Name="HideCharacterPicker" ItemsSource="{Binding HideOptions}" SelectedItem="{Binding SelectedHiddenCharacter, Mode=TwoWay}" IsEnabled="{Binding CanEditLine}" HorizontalAlignment="Stretch">
-                    <ComboBox.ItemTemplate><DataTemplate DataType="vm:CharacterOption"><TextBlock Text="{Binding Name}" /></DataTemplate></ComboBox.ItemTemplate>
-                  </ComboBox>
-                </StackPanel>
-              </Grid>
               <Grid ColumnDefinitions="*,110">
                 <TextBlock Text="Текст реплики" Classes="section" VerticalAlignment="Center" />
                 <TextBox Grid.Column="1" Text="{Binding EditingLanguage, Mode=TwoWay}" IsEnabled="{Binding Session.IsIdle}" PlaceholderText="Язык" ToolTip.Tip="Язык редактируемого текста" />
               </Grid>
               <TextBlock Text="{Binding LanguageValidation}" IsVisible="{Binding !IsEditingLanguageValid}" Foreground="#D9B68C" />
               <TextBox Name="LineTextBox" Text="{Binding LineText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" MaxHeight="180" IsEnabled="{Binding CanEditLine}" IsUndoEnabled="False" />
-              <Button Name="OpenPhraseScriptButton" Content="Скрипт этой фразы" Command="{Binding OpenPhraseScriptCommand}" HorizontalAlignment="Left" />
+              <Button Name="OpenPhraseScriptButton" Content="Свойства и события" Command="{Binding OpenPhraseScriptCommand}" HorizontalAlignment="Left" />
               <TextBlock Text="{Binding SelectedPhraseScriptSummary}" Classes="muted" />
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Name="PreviousLineButton" Content="Назад" Command="{Binding PreviousLineCommand}" />
@@ -83,7 +69,7 @@
         </Grid>
       </TabItem>
       <TabItem Name="PlacementTab">
-        <TabItem.Header><TextBlock Text="Размещение" FontSize="13" /></TabItem.Header>
+        <TabItem.Header><TextBlock Text="Размещение" FontSize="12" /></TabItem.Header>
         <DockPanel Margin="0,12,0,0">
           <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,12">
             <TextBlock Text="Команды размещения перед выбранной репликой" Classes="section" />
@@ -128,7 +114,7 @@
         </DockPanel>
       </TabItem>
       <TabItem>
-        <TabItem.Header><TextBlock Text="Оформление плашки" FontSize="13" /></TabItem.Header>
+        <TabItem.Header><TextBlock Text="Плашка" FontSize="12" ToolTip.Tip="Оформление плашки" /></TabItem.Header>
         <ScrollViewer>
           <StackPanel Margin="0,12,0,0" Spacing="10">
             <CheckBox Content="Собственный стиль сцены" IsChecked="{Binding UseSceneStyle, Mode=TwoWay}" IsEnabled="{Binding Session.CanEdit}" />
@@ -140,7 +126,7 @@
         </ScrollViewer>
       </TabItem>
       <TabItem>
-        <TabItem.Header><TextBlock Text="Задник" FontSize="13" /></TabItem.Header>
+        <TabItem.Header><TextBlock Text="Задник" FontSize="12" /></TabItem.Header>
         <ScrollViewer>
           <StackPanel Margin="0,12,0,0" Spacing="10">
             <TextBlock Text="ИЗОБРАЖЕНИЕ ЗАДНИКА" Classes="section" />
@@ -158,8 +144,8 @@
           </StackPanel>
         </ScrollViewer>
       </TabItem>
-      <TabItem Header="Скрипт"><views:ScenarioActionsView IsEnabled="{Binding Session.CanEdit}" /></TabItem>
-      <TabItem Name="AudioTab" Header="Звук">
+      <TabItem><TabItem.Header><TextBlock Text="Скрипт" FontSize="12" /></TabItem.Header><views:ScenarioActionsView IsEnabled="{Binding Session.CanEdit}" /></TabItem>
+      <TabItem Name="AudioTab"><TabItem.Header><TextBlock Text="Звук" FontSize="12" /></TabItem.Header>
         <ScrollViewer Name="AudioScroll">
           <StackPanel Margin="0,12,0,0" Spacing="10" IsEnabled="{Binding Session.CanEdit}">
             <Button Name="ImportAudioButton" Content="Импортировать PCM WAV…" Click="ImportAudio" HorizontalAlignment="Left" />

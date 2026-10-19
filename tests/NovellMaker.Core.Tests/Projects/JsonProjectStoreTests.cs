@@ -21,7 +21,7 @@ public sealed class JsonProjectStoreTests
         Assert.IsTrue(project.ContentEquals(await store.LoadAsync(path)));
         Assert.IsFalse(project.ContentEquals(project with { ExplorerShowsFiles = false }));
         var document = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
-        document["formatVersion"] = 5; document.AsObject().Remove("audio");
+        document["formatVersion"] = 5; document.AsObject().Remove("audio"); document.Remove("scripts");
         await File.WriteAllTextAsync(path, document.ToJsonString());
         await Assert.ThrowsExactlyAsync<ProjectFormatException>(() => store.LoadAsync(path));
         document.Remove("explorerShowsFiles");
@@ -155,7 +155,7 @@ public sealed class JsonProjectStoreTests
         var path = Path.Combine(directory.Path, "future.novell");
         var json = """
             {
-              "formatVersion": 10,
+              "formatVersion": 999,
               "id": "9a4b7915-17df-48ac-84fb-69d00f4bab41",
               "name": "Проект из будущего",
               "futureFeature": { "nested": true }
@@ -166,7 +166,7 @@ public sealed class JsonProjectStoreTests
         var exception = await Assert.ThrowsExactlyAsync<ProjectFormatException>(() =>
             new JsonProjectStore().LoadAsync(path));
 
-        StringAssert.Contains(exception.Message, "10");
+        StringAssert.Contains(exception.Message, "999");
         StringAssert.Contains(exception.Message, "не поддерживается");
     }
 

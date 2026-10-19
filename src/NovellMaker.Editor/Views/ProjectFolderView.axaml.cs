@@ -26,6 +26,14 @@ public sealed partial class ProjectFolderView : UserControl, IDisposable
         {
             if (DataContext is not EditorSession value || ReferenceEquals(session, value)) return;
             Browser?.Dispose(); session = value; Browser = new(value);
+            var tiles = this.FindControl<ListBox>("FolderTiles")!;
+            tiles.ContextMenu = ScriptExplorerMenu.Create(value, () => Browser?.SelectedTile?.Entry);
+            tiles.AddHandler(PointerPressedEvent, (_, e) =>
+            {
+                if (e.GetCurrentPoint(tiles).Properties.IsRightButtonPressed && e.Source is Control control &&
+                    control.GetSelfAndVisualAncestors().OfType<ListBoxItem>().FirstOrDefault()?.DataContext is FolderTile tile)
+                    Browser!.SelectedTile = tile;
+            }, RoutingStrategies.Tunnel);
             this.FindControl<Grid>("BrowserRoot")!.DataContext = Browser;
             Browser.PropertyChanged += (_, args) =>
             {

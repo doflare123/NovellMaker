@@ -31,7 +31,7 @@ public sealed partial class MainWindow : Window
         WorkspaceLayout = new WorkspaceDock(workspace, this.FindControl<MenuItem>("WorkspacePanelsMenu")!);
         WorkspaceLayout.Register("explorer", "Обозреватель проекта", contents[0]);
         WorkspaceLayout.Register("documents", "Документы", contents[1]);
-        WorkspaceLayout.Register("information", "Сведения о проекте", contents[2]);
+        WorkspaceLayout.Register("information", "Свойства", contents[2]);
         WorkspaceLayout.Register("messages", "Сообщения", contents[3]);
         WorkspaceLayout.Register("scene", "Экран сцены", contents[4]);
         WorkspaceLayout.Reset();
@@ -44,6 +44,19 @@ public sealed partial class MainWindow : Window
         }
         AddHandler(LostFocusEvent, (_, _) => Session.EndEditGroup(), RoutingStrategies.Bubble);
         this.FindControl<TreeView>("ProjectExplorer")!.AddHandler(KeyDownEvent, ExplorerKeyDown, RoutingStrategies.Tunnel);
+        var explorer = this.FindControl<TreeView>("ProjectExplorer")!;
+        explorer.ContextMenu = ScriptExplorerMenu.Create(Session, () => explorer.SelectedItem as ExplorerEntry);
+        explorer.DoubleTapped += async (_, _) =>
+        {
+            if (explorer.SelectedItem is ExplorerEntry { ScriptId: { } scriptId })
+                await Session.OpenScriptExternallyAsync(scriptId);
+        };
+        explorer.AddHandler(PointerPressedEvent, (_, e) =>
+        {
+            if (e.GetCurrentPoint(explorer).Properties.IsRightButtonPressed && e.Source is Control control &&
+                control.GetSelfAndVisualAncestors().OfType<TreeViewItem>().FirstOrDefault()?.DataContext is ExplorerEntry entry)
+                explorer.SelectedItem = entry;
+        }, RoutingStrategies.Tunnel);
         Closing += OnClosing;
         Closed += (_, _) =>
         {
@@ -73,11 +86,13 @@ public sealed partial class MainWindow : Window
 
     private void ExplorerSelectionChanged(object? sender, SelectionChangedEventArgs args)
     {
-        if (sender is TreeView { SelectedItem: ExplorerEntry { SceneId: { } id } }) Session.OpenScene(id);
+        if (sender is TreeView { SelectedItem: ExplorerEntry { SceneId: { } id } }) { Session.OpenScene(id); Session.InspectPhrase(); }
         else if (sender is TreeView { SelectedItem: ExplorerEntry { ImageAssetId: { } imageId } }) Session.SelectImage(imageId);
         else if (sender is TreeView { SelectedItem: ExplorerEntry { IsAssetLibrary: true } }) Session.OpenAssetLibrary();
         else if (sender is TreeView { SelectedItem: ExplorerEntry { CharacterId: { } characterId } }) Session.SelectCharacter(characterId);
         else if (sender is TreeView { SelectedItem: ExplorerEntry { IsCharacterLibrary: true } }) Session.OpenCharacterLibrary();
+        else if (sender is TreeView { SelectedItem: ExplorerEntry { ScriptId: { } scriptId } }) Session.InspectScript(scriptId);
+        else if (sender is TreeView { SelectedItem: ExplorerEntry { IsScriptLibrary: true } }) Session.OpenScriptLibrary();
         else if (sender is TreeView { SelectedItem: ExplorerEntry { IsProjectSettings: true } })
             Session.SelectedDocument = Session.Documents.FirstOrDefault();
     }

@@ -12,6 +12,12 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--lua-worker") return LuaWorkerEntry.Run();
+        return RunGame(args);
+    }
+
+    private static int RunGame(string[] args)
+    {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         if (args.Length == 1 && args[0] is "--help" or "-h")
         {

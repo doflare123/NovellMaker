@@ -9,6 +9,10 @@ artifacts/
 /docs/*
 !/docs/actions-and-state.md
 !/docs/lua-api.md
+!/docs/script-resources.md
+!/docs/verification-scripting-2026-10-19.md
+!/docs/verification-external-scripts-2026-10-19.md
+!/docs/verification-lua-isolation-2026-10-19.md
 !/docs/verification-actions-2026-10-18.md
 !/docs/windows-export.md
 !/docs/history.md

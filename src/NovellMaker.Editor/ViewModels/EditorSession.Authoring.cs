@@ -26,8 +26,9 @@ public sealed partial class EditorSession
     public bool AreDocumentsValid => project is null ||
         (!string.IsNullOrWhiteSpace(project.DefaultLanguage) && project.Scenes.All(scene => !string.IsNullOrWhiteSpace(scene.Name)) &&
          project.Images.All(image => !string.IsNullOrWhiteSpace(image.Name)) &&
+         project.Scripts.All(script => !string.IsNullOrWhiteSpace(script.Name)) &&
          project.Characters.All(character => !string.IsNullOrWhiteSpace(character.Name) && character.States.All(state => !string.IsNullOrWhiteSpace(state.Name))));
-    public string DocumentValidation => AreDocumentsValid ? "" : "Укажите основной язык и названия сцен, изображений, персонажей и состояний.";
+    public string DocumentValidation => AreDocumentsValid ? "" : "Укажите основной язык и названия сцен, изображений, персонажей, состояний и скриптов.";
     public SceneDocumentViewModel? ActiveScene => selectedDocument as SceneDocumentViewModel;
     public string SelectedSceneId => ActiveScene?.Id.ToString() ?? "—";
     public string SelectedLineId => ActiveScene?.SelectedLine?.Id.ToString() ?? "—";
@@ -40,6 +41,8 @@ public sealed partial class EditorSession
         {
             if (ReferenceEquals(selectedDocument, value)) return;
             selectedDocument = value;
+            InspectorTarget = value is SceneDocumentViewModel ? InspectorTarget.Phrase : InspectorTarget.Project;
+            InspectedActionId = null;
             EndEditGroup();
             NotifySelectionChanged();
         }
@@ -166,7 +169,8 @@ public sealed partial class EditorSession
 
     private AuthoringSnapshot Snapshot() => new(project!, draftName, ActiveScene?.Id, ActiveScene?.SelectedLine?.Id,
         SelectedDocument is AssetLibraryDocumentViewModel, SelectedImage?.Id,
-        SelectedDocument is CharacterLibraryDocumentViewModel, SelectedCharacter?.Id, SelectedState?.Id, deletedFiles);
+        SelectedDocument is CharacterLibraryDocumentViewModel, SelectedCharacter?.Id, SelectedState?.Id, deletedFiles,
+        InspectorTarget == InspectorTarget.Script, SelectedScriptId);
 
     private void RecordEdit(string? group)
     {
@@ -206,6 +210,7 @@ public sealed partial class EditorSession
     {
         RestoreDeletedFiles(state.DeletedFiles);
         project = state.Project;
+        RefreshExternalScriptsCore();
         draftName = state.DraftName;
         EndEditGroup();
         NotifyProjectChanged();
@@ -225,7 +230,9 @@ public sealed partial class EditorSession
             SelectedCharacter = Characters.FirstOrDefault(character => character.Id == state.CharacterId);
             SelectedState = SelectedCharacter?.States.FirstOrDefault(pose => pose.Id == state.CharacterStateId);
         }
+        else if (state.ScriptLibrarySelected) OpenScriptLibrary(state.ScriptId);
         else SelectedDocument = Documents.FirstOrDefault();
+        if (state.ScriptLibrarySelected) InspectScript(state.ScriptId);
     }
 
     private void ResetAuthoring()
@@ -276,5 +283,6 @@ public sealed partial class EditorSession
     }
 
     private sealed record AuthoringSnapshot(NovelProject Project, string DraftName, Guid? SceneId, Guid? LineId,
-        bool AssetLibrarySelected, Guid? ImageId, bool CharacterLibrarySelected, Guid? CharacterId, Guid? CharacterStateId, ImmutableArray<NovellMaker.Editor.Services.ProjectFileDeletion> DeletedFiles);
+        bool AssetLibrarySelected, Guid? ImageId, bool CharacterLibrarySelected, Guid? CharacterId, Guid? CharacterStateId, ImmutableArray<NovellMaker.Editor.Services.ProjectFileDeletion> DeletedFiles,
+        bool ScriptLibrarySelected, Guid? ScriptId);
 }

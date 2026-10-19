@@ -1,0 +1,9 @@
+<Project>
+  <Target Name="CopyIsolatedLuaTestHost" AfterTargets="Build" Condition="'$(IsTestProject)' == 'true'">
+    <ItemGroup>
+      <LuaTestHost Include="$(MSBuildThisFileDirectory)src/NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/**/*"
+                   Exclude="$(MSBuildThisFileDirectory)src/NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/win-x64/**/*;$(MSBuildThisFileDirectory)src/NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/publish/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(LuaTestHost)" DestinationFiles="@(LuaTestHost->'$(TargetDir)LuaWorker/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

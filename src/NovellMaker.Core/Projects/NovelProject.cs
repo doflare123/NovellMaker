@@ -10,7 +10,7 @@ namespace NovellMaker.Core.Projects;
 /// </summary>
 public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
 {
-    public const int CurrentFormatVersion = 9;
+    public const int CurrentFormatVersion = 10;
 
     public int FormatVersion { get; init; } = ValidateFormatVersion(FormatVersion);
 
@@ -25,6 +25,8 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
     public ImmutableArray<ImageAsset> Images { get; init; } = [];
 
     public ImmutableArray<NovelCharacter> Characters { get; init; } = [];
+
+    public ImmutableArray<NovellMaker.Core.Execution.LuaScriptAsset> Scripts { get; init; } = [];
 
     public string DefaultLanguage { get; init; } = "ru";
 
@@ -61,6 +63,9 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
         {
             return false;
         }
+
+        if (Scripts.IsDefault != other.Scripts.IsDefault || !Scripts.IsDefault &&
+            (Scripts.Length != other.Scripts.Length || Scripts.Where((script, index) => !script.ContentEquals(other.Scripts[index])).Any())) return false;
 
         if (!Characters.IsDefault)
         {
@@ -183,6 +188,13 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
         }
 
         var ids = new HashSet<Guid> { project.Id };
+        if (project.Scripts.IsDefault) throw new ArgumentException("Коллекция скриптов отсутствует.");
+        foreach (var script in project.Scripts)
+        {
+            if (script is null) throw new ArgumentException("Коллекция скриптов содержит null.");
+            script.Validate();
+            if (!ids.Add(script.Id)) throw new ArgumentException($"Идентификатор {script.Id} используется более одного раза.");
+        }
         var textKeys = new HashSet<string>(StringComparer.Ordinal);
         var imagePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

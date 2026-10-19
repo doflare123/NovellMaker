@@ -18,6 +18,7 @@ namespace NovellMaker.Core.Execution;
 [JsonDerivedType(typeof(SetAction), "set")]
 [JsonDerivedType(typeof(BranchAction), "branch")]
 [JsonDerivedType(typeof(ScriptAction), "script")]
+[JsonDerivedType(typeof(RunScriptAction), "runScript")]
 [JsonDerivedType(typeof(HotspotAction), "hotspot")]
 [JsonDerivedType(typeof(LineEntryAction), "lineEntry")]
 public abstract record ScenarioAction([property: JsonRequired] Guid Id);
@@ -43,6 +44,7 @@ public sealed record ScriptAction(Guid Id, [property: JsonRequired] string Sourc
 {
     public ImmutableDictionary<string, Guid> References { get; init; } = ImmutableDictionary<string, Guid>.Empty;
 }
+public sealed record RunScriptAction(Guid Id, [property: JsonRequired] Guid ScriptId) : ScenarioAction(Id);
 // Normalized scene rectangle, optionally drawn as a labelled button by the host.
 public sealed record HotspotAction(Guid Id, [property: JsonRequired] Guid ObjectId, [property: JsonRequired] string Label,
     [property: JsonRequired] double X, [property: JsonRequired] double Y, [property: JsonRequired] double Width,

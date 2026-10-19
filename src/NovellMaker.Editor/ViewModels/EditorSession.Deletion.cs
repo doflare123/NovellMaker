@@ -25,7 +25,7 @@ public sealed partial class EditorSession
     public Task DeleteStateAsync(Guid character, Guid state) => DeleteExplorerEntryAsync(new ExplorerEntry("", "", [], CharacterId: character, CharacterStateId: state));
     public Task DeleteImageAsync(Guid id) => DeleteExplorerEntryAsync(new ExplorerEntry("", "", [], ImageAssetId: id));
 
-    public Task DeleteExplorerEntryAsync(ExplorerEntry entry) => RunAsync(async () =>
+    public Task DeleteExplorerEntryAsync(ExplorerEntry entry) => entry.ScriptId is { } scriptId && entry.FilePath is null ? DeleteScriptAsync(scriptId) : RunAsync(async () =>
     {
         if (project is null) return;
         var before = project;
@@ -102,6 +102,10 @@ public sealed partial class EditorSession
                 ? ProjectFileDeletion.IsWithin(full, Path.GetFullPath(Path.Combine(root, asset.RelativePath)))
                 : string.Equals(full, Path.GetFullPath(Path.Combine(root, asset.RelativePath)), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)).Select(a => a.Id).ToHashSet();
             var withoutAssets = RemoveImages(project, images);
+            var scripts = project.Scripts.Where(script => directory
+                ? ProjectFileDeletion.IsWithin(full, ScriptFiles.Resolve(root, script.Id))
+                : string.Equals(full, ScriptFiles.Resolve(root, script.Id), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)).Select(s => s.Id).ToHashSet();
+            withoutAssets = RemoveScriptResources(withoutAssets, scripts);
             withoutAssets = withoutAssets with { Audio = withoutAssets.Audio with { Assets = withoutAssets.Audio.Assets.Where(a => !audio.Contains(a.Id)).ToImmutableArray() } };
             return new(Path.GetFileName(full), directory ? "Папка и всё её содержимое будут удалены с диска. Зарегистрированные изображения и звуки в этой папке и их привязки будут удалены из проекта."
                 : "Файл будет удалён с диска. Будет сохранена резервная копия для отмены.", withoutAssets, full);

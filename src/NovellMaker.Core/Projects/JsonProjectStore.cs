@@ -19,6 +19,20 @@ public sealed class JsonProjectStore : IProjectStore
     private static readonly JsonSerializerOptions VersionProbeSerializerOptions =
         CreateSerializerOptions(JsonUnmappedMemberHandling.Skip);
     private static readonly JsonSerializerOptions Version7SerializerOptions = CreateVersion7Options();
+    private static readonly JsonSerializerOptions PreVersion10SerializerOptions = CreatePreVersion10Options();
+
+    private static JsonSerializerOptions CreatePreVersion10Options()
+    {
+        var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
+        var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(info =>
+        {
+            if (info.Type == typeof(ScenarioAction) && info.PolymorphismOptions is { } polymorphism)
+                foreach (var type in polymorphism.DerivedTypes.Where(t => t.DerivedType == typeof(RunScriptAction)).ToArray()) polymorphism.DerivedTypes.Remove(type);
+        });
+        options.TypeInfoResolver = resolver;
+        return options;
+    }
 
     private static JsonSerializerOptions CreateVersion7Options()
     {
@@ -29,7 +43,7 @@ public sealed class JsonProjectStore : IProjectStore
             if (info.Type == typeof(ScriptAction))
                 foreach (var property in info.Properties.Where(p => p.Name == "references").ToArray()) info.Properties.Remove(property);
             if (info.Type == typeof(ScenarioAction) && info.PolymorphismOptions is { } polymorphism)
-                foreach (var type in polymorphism.DerivedTypes.Where(t => t.DerivedType == typeof(LineEntryAction)).ToArray()) polymorphism.DerivedTypes.Remove(type);
+                foreach (var type in polymorphism.DerivedTypes.Where(t => t.DerivedType == typeof(LineEntryAction) || t.DerivedType == typeof(RunScriptAction)).ToArray()) polymorphism.DerivedTypes.Remove(type);
         });
         options.TypeInfoResolver = resolver;
         return options;
@@ -89,8 +103,9 @@ public sealed class JsonProjectStore : IProjectStore
                 5 => MapVersion5(await DeserializeRequiredAsync<Version5ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 6 => MapVersion6(await DeserializeRequiredAsync<Version6ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 7 => MapVersion7(await DeserializeRequiredAsync<Version7ProjectDocument>(stream, cancellationToken, Version7SerializerOptions).ConfigureAwait(false)),
-                9 => MapVersion9(await DeserializeRequiredAsync<Version9ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
-                8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
+                9 => MapVersion9(await DeserializeRequiredAsync<Version9ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
+                10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
+                8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
                 _ => throw new ProjectFormatException(
                     $"Некорректная версия формата проекта: {versionProbe.FormatVersion}."),
             };
@@ -319,6 +334,9 @@ public sealed class JsonProjectStore : IProjectStore
     private static NovelProject MapVersion9(Version9ProjectDocument document) =>
         MapVersion8(document) with { Audio = document.Audio ?? throw new ArgumentException("Нет звука.") };
 
+    private static NovelProject MapVersion10(Version10ProjectDocument document) =>
+        MapVersion9(document) with { Scripts = document.Scripts ?? throw new ArgumentException("Нет скриптов.") };
+
     private static ImmutableArray<ImageAsset> MapImages(List<ImageDocument?>? imageDocuments)
     {
         if (imageDocuments is null)
@@ -521,8 +539,9 @@ public sealed class JsonProjectStore : IProjectStore
         };
     }
 
-    private static Version9ProjectDocument MapForSave(NovelProject project) => new()
+    private static Version10ProjectDocument MapForSave(NovelProject project) => new()
     {
+        Scripts = project.Scripts,
         Audio = project.Audio,
         ExplorerShowsFiles = project.ExplorerShowsFiles,
         FormatVersion = project.FormatVersion,
@@ -733,9 +752,14 @@ public sealed class JsonProjectStore : IProjectStore
         [JsonRequired] public DialogueUiDocument? DialogueUi { get; init; }
     }
 
-    private sealed class Version9ProjectDocument : Version8ProjectDocument
+    private class Version9ProjectDocument : Version8ProjectDocument
     {
         [JsonRequired] public NovellMaker.Core.Audio.AudioProject? Audio { get; init; }
+    }
+
+    private sealed class Version10ProjectDocument : Version9ProjectDocument
+    {
+        [JsonRequired] public ImmutableArray<LuaScriptAsset>? Scripts { get; init; }
     }
 
     private class Version5ProjectDocument

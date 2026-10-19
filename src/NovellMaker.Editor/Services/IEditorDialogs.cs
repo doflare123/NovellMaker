@@ -13,6 +13,9 @@ public interface IEditorDialogs
     Task ShowErrorAsync(string title, string message);
     Task ShowInformationAsync(string title, string message) => Task.CompletedTask;
     Task<string?> PickAudioAsync() => Task.FromResult<string?>(null);
+    Task<string?> PickLuaScriptAsync() => Task.FromResult<string?>(null);
+    Task<string?> PickCodeEditorAsync() => Task.FromResult<string?>(null);
+    Task<string?> PickSaveLuaScriptAsync(string suggestedName) => Task.FromResult<string?>(null);
     Task<string?> PickImageAsync() => Task.FromResult<string?>(null);
     Task<WindowsExportDestination?> PickWindowsExportAsync(NovellMaker.Core.Projects.NovelProject project) => Task.FromResult<WindowsExportDestination?>(null);
     Task<WindowsInstallerDestination?> PickWindowsInstallerAsync(NovellMaker.Core.Projects.NovelProject project) => Task.FromResult<WindowsInstallerDestination?>(null);

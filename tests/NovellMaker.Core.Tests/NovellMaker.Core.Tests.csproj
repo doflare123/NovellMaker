@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\NovellMaker.Core\NovellMaker.Core.csproj" />
+    <ProjectReference Include="../../src/NovellMaker.Runtime/NovellMaker.Runtime.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup><Compile Include="../AudioFixture.cs" Link="AudioFixture.cs" /></ItemGroup>
 </Project>

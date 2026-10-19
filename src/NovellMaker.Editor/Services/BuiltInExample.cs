@@ -33,6 +33,7 @@ public static class BuiltInExample
             DialogueLine.Create("ru", "Проверка завершена. Можно перезапустить сцену через F6 в редакторе."),
         };
         var terminal = Guid.NewGuid(); var correct = Guid.NewGuid(); var wrong = Guid.NewGuid();
+        var terminalStart = new LuaScriptAsset(Guid.NewGuid(), "terminal-start.lua", "-- Очередь останавливается до щелчка; результат читает следующий Lua-блок.\ngame.wait_click()\n");
         Guid Id() => Guid.NewGuid();
         JumpAction Go(int number) => new(Id(), scene.Id, ScenarioProgram.LineEntryId(lines[number].Id));
         ChoiceAction EndingChoice() => new(Id(), [new(Id(), "Повторить", scene.Id, ScenarioProgram.LineEntryId(lines[0].Id)),
@@ -47,7 +48,7 @@ public static class BuiltInExample
             Cue(1, ScriptPhase.DuringLine, Go(2)),
             Cue(2, ScriptPhase.DuringLine, new HotspotAction(Id(), correct, "4", 0.35, 0.35, 0.12, 0.12)),
             Cue(2, ScriptPhase.DuringLine, new HotspotAction(Id(), wrong, "5", 0.53, 0.35, 0.12, 0.12)),
-            Cue(2, ScriptPhase.DuringLine, new ScriptAction(Id(), "game.wait_click()", "terminal-start.lua")),
+            Cue(2, ScriptPhase.DuringLine, new RunScriptAction(Id(), terminalStart.Id)),
             Cue(2, ScriptPhase.DuringLine, new ScriptAction(Id(), """
                 if game.get("input.object") == refs.correct then
                     game.finish("win")
@@ -60,7 +61,7 @@ public static class BuiltInExample
             Cue(3, ScriptPhase.AfterLine, EndingChoice()),
             Cue(4, ScriptPhase.AfterLine, EndingChoice()),
         ] };
-        return NovelProject.Create("Проверочный фрагмент") with { Scenes = [scene], Images = [.. images], Characters = [guide, traveller] };
+        return NovelProject.Create("Проверочный фрагмент") with { Scenes = [scene], Images = [.. images], Characters = [guide, traveller], Scripts = [terminalStart] };
     }
 
     private static ImageAsset Sprite(string directory, string name, SKColor color)

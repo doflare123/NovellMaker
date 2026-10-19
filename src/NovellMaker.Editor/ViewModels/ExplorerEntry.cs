@@ -4,7 +4,8 @@ namespace NovellMaker.Editor.ViewModels;
 
 public sealed record ExplorerEntry(string Label, string Detail, IReadOnlyList<ExplorerEntry> Children, Guid? SceneId = null, Guid? ImageAssetId = null, bool IsAssetLibrary = false,
     Guid? CharacterId = null, bool IsCharacterLibrary = false, string? FilePath = null, bool IsProjectSettings = false,
-    bool ExpandInitially = true, Func<IReadOnlyList<ExplorerEntry>>? ChildLoader = null, bool IsDirectory = false, string GitStatus = "", Guid? CharacterStateId = null) : INotifyPropertyChanged
+    bool ExpandInitially = true, Func<IReadOnlyList<ExplorerEntry>>? ChildLoader = null, bool IsDirectory = false, string GitStatus = "", Guid? CharacterStateId = null,
+    Guid? ScriptId = null, bool IsScriptLibrary = false) : INotifyPropertyChanged
 {
     public string FolderName => Label.TrimEnd('/');
     public IEnumerable<ExplorerEntry> Folders => Items.Where(entry => entry.IsFolder);

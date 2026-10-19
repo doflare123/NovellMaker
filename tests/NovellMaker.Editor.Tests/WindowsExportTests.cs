@@ -50,13 +50,17 @@ public sealed class WindowsExportTests
         await new JsonProjectStore().SaveAsync(original, project);
         var originalBytes = await File.ReadAllBytesAsync(original);
         var second = NovellMaker.Core.Scenes.NovelScene.Create("Выбранный старт") with { Lines = [NovellMaker.Core.Scenes.DialogueLine.Create("ru", "Начало игры")] };
-        var edited = project with { Name = "Несохранённое название", Scenes = project.Scenes.Add(second) };
+        var script = new LuaScriptAsset(Guid.NewGuid(), "export.lua", "game.set('exported_script', 'yes')");
+        second = second with { ScriptBlocks = [new(null, NovellMaker.Core.Scenes.ScriptPhase.SceneStart, new RunScriptAction(Guid.NewGuid(), script.Id))] };
+        var edited = project with { Name = "Несохранённое название", Scenes = project.Scenes.Add(second), Scripts = project.Scripts.Add(script) };
         var destination = Path.Combine(root, "Игра с пробелами");
         await new WindowsExportService(template, new ImageAssetService()).ExportAsync(edited, source, second.Id, destination);
         var package = GamePackage.Load(destination);
         Assert.AreEqual(edited.Name, package.Title);
         Assert.AreEqual(edited.Id, package.ProjectId);
         Assert.AreEqual(second.Id, package.StartSceneId);
+        var exported = await new JsonProjectStore().LoadAsync(Path.Combine(destination, GamePackage.ProjectName));
+        Assert.AreEqual("yes", new ScenarioPlayer(exported, second.Id, "ru").State.Variables["exported_script"]);
         Assert.IsTrue(edited.ContentEquals(await new JsonProjectStore().LoadAsync(Path.Combine(destination, GamePackage.ProjectName))));
         foreach (var image in project.Images)
             CollectionAssert.AreEqual(await File.ReadAllBytesAsync(Path.Combine(source, image.RelativePath)), await File.ReadAllBytesAsync(Path.Combine(destination, image.RelativePath)));

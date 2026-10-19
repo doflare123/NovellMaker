@@ -65,6 +65,7 @@
         <MenuItem Header="_Обновить ресурсы и Git" Command="{Binding RefreshGitCommand}" InputGesture="F5" />
       </MenuItem>
       <MenuItem Header="_Ресурсы">
+        <MenuItem Name="OpenScriptLibraryMenu" Header="Lua-скрипты" Command="{Binding OpenScriptLibraryCommand}" />
         <MenuItem Header="_Персонажи и состояния" Command="{Binding OpenCharacterLibraryCommand}" />
         <MenuItem Header="_Библиотека изображений" Command="{Binding OpenAssetLibraryCommand}" />
         <MenuItem Header="_Импортировать изображение…" Command="{Binding ImportImageCommand}" />
@@ -141,26 +142,7 @@
         </Grid>
 
         <Border Name="InformationPane" Background="#24262B">
-          <DockPanel>
-
-            <ScrollViewer IsVisible="{Binding HasProject}">
-              <StackPanel Margin="14,18" Spacing="10">
-                <TextBlock Text="Идентификатор" Classes="section" />
-                <SelectableTextBlock Text="{Binding ProjectId}" TextWrapping="Wrap" FontSize="12" />
-                <TextBlock Text="Версия формата" Classes="section" Margin="0,8,0,0" />
-                <TextBlock Text="{Binding FormatVersion}" />
-                <TextBlock Text="Сцена" Classes="section" Margin="0,8,0,0" />
-                <SelectableTextBlock Text="{Binding SelectedSceneId}" TextWrapping="Wrap" FontSize="11" />
-                <TextBlock Text="Реплика" Classes="section" />
-                <SelectableTextBlock Text="{Binding SelectedLineId}" TextWrapping="Wrap" FontSize="11" />
-                <TextBlock Text="Ключ текста" Classes="section" />
-                <SelectableTextBlock Text="{Binding SelectedTextKey}" TextWrapping="Wrap" FontSize="11" />
-                <TextBlock Text="Состояние Git" Classes="section" Margin="0,8,0,0" />
-                <TextBlock Text="{Binding GitSummary}" TextWrapping="Wrap" />
-                <TextBlock Text="Символ * отмечает несохранённые изменения проекта. Git показывает изменения файлов на диске." Classes="muted" TextWrapping="Wrap" FontSize="12" Margin="0,16,0,0" />
-              </StackPanel>
-            </ScrollViewer>
-          </DockPanel>
+          <views:ObjectPropertiesView Name="ObjectProperties" />
         </Border>
       <ContentControl Name="ScenePane" Content="{Binding ActiveScene}">
         <ContentControl.ContentTemplate>

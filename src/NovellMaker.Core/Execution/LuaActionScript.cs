@@ -12,9 +12,43 @@ public static class LuaActionScript
     public const int InstructionBudget = 20000;
     public const int MaximumCommands = 256;
 
+    internal static bool ValidReferences(ImmutableDictionary<string, Guid> references) => references.Count <= 256 && references.All(r =>
+        r.Key.Length <= 128 && System.Text.RegularExpressions.Regex.IsMatch(r.Key, "^[A-Za-z_][A-Za-z0-9_]*$") && r.Value != Guid.Empty);
+
+    /// <summary>Parse only: validation never executes project code.</summary>
+    public static void ValidateSyntax(string source, string name)
+    {
+        LuaLimits.CheckSource(source);
+        var response = LuaWorkerClient.Invoke(new("syntax", source, name));
+        if (response.Error is not null) throw new ArgumentException(response.Error);
+    }
+
+    internal static void ValidateInWorker(string source, string name)
+    {
+        LuaLimits.CheckSource(source);
+        try { new Script(CoreModules.None).LoadString(source, null, name); }
+        catch (InterpreterException error) { throw new ArgumentException(error.DecoratedMessage, error); }
+    }
+
     public static ImmutableArray<ScenarioAction> Run(ScriptAction action, GameState state, NovelProject project)
     {
-        if (action.Source.Length > MaximumSourceLength) throw new InvalidOperationException("Превышен размер Lua-скрипта.");
+        try { LuaLimits.CheckSource(action.Source); }
+        catch (ArgumentException error) { throw new InvalidOperationException(error.Message, error); }
+        var result = LuaWorkerClient.Invoke(new("run", action.Source, action.Name, action, state, project));
+        if (result.Error is not null) throw new InvalidOperationException($"Lua «{action.Name}» ({action.Id}): {result.Error}");
+        var commands = result.Commands;
+        var scene = project.Scenes.First(s => s.Id == state.SceneId);
+        if (commands.IsDefault || commands.Length > MaximumCommands || commands.Any(a => a is null || a.Id == Guid.Empty || !ScenarioProgram.IsValidAction(project, scene, a)) || commands.Select(a => a.Id).Distinct().Count() != commands.Length)
+            throw new InvalidOperationException("Изолированный Lua вернул некорректные команды.");
+        var variables = state.Variables;
+        foreach (var command in commands.OfType<SetAction>()) variables = variables.SetItem(command.Variable, command.Value);
+        if (!LuaLimits.ValidVariables(variables)) throw new InvalidOperationException("Превышен бюджет переменных Lua.");
+        return commands;
+    }
+
+    internal static ImmutableArray<ScenarioAction> RunInWorker(ScriptAction action, GameState state, NovelProject project)
+    {
+        LuaLimits.CheckSource(action.Source);
         // No libraries with non-preemptible native loops, filesystem, loading or CLR interop.
         var script = new Script(CoreModules.None);
         var api = new Table(script);
@@ -44,7 +78,11 @@ public static class LuaActionScript
             api.Set(name, DynValue.NewCallback((_, args) => callback(args)));
         DynValue Emit(ScenarioAction command) { Add(command); return DynValue.Nil; }
         Bind("get", a => variables.TryGetValue(Str(a, 0), out var value) ? DynValue.NewString(value) : DynValue.Nil);
-        Bind("set", a => { var key = Str(a, 0); var value = Str(a, 1); variables[key] = value; return Emit(new SetAction(Guid.NewGuid(), key, value)); });
+        Bind("set", a => { var key = Str(a, 0); var value = Str(a, 1);
+            if (!LuaLimits.ValidVariable(key, value)) throw new ScriptRuntimeException("Превышен размер переменной Lua.");
+            variables[key] = value;
+            if (!LuaLimits.ValidVariables(variables)) throw new ScriptRuntimeException("Превышен бюджет переменных Lua.");
+            return Emit(new SetAction(Guid.NewGuid(), key, value)); });
         Bind("time", _ => DynValue.NewNumber(state.Time));
         Bind("visible", a => DynValue.NewBoolean(state.VisibleObjects.Contains(Id(a, 0))));
         Bind("object", a =>
@@ -73,6 +111,7 @@ public static class LuaActionScript
         Bind("wait_click", a => Emit(new WaitAction(Guid.NewGuid(), "interaction", Token: a.Count == 0 ? null : Id(a, 0))));
         Bind("hotspot", a => Emit(new HotspotAction(Guid.NewGuid(), Id(a, 0), Str(a, 1), Num(a, 2), Num(a, 3), Num(a, 4), Num(a, 5))));
         Bind("finish", a => Emit(new SetAction(Guid.NewGuid(), "minigame.result", Str(a, 0))));
+        Bind("run", a => Emit(new RunScriptAction(Guid.NewGuid(), Id(a, 0))));
         Bind("jump", a => Emit(new JumpAction(Guid.NewGuid(), Id(a, 0), Id(a, 1))));
         Bind("choice", a =>
         {

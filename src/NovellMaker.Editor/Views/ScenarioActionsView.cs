@@ -16,6 +16,7 @@ namespace NovellMaker.Editor.Views;
 /// <summary>Phrase-oriented script: readable blocks and Lua share stable cue bindings.</summary>
 public sealed class ScenarioActionsView : UserControl
 {
+    public bool PropertiesOnly { get; }
     private readonly ListBox list = new() { Name = "ScriptBlocks", MinWidth = 170 };
     private readonly ComboBox anchors = new() { Name = "ScriptPhrasePicker", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ComboBox phases = new() { Name = "ScriptPhasePicker", Width = 190 };
@@ -36,42 +37,67 @@ public sealed class ScenarioActionsView : UserControl
     private static readonly Phase[] LinePhases = [new(ScriptPhase.BeforeLine, "До фразы"), new(ScriptPhase.DuringLine, "Во время фразы"), new(ScriptPhase.AfterLine, "После продолжения")];
     private static readonly WaitMode[] WaitModes = [new("input", "Продолжение игроком"), new("timer", "Заданное время"), new("actions", "Завершение движений"), new("interaction", "Щелчок по предмету")];
 
-    public ScenarioActionsView()
+    public ScenarioActionsView() : this(false) { }
+    public ScenarioActionsView(bool propertiesOnly, bool actionOnly = false)
     {
+        PropertiesOnly = propertiesOnly;
         var root = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
         var top = new StackPanel { Spacing = 6 };
-        top.Children.Add(context);
+        // Explanations belong in tooltips, not a permanent paragraph above every event.
         var scope = new Grid { ColumnDefinitions = new ColumnDefinitions("*,8,190") };
-        scope.Children.Add(anchors); Grid.SetColumn(phases, 2); scope.Children.Add(phases); top.Children.Add(scope);
-        var toolbar = new WrapPanel(); top.Children.Add(toolbar);
-        var kinds = new ComboBox { Name = "ScriptBlockKind", ItemsSource = new[] { "Двигать персонажа", "Показать персонажа", "Скрыть персонажа", "Сменить состояние", "Разместить персонажа", "Ожидать", "Предложить выбор", "Перейти к фразе", "Записать переменную", "Проверить условие", "Добавить предмет" }, SelectedIndex = 0, Width = 175 };
-        toolbar.Children.Add(kinds);
-        Button AddButton(string text, Action action, string? name = null)
-        { var button = new Button { Content = text, Name = name, Margin = new Thickness(4, 0, 0, 4) }; button.Click += (_, _) => action(); toolbar.Children.Add(button); return button; }
-        AddButton("Добавить", () => Add(kinds.SelectedIndex), "AddScriptBlock");
-        AddButton("Lua", () => Add(11), "AddLuaBlock");
-        AddButton("↑", () => Move(-1)); AddButton("↓", () => Move(1));
-        var remove = new Button { Content = "Удалить", Margin = new Thickness(4, 0, 0, 4) };
-        remove.Click += async (_, _) => { if (Scene is { } s && document is not null && selectedId is { } id) await document.Session.DeleteActionAsync(s.Id, id); };
-        toolbar.Children.Add(remove);
+        scope.Children.Add(anchors);
+        if (propertiesOnly)
+        { scope.ColumnDefinitions = new ColumnDefinitions("*"); scope.RowDefinitions = new RowDefinitions("Auto,Auto"); phases.Width = double.NaN; phases.HorizontalAlignment = HorizontalAlignment.Stretch; Grid.SetRow(phases, 1); }
+        else Grid.SetColumn(phases, 2);
+        scope.Children.Add(phases); top.Children.Add(scope);
+        string[] kinds = ["Двигать персонажа", "Показать персонажа", "Скрыть персонажа", "Сменить состояние", "Разместить персонажа", "Ожидать", "Предложить выбор", "Перейти к фразе", "Записать переменную", "Проверить условие", "Добавить предмет"];
+        var menu = new ContextMenu();
+        var addMenu = new MenuItem { Header = "Добавить действие" };
+        for (var i = 0; i < kinds.Length; i++)
+        {
+            var index = i; var item = new MenuItem { Header = kinds[i] };
+            item.Click += (_, _) => Add(index); addMenu.Items.Add(item);
+        }
+        menu.Items.Add(addMenu);
+        var lua = new MenuItem { Header = "Создать Lua-скрипт…", Name = "CreatePhraseLuaMenu" }; lua.Click += (_, _) => Add(11); menu.Items.Add(lua);
+        var call = new MenuItem { Header = "Вызвать существующий скрипт" }; call.Click += (_, _) => Add(12); menu.Items.Add(call);
+        var delete = new MenuItem { Header = "Удалить" }; delete.Click += async (_, _) =>
+        { if (Scene is { } s && document is not null && selectedId is { } id) await document.Session.DeleteActionAsync(s.Id, id); }; menu.Items.Add(delete);
+        var up = new MenuItem { Header = "Выше" }; up.Click += (_, _) => Move(-1); menu.Items.Add(up);
+        var down = new MenuItem { Header = "Ниже" }; down.Click += (_, _) => Move(1); menu.Items.Add(down);
+        list.ContextMenu = menu;
+        ContextMenu = menu;
+        var add = new Button { Name = "ScriptEventMenu", Content = "Добавить…", HorizontalAlignment = HorizontalAlignment.Left };
+        add.Click += (_, _) => menu.Open(add);
+        top.Children.Add(add);
         DockPanel.SetDock(top, Dock.Top); root.Children.Add(top);
         DockPanel.SetDock(error, Dock.Bottom); root.Children.Add(error);
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("200,8,*"), Margin = new Thickness(0, 6, 0, 0) };
+        var grid = new DockPanel { Margin = new Thickness(0, 6, 0, 0) };
         list.ItemTemplate = new FuncDataTemplate<Row>((row, _) => new Border
         {
             Padding = new Thickness(8), Margin = new Thickness(0, 2), Background = new SolidColorBrush(Color.Parse("#292D33")),
             Child = new StackPanel { Spacing = 4, Children = { new TextBlock { Text = row?.Title, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap },
                 new TextBlock { Text = row?.Detail, FontSize = 12, Foreground = Brushes.LightGray, TextWrapping = TextWrapping.Wrap } } }
         });
-        grid.Children.Add(list); details.Content = form; Grid.SetColumn(details, 2); grid.Children.Add(details);
-        root.Children.Add(grid); Content = root;
+        details.Content = form;
+        if (propertiesOnly) { list.MaxHeight = 130; DockPanel.SetDock(list, Dock.Top); grid.Children.Add(list); grid.Children.Add(details); }
+        else grid.Children.Add(list);
+        root.Children.Add(grid);
+        if (actionOnly) { grid.Children.Remove(details); Content = details; }
+        else Content = root;
         anchors.SelectionChanged += (_, _) =>
         {
             if (refreshing) return;
             if (anchors.SelectedItem is Anchor { LineId: { } id }) document?.SelectLine(id);
             RefreshRows();
         };
-        list.SelectionChanged += (_, _) => { if (!refreshing) { selectedId = (list.SelectedItem as Row)?.Action.Id; details.Offset = default; BuildForm(); } };
+        list.SelectionChanged += (_, _) =>
+        {
+            if (refreshing) return;
+            selectedId = (list.SelectedItem as Row)?.Action.Id; details.Offset = default;
+            if (selectedId is { } id) document?.Session.InspectAction(id);
+            BuildForm();
+        };
         DataContextChanged += (_, _) =>
         {
             if (document is not null) document.PropertyChanged -= Changed;
@@ -110,7 +136,10 @@ public sealed class ScenarioActionsView : UserControl
         refreshing = true;
         var old = anchors.SelectedItem as Anchor;
         var options = AnchorOptions().ToArray(); anchors.ItemsSource = options;
-        anchors.SelectedItem = old is { LineId: null } ? options.First(a => a.End == old.End && a.LineId is null)
+        if (PropertiesOnly && Scene?.ScriptBlocks.FirstOrDefault(b => b.Action.Id == document?.Session.InspectedActionId) is { } inspected)
+        { selectedId = inspected.Action.Id; old = options.FirstOrDefault(a => a.LineId == inspected.LineId && (a.LineId is not null || a.End == (inspected.Phase == ScriptPhase.SceneEnd))); }
+        anchors.SelectedItem = old is { } && PropertiesOnly && selectedId == document?.Session.InspectedActionId ? old
+            : old is { LineId: null } ? options.First(a => a.End == old.End && a.LineId is null)
             : options.FirstOrDefault(a => a.LineId == document?.SelectedLine?.Id) ?? options[0];
         refreshing = false; RefreshRows();
     }
@@ -138,7 +167,11 @@ public sealed class ScenarioActionsView : UserControl
 
     private void BuildForm()
     {
-        form.Children.Clear(); error.Text = ""; readDraft = null; pendingReferences = null;
+        if (!PropertiesOnly)
+        {
+            return;
+        }
+        form.Children.Clear(); error.Text = ""; readDraft = null;
         if (list.SelectedItem is not Row row)
         { form.Children.Add(new TextBlock { Text = "Здесь пока нет скрипта. Текст, порядок фраз и размещение уже работают. Добавьте нужное поведение блоком или напишите Lua.", TextWrapping = TextWrapping.Wrap }); return; }
         form.Children.Add(new TextBlock { Text = row.Title, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap });
@@ -155,6 +188,12 @@ public sealed class ScenarioActionsView : UserControl
         }
         var node = JsonSerializer.SerializeToNode<ScenarioAction>(row.Action)!;
         readDraft = Editor(node, form, "", row.Action);
+        if (row.Action is RunScriptAction call)
+        {
+            var open = new Button { Name = "OpenLinkedLuaExternally", Content = "Открыть код" };
+            open.Click += async (_, _) => { if (document is not null) await document.Session.OpenScriptExternallyAsync(call.ScriptId); };
+            form.Children.Add(open);
+        }
         var apply = new Button { Name = "ApplyScriptBlock", Content = "Применить" };
         apply.Click += (_, _) =>
         {
@@ -162,7 +201,6 @@ public sealed class ScenarioActionsView : UserControl
             {
                 if (Scene is not { } scene || document is null) return;
                 var updated = readDraft!()!.Deserialize<ScenarioAction>()!;
-                if (updated is ScriptAction lua && pendingReferences is not null) updated = lua with { References = pendingReferences() };
                 NovelScene candidate;
                 if (row.Block is { } original)
                 {
@@ -185,7 +223,24 @@ public sealed class ScenarioActionsView : UserControl
     {
         if (name is "Id" or "kind" or "IsValid") return () => value?.DeepClone();
         if (name == "References") return () => value?.DeepClone();
-        if (name.Length > 0) parent.Children.Add(new TextBlock { Text = Label(name) });
+        if (name == "Source" && action is ScriptAction inline)
+        {
+            parent.Children.Add(new TextBlock { Name = "LuaQueueHelp", Text = "Код редактируется во внешнем приложении. Открытие перенесёт этот блок в самостоятельный ресурс с сохранением ссылок.", TextWrapping = TextWrapping.Wrap });
+            var open = new Button { Name = "OpenInlineLuaExternally", Content = "Открыть код во внешнем редакторе" };
+            open.Click += async (_, _) => { if (Scene is { } scene && document is not null) await document.Session.OpenInlineScriptExternallyAsync(scene.Id, inline.Id); };
+            parent.Children.Add(open);
+            return () => value?.DeepClone();
+        }
+        if (name.Length > 0)
+        {
+            if (value is JsonObject or JsonArray) parent.Children.Add(new TextBlock { Text = Label(name), FontWeight = FontWeight.SemiBold });
+            else
+            {
+                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("100,6,*") };
+                row.Children.Add(new TextBlock { Text = Label(name), TextWrapping = TextWrapping.Wrap, FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+                var values = new StackPanel { Spacing = 4 }; Grid.SetColumn(values, 2); row.Children.Add(values); parent.Children.Add(row); parent = values;
+            }
+        }
         if (name == "Placement")
         {
             var automatic = new CheckBox { Content = "Автоматическое размещение", IsChecked = value is null }; parent.Children.Add(automatic);
@@ -244,41 +299,16 @@ public sealed class ScenarioActionsView : UserControl
         }
         if (value is JsonValue boolean && boolean.GetValueKind() is JsonValueKind.True or JsonValueKind.False)
         { var input = new CheckBox { IsChecked = boolean.GetValue<bool>() }; parent.Children.Add(input); return () => JsonValue.Create(input.IsChecked == true); }
-        var text = new TextBox { Name = name == "Source" ? "LuaSourceBox" : null, Text = value?.ToString() ?? "", AcceptsReturn = name == "Source", MinHeight = name == "Source" ? 190 : 32, TextWrapping = TextWrapping.Wrap, FontFamily = name == "Source" ? FontFamily.Parse("Consolas,monospace") : FontFamily.Default };
+        var text = new TextBox { Text = value?.ToString() ?? "", MinHeight = 32, TextWrapping = TextWrapping.Wrap };
         parent.Children.Add(text);
-        if (name == "Source") parent.Children.Add(new TextBlock { Name = "LuaQueueHelp", TextWrapping = TextWrapping.Wrap,
-            Text = "Lua сначала вычисляет весь блок и формирует очередь. game.wait / wait_click задерживают исполнение команд, а не вычисления Lua. Чтобы прочитать результат ожидания, добавьте следующий Lua-блок. Локальные переменные между блоками не сохраняются; используйте game.set/get." });
-        if (name == "Source" && action is ScriptAction script) LuaReferences(parent, text, script);
         return () => JsonValue.Create(text.Text ?? "");
     }
-
-    private void LuaReferences(StackPanel parent, TextBox source, ScriptAction script)
-    {
-        var aliases = script.References.ToBuilder();
-        var refs = References("Lua", script).Where(r => r.Id is not null).ToArray();
-        var picker = new ComboBox { Name = "LuaReferencePicker", ItemsSource = refs, SelectedIndex = refs.Length > 0 ? 0 : -1, HorizontalAlignment = HorizontalAlignment.Stretch };
-        var alias = new TextBox { Name = "LuaReferenceAlias", PlaceholderText = "Имя ссылки, например traveller", Text = "actor" };
-        var add = new Button { Name = "InsertLuaReference", Content = "Вставить именованную ссылку" };
-        parent.Children.Add(new TextBlock { Text = "Ссылки Lua: выберите объект, задайте имя и вставьте его в код.", TextWrapping = TextWrapping.Wrap });
-        parent.Children.Add(picker); parent.Children.Add(alias); parent.Children.Add(add);
-        var saved = new TextBlock { Text = string.Join("\n", aliases.Select(r => "refs." + r.Key + " → " + Friendly(r.Value))), TextWrapping = TextWrapping.Wrap }; parent.Children.Add(saved);
-        add.Click += (_, _) =>
-        {
-            var key = alias.Text ?? "";
-            if (!System.Text.RegularExpressions.Regex.IsMatch(key, "^[A-Za-z_][A-Za-z0-9_]*$") || picker.SelectedItem is not Reference { Id: { } id }) { error.Text = "Имя ссылки: латинские буквы, цифры и подчёркивание; начните с буквы."; return; }
-            aliases[key] = id;
-            source.SelectedText = "refs." + key;
-            saved.Text = string.Join("\n", aliases.Select(r => "refs." + r.Key + " → " + Friendly(r.Value)));
-        };
-        // The root reader captures this dictionary through the same JSON node used by the form.
-        pendingReferences = () => aliases.ToImmutable();
-    }
-    private Func<ImmutableDictionary<string, Guid>>? pendingReferences;
 
     private IEnumerable<Reference> References(string field, ScenarioAction action)
     {
         if (document?.Session.Project is not { } project) yield break;
         if (field == "Token") yield return new(null, "Любой активный предмет");
+        if (field == "ScriptId") foreach (var s in project.Scripts) yield return new(s.Id, "Lua: " + s.Name);
         if (field is "ObjectId" or "Lua") foreach (var c in project.Characters) yield return new(c.Id, c.Name);
         if (field is "StateId" or "Lua") foreach (var c in project.Characters) foreach (var s in c.States) yield return new(s.Id, c.Name + " / " + s.Name);
         foreach (var scene in project.Scenes)
@@ -295,6 +325,7 @@ public sealed class ScenarioActionsView : UserControl
                 foreach (var a in scene.Actions) yield return new(a.Id, scene.Name + " · " + ActionLabel(a) + " · " + Summary(a));
         }
         if (field == "ObjectId" && action is HotspotAction own) yield return new(own.ObjectId, own.Label.Length > 0 ? own.Label : "Новый предмет");
+        if (field == "Lua") foreach (var s in project.Scripts) yield return new(s.Id, "Lua: " + s.Name);
     }
 
     private void Add(int kind)
@@ -305,6 +336,15 @@ public sealed class ScenarioActionsView : UserControl
         if (kind is >= 0 and <= 4 && actor is null) { error.Text = "Сначала создайте персонажа в библиотеке."; return; }
         if (kind is 6 or 7 or 9 && line is null) { error.Text = "Сначала добавьте фразу для перехода."; return; }
         var target = line is null ? Guid.Empty : ScenarioProgram.LineEntryId(line.Id);
+        if (kind == 11)
+        {
+            var chosenAnchor = (Anchor)anchors.SelectedItem!;
+            var chosenPhase = ((Phase)phases.SelectedItem!).Value;
+            var owner = document.Session; var sceneId = scene.Id;
+            _ = owner.CreatePhraseScriptAsync(sceneId, chosenAnchor.LineId, chosenPhase);
+            return;
+        }
+        if (kind == 12 && project.Scripts.IsEmpty) { error.Text = "Сначала создайте скрипт через «Ресурсы → Lua-скрипты»."; return; }
         ScenarioAction action = kind switch
         {
             0 => new MoveAction(id, actor?.Id ?? Guid.Empty, new(0.75, 1, 1, 0), 1),
@@ -314,11 +354,13 @@ public sealed class ScenarioActionsView : UserControl
             6 => new ChoiceAction(id, [new(Guid.NewGuid(), "Продолжить", scene.Id, target)]), 7 => new JumpAction(id, scene.Id, target),
             8 => new SetAction(id, "flag", "true"), 9 => new BranchAction(id, "flag", "true", scene.Id, target),
             10 => new HotspotAction(id, Guid.NewGuid(), "Предмет", 0.4, 0.4, 0.2, 0.1),
+            12 => new RunScriptAction(id, project.Scripts[0].Id),
             _ => new ScriptAction(id, "-- Поведение выбранной фразы\n-- game.move(refs.actor, 0.75, 1, 1, 0, 2)", "phrase.lua")
         };
         var anchor = (Anchor)anchors.SelectedItem!; var phase = ((Phase)phases.SelectedItem!).Value;
         selectedId = id;
         document.Session.UpdateScene(scene with { ScriptBlocks = scene.ScriptBlocks.Add(new(anchor.LineId, phase, action)) });
+        document.Session.InspectAction(id);
     }
 
     private void Move(int offset)
@@ -344,6 +386,7 @@ public sealed class ScenarioActionsView : UserControl
     private string Friendly(Guid id)
     {
         var project = document?.Session.Project; if (project is null) return "Не найдено";
+        foreach (var s in project.Scripts) if (s.Id == id) return s.Name;
         foreach (var c in project.Characters) { if (c.Id == id) return c.Name; foreach (var s in c.States) if (s.Id == id) return c.Name + " / " + s.Name; }
         foreach (var s in project.Scenes) { if (s.Id == id) return s.Name; foreach (var l in s.Lines) if (l.Id == id || ScenarioProgram.LineEntryId(l.Id) == id) return Excerpt(l);
             foreach (var h in s.Actions.Concat(s.ScriptBlocks.Select(b => b.Action)).OfType<HotspotAction>()) if (h.ObjectId == id) return h.Label; }
@@ -358,13 +401,15 @@ public sealed class ScenarioActionsView : UserControl
         JumpAction j => "К фразе: " + Friendly(j.ActionId), BranchAction b => $"Если {b.Variable} = {b.EqualsValue} → {Friendly(b.ActionId)}",
         ChoiceAction c => string.Join(" / ", c.Options.Select(o => o.Text)), SetAction s => s.Variable + " = " + s.Value,
         ScriptAction s => s.Source.Split('\n').FirstOrDefault(l => !l.TrimStart().StartsWith("--") && l.Trim().Length > 0) ?? "Свой код Lua",
+        RunScriptAction s => Friendly(s.ScriptId),
         HotspotAction h => h.Label, _ => "Команда сценария"
     };
     private static string PhaseLabel(ScriptPhase phase) => phase switch { ScriptPhase.BeforeLine => "До фразы", ScriptPhase.DuringLine => "Во время фразы", ScriptPhase.AfterLine => "После продолжения", ScriptPhase.SceneEnd => "Конец сцены", _ => "Начало сцены" };
-    private static string ActionLabel(ScenarioAction action) => action switch { TextAction => "Показать текст", ShowAction => "Показать", HideAction => "Скрыть", StateAction => "Сменить состояние", PlaceAction => "Разместить", MoveAction => "Двигать", WaitAction => "Ожидать", ChoiceAction => "Выбор", JumpAction => "Переход", SetAction => "Переменная", BranchAction => "Условие", ScriptAction => "Lua", HotspotAction => "Предмет", _ => "Действие" };
+    private static string ActionLabel(ScenarioAction action) => action switch { TextAction => "Показать текст", ShowAction => "Показать", HideAction => "Скрыть", StateAction => "Сменить состояние", PlaceAction => "Разместить", MoveAction => "Двигать", WaitAction => "Ожидать", ChoiceAction => "Выбор", JumpAction => "Переход", SetAction => "Переменная", BranchAction => "Условие", ScriptAction => "Lua", RunScriptAction => "Вызвать Lua-скрипт", HotspotAction => "Предмет", _ => "Действие" };
     private static string Label(string name) => name switch
     {
         "LineId" => "Фраза", "ObjectId" => "Персонаж / предмет", "StateId" => "Состояние", "SceneId" or "TargetSceneId" => "Сцена", "ActionId" or "TargetActionId" => "Целевая фраза",
+        "ScriptId" => "Ресурс Lua",
         "Seconds" => "Длительность, с", "Mode" => "Чего ожидать", "Source" => "Lua-код", "Token" => "Предмет", "Name" => "Имя скрипта для сообщений об ошибках", "Label" => "Подпись", "Text" => "Текст варианта",
         "Variable" => "Переменная", "Value" => "Значение", "EqualsValue" => "Равно", "Options" => "Варианты", "Target" => "Конечное положение", "Placement" => "Размещение",
         "X" => "X, % сцены", "Y" => "Y, % сцены", "Width" => "Ширина, % сцены", "Height" => "Высота, % сцены", "Scale" => "Масштаб, %", "Layer" => "Порядок спрайта", "Enabled" => "Активен", _ => name

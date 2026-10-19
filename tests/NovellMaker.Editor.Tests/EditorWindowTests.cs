@@ -33,6 +33,93 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task CreatingLuaFromPhrasePropertiesKeepsDocumentAndUnsavedText() => WithUi(async () =>
+    {
+        using var session = CreateSession(out var dialogs, out _);
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        var scene = session.ActiveScene!; scene.AddLine(); scene.LineText = "Несохранённая реплика";
+        var documentCount = session.Documents.Count; Dispatcher.UIThread.RunJobs();
+        Click(window, Find<Button>(window, "OpenPhraseScriptButton"));
+        Assert.AreEqual(0, scene.SelectedSection);
+        var properties = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
+        Find<ListBox>(properties, "ScriptBlocks").ContextMenu!.Items.OfType<MenuItem>().Single(m => m.Name == "CreatePhraseLuaMenu")
+            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        await UntilAsync(() => !session.IsBusy && dialogs.CodeEditor.Opened.Count == 1);
+        Assert.AreSame(scene, session.SelectedDocument); Assert.AreEqual(documentCount, session.Documents.Count);
+        Assert.AreEqual("Несохранённая реплика", scene.LineText); Assert.AreEqual(0, scene.SelectedSection);
+        Assert.IsInstanceOfType<NovellMaker.Core.Execution.RunScriptAction>(session.Project!.Scenes[0].ScriptBlocks.Single().Action);
+        Assert.IsFalse(window.GetVisualDescendants().OfType<Button>().Any(b => b.Name is "AddLuaBlock" or "OpenLuaLibrary"));
+        Capture(window, "editor-phrase-properties.png"); window.Close();
+    });
+
+    [TestMethod]
+    public Task LuaLibraryEditsReferencesValidatesAndAttachesResourceThroughActualControls() => WithUi(async () =>
+    {
+        using var session = CreateSession(out var dialogs, out _);
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        var sceneId = session.ActiveScene!.Id;
+        var document = session.SelectedDocument; var documentCount = session.Documents.Count;
+        var explorer = Find<TreeView>(window, "ProjectExplorer");
+        var createMenu = explorer.ContextMenu!.Items.OfType<MenuItem>().Single(m => m.Name == "CreateLuaResourceMenu");
+        createMenu.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        await UntilAsync(() => !session.IsBusy && dialogs.CodeEditor.Opened.Count > 0);
+        Assert.AreSame(document, session.SelectedDocument); Assert.AreEqual(documentCount, session.Documents.Count);
+        Assert.AreEqual(InspectorTarget.Script, session.InspectorTarget);
+        Dispatcher.UIThread.RunJobs(); Capture(window, "editor-script-properties-before-settings.png");
+        Find<Expander>(window, "CodeEditorSettings").IsExpanded = true; Dispatcher.UIThread.RunJobs();
+        Click(window, Find<Button>(window, "ChooseCodeEditor"));
+        await UntilAsync(() => !session.IsBusy && dialogs.CodeEditor.Executable is not null);
+        Assert.AreEqual("FixtureEditor", session.CodeEditorLabel);
+        await session.OpenScriptExternallyAsync(session.SelectedScript!.Id);
+        await UntilAsync(() => !session.IsBusy && dialogs.CodeEditor.Opened.Count == 2);
+        Find<Expander>(window, "CodeEditorSettings").IsExpanded = false; Dispatcher.UIThread.RunJobs();
+        var id = session.SelectedScript!.Id;
+        Find<TextBox>(window, "LuaScriptName").Text = "chapter.lua";
+        Assert.IsFalse(window.GetVisualDescendants().OfType<TextBox>().Any(t => t.Name is "LuaAssetSource" or "LuaSourceBox"));
+        var file = dialogs.CodeEditor.Opened.Last();
+        await File.WriteAllTextAsync(file, "game.set('gui_script', 'yes')");
+        await UntilAsync(() => session.SelectedScript!.Source.Contains("gui_script"));
+        StringAssert.Contains(Find<TextBlock>(window, "LuaAssetStatus").Text!, "Синтаксис корректен");
+        await File.WriteAllTextAsync(file, "if then");
+        await UntilAsync(() => session.SelectedScript!.Source == "if then" && !session.SelectedScriptDiagnostic.Contains("Синтаксис корректен"));
+        await File.WriteAllTextAsync(file, "return " + new string('(', 12000) + "1" + new string(')', 12000));
+        await UntilAsync(() => session.SelectedScriptDiagnostic.Contains("вложенности"));
+        Assert.IsTrue(window.IsVisible); Assert.AreSame(document, session.SelectedDocument);
+        await File.WriteAllTextAsync(file, "game.set('gui_script', 'yes')");
+        await UntilAsync(() => session.SelectedScriptDiagnostic == "Синтаксис корректен");
+        await File.WriteAllTextAsync(file + ".tmp", "game.set('gui_script', 'yes')\n-- atomic save");
+        File.Move(file + ".tmp", file, overwrite: true);
+        await UntilAsync(() => session.SelectedScript!.Source.Contains("atomic save"));
+        Find<Expander>(window, "LuaReferencesSettings").IsExpanded = true; Dispatcher.UIThread.RunJobs();
+        Find<TextBox>(window, "LuaAssetReferenceAlias").Text = "scene";
+        Assert.IsNotNull(Find<ComboBox>(window, "LuaAssetReferenceTarget").SelectedItem);
+        Capture(window, "editor-lua-before-reference.png");
+        Click(window, Find<Button>(window, "InsertLuaAssetReference"));
+        Assert.IsTrue(session.SelectedScript!.References.TryGetValue("scene", out var linked), Find<TextBlock>(window, "LuaAssetStatus").Text);
+        Assert.AreEqual(sceneId, linked);
+        Find<Expander>(window, "LuaReferencesSettings").IsExpanded = false; Dispatcher.UIThread.RunJobs();
+        Click(window, Find<Button>(window, "AttachLuaScriptToScene"));
+        var player = new NovellMaker.Core.Execution.ScenarioPlayer(session.Project!, sceneId, "ru");
+        Assert.IsNull(player.State.Error, player.State.Error); Assert.AreEqual("yes", player.State.Variables["gui_script"]);
+        Assert.AreEqual(id, ((NovellMaker.Core.Execution.RunScriptAction)session.Project!.Scenes[0].ScriptBlocks.Single().Action).ScriptId);
+        Find<ScrollViewer>(window, "LuaScriptInspector").Offset = default; Dispatcher.UIThread.RunJobs();
+        Capture(window, "editor-lua-library.png");
+        session.OpenScene(sceneId); session.ActiveScene!.SelectedSection = 4; Dispatcher.UIThread.RunJobs();
+        var headers = Find<TabControl>(window, "SceneSections").GetVisualDescendants().OfType<TabItem>().ToArray();
+        Assert.AreEqual(6, headers.Length);
+        foreach (var header in headers) Assert.IsTrue(header.Header is TextBlock { FontSize: 12 });
+        var headerY = headers.Select(h => h.TranslatePoint(default, window)!.Value.Y).ToArray();
+        Assert.IsTrue(headerY.All(y => Math.Abs(y - headerY[0]) < 1), "All six sections must share a single compact header row.");
+        Assert.IsTrue(headers.All(h => h.Bounds.Height <= 36));
+        Capture(window, "editor-compact-scene-tabs.png");
+        var actions = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => !v.PropertiesOnly);
+        Find<ListBox>(actions, "ScriptBlocks").ContextMenu!.Items.OfType<MenuItem>().Single(m => Equals(m.Header, "Вызвать существующий скрипт"))
+            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        Assert.AreEqual(2, session.Project.Scenes[0].ScriptBlocks.Length);
+        window.Close();
+    });
+
+    [TestMethod]
     public Task AudioTabImportsAndBindsVoiceAndMixerControls() => WithUi(async () =>
     {
         var session = CreateSession(out var dialogs, out _);
@@ -111,13 +198,14 @@ public sealed class EditorWindowTests
         Assert.AreEqual(4, session.ActiveScene!.SelectedSection);
         Assert.IsTrue(session.ExportWindowsCommand.CanExecute(null));
         Assert.IsNotNull(window.FindControl<MenuItem>("ExportWindowsMenu"));
-        var inspector = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single();
+        var inspector = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => !v.PropertiesOnly);
         var blocks = Find<ListBox>(inspector, "ScriptBlocks");
         Assert.AreEqual(2, blocks.ItemCount);
         blocks.SelectedIndex = 1; Dispatcher.UIThread.RunJobs();
         var before = session.Project!.Scenes[0].ScriptBlocks[1];
-        var seconds = inspector.GetVisualDescendants().OfType<NumericUpDown>().Last(); seconds.Value = 3;
-        Click(window, Find<Button>(inspector, "ApplyScriptBlock"));
+        var properties = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
+        var seconds = properties.GetVisualDescendants().OfType<NumericUpDown>().Last(); seconds.Value = 3;
+        Click(window, Find<Button>(properties, "ApplyScriptBlock"));
         Assert.AreEqual(3, ((NovellMaker.Core.Execution.MoveAction)session.Project.Scenes[0].ScriptBlocks[1].Action).Seconds);
         session.Undo(); Dispatcher.UIThread.RunJobs(); Assert.AreEqual(before, session.Project.Scenes[0].ScriptBlocks[1]);
         session.Redo(); Dispatcher.UIThread.RunJobs();
@@ -125,32 +213,26 @@ public sealed class EditorWindowTests
         session.ActiveScene.SelectedSection = 0; Dispatcher.UIThread.RunJobs();
         StringAssert.Contains(session.ActiveScene.SelectedPhraseScriptSummary, "Во время: 1");
         Click(window, Find<Button>(window, "OpenPhraseScriptButton"));
-        Assert.AreEqual(4, session.ActiveScene.SelectedSection);
-        var phrases = Find<ComboBox>(inspector, "ScriptPhrasePicker"); phrases.SelectedIndex = 3; Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(0, session.ActiveScene.SelectedSection);
+        properties = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
+        var phrases = Find<ComboBox>(properties, "ScriptPhrasePicker"); phrases.SelectedIndex = 3; Dispatcher.UIThread.RunJobs();
         Assert.AreEqual(session.Project.Scenes[0].Lines[2].Id, session.ActiveScene.SelectedLine!.Id);
-        blocks.SelectedIndex = 3; Dispatcher.UIThread.RunJobs();
-        var source = Find<TextBox>(inspector, "LuaSourceBox"); StringAssert.Contains(source.Text!, "refs.correct");
-        StringAssert.Contains(Find<TextBlock>(inspector, "LuaQueueHelp").Text!, "следующий Lua-блок");
-        Assert.IsFalse(source.Text!.Contains(session.Project.Characters[0].Id.ToString(), StringComparison.Ordinal));
-        source.Text += "\n-- "; source.SelectionStart = source.SelectionEnd = source.Text.Length;
-        Find<TextBox>(inspector, "LuaReferenceAlias").Text = "traveller";
-        var scriptScroll = Find<ScrollViewer>(inspector, "ScriptInspectorScroll");
-        scriptScroll.Offset = new Vector(0, scriptScroll.Extent.Height);
-        Dispatcher.UIThread.RunJobs();
-        Click(window, Find<Button>(inspector, "InsertLuaReference"));
-        Capture(window, "editor-phrase-script-insert.png");
-        Assert.IsTrue(source.Text!.Contains("refs.traveller"), Find<TextBlock>(inspector, "ScriptError").Text);
-        Click(window, Find<Button>(inspector, "ApplyScriptBlock"));
-        Assert.IsTrue(string.IsNullOrEmpty(Find<TextBlock>(inspector, "ScriptError").Text), Find<TextBlock>(inspector, "ScriptError").Text);
-        var lua = session.Project.Scenes[0].ScriptBlocks.Select(b => b.Action).OfType<NovellMaker.Core.Execution.ScriptAction>().Single(a => a.Name == "terminal-result.lua");
-        Assert.AreEqual(session.Project.Characters[0].Id, lua.References["traveller"]);
-        StringAssert.Contains(lua.Source, "refs.traveller");
-        scriptScroll.Offset = default; Dispatcher.UIThread.RunJobs();
+        properties = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
+        Find<ListBox>(properties, "ScriptBlocks").SelectedIndex = 3; Dispatcher.UIThread.RunJobs();
+        properties = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
+        Assert.IsFalse(inspector.GetVisualDescendants().OfType<TextBox>().Any(t => t.Name == "LuaSourceBox"));
+        var originalInline = (NovellMaker.Core.Execution.ScriptAction)session.Project.Scenes[0].ScriptBlocks.Select(b => b.Action).Single(a => a is NovellMaker.Core.Execution.ScriptAction s && s.Name == "terminal-result.lua");
+        Click(window, Find<Button>(properties, "OpenInlineLuaExternally"));
+        await UntilAsync(() => !session.IsBusy && dialogs.CodeEditor.Opened.Count > 0);
+        Assert.AreEqual(originalInline.Source, session.SelectedScript!.Source);
+        Assert.AreEqual(originalInline.References["correct"], session.SelectedScript.References["correct"]);
+        session.InspectAction(originalInline.Id); Dispatcher.UIThread.RunJobs();
+        inspector = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
         Capture(window, "editor-phrase-script.png");
         var count = session.Project.Scenes[0].ScriptBlocks.Length;
-        var remove = inspector.GetVisualDescendants().OfType<Button>().Single(b => Equals(b.Content, "Удалить"));
-        Click(window, remove); Assert.AreEqual(count, session.Project.Scenes[0].ScriptBlocks.Length);
-        dialogs.AcceptDeletion = true; Click(window, remove);
+        var remove = inspector.ContextMenu!.Items.OfType<MenuItem>().Single(m => Equals(m.Header, "Удалить"));
+        remove.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent)); Assert.AreEqual(count, session.Project.Scenes[0].ScriptBlocks.Length);
+        dialogs.AcceptDeletion = true; remove.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
         await UntilAsync(() => session.Project.Scenes[0].ScriptBlocks.Length == count - 1);
         session.Undo(); Assert.AreEqual(count, session.Project.Scenes[0].ScriptBlocks.Length);
         session.Dispose(); window.Hide();
@@ -1124,11 +1206,13 @@ public sealed class EditorWindowTests
     {
         dialogs = new UiDialogs();
         store = new UiStore();
-        return new(store, dialogs, new UiGit());
+        return new(store, dialogs, new UiGit(), codeEditor: dialogs.CodeEditor);
     }
 
     private sealed class UiDialogs : IEditorDialogs
     {
+        public UiCodeEditor CodeEditor { get; } = new();
+        public Task<string?> PickCodeEditorAsync() => Task.FromResult<string?>("C:/Fixture/FixtureEditor.exe");
         public int SavePickerCalls { get; private set; }
         public int ConfirmationCalls { get; private set; }
         public string SavePath { get; set; } = Path.Combine(Path.GetTempPath(), "test-ui.novell");
@@ -1153,6 +1237,14 @@ public sealed class EditorWindowTests
             return Task.FromResult(Decision);
         }
         public Task ShowErrorAsync(string title, string message) => throw new AssertFailedException($"{title}: {message}");
+    }
+
+    private sealed class UiCodeEditor : IExternalCodeEditor
+    {
+        public string? Executable { get; private set; }
+        public List<string> Opened { get; } = [];
+        public void Configure(string? executable) => Executable = executable;
+        public void Open(string file) => Opened.Add(file);
     }
 
     private sealed class UiStore : IProjectStore

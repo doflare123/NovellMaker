@@ -25,13 +25,14 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
     private string status = "Создайте или откройте проект.";
     private string gitSummary = "Git: проект не открыт";
 
-    public EditorSession(IProjectStore store, IEditorDialogs dialogs, IGitStatusService git, IImageAssetService? imageAssets = null, IPreviewService? previewService = null)
+    public EditorSession(IProjectStore store, IEditorDialogs dialogs, IGitStatusService git, IImageAssetService? imageAssets = null, IPreviewService? previewService = null, IExternalCodeEditor? codeEditor = null)
     {
         this.store = store;
         this.dialogs = dialogs;
         this.git = git;
         this.imageAssets = imageAssets ?? new ImageAssetService();
         this.previewService = previewService ?? new PreviewService();
+        this.codeEditor = codeEditor ?? new ExternalCodeEditor();
         NewCommand = new(NewProjectAsync, () => !IsBusy);
         OpenCommand = new(OpenProjectAsync, () => !IsBusy);
         SaveCommand = new(() => SaveAsync(), () => !IsBusy && HasProject && IsNameValid && AreDocumentsValid);
@@ -39,6 +40,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         CloseProjectCommand = new(() => CloseProjectAsync(), () => !IsBusy && HasProject);
         RefreshGitCommand = new(RefreshGitAsync, () => !IsBusy && ProjectPath is not null);
         InitializeAuthoring();
+        InitializeScripts();
         InitializeAssets();
         InitializeCharacters();
         InitializePreview();
@@ -103,6 +105,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         // Saving from the confirmation may have changed this very file.
         var loaded = await store.LoadAsync(path);
         SetProject(loaded, Path.GetFullPath(path), saved: true);
+        InitializeScriptFiles();
         Log("Проект открыт.");
         await UpdateGitAsync();
     });
@@ -131,6 +134,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
 
     public Task RefreshGitAsync() => RunAsync(async () =>
     {
+        RefreshExternalScriptsCore();
         RefreshAssetFiles();
         await UpdateGitAsync();
     });
@@ -158,7 +162,8 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         path ??= await dialogs.PickSaveProjectAsync("project.novell");
         if (path is null) return false;
         path = Path.GetFullPath(path);
-        var snapshot = project;
+        RefreshExternalScriptsCore();
+        var snapshot = project!;
         if (savedProject is not null && projectPath is not null && string.Equals(path, projectPath,
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
         {
@@ -173,6 +178,10 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         if (ProjectDirectory is { } audioRoot && snapshot.Audio.Assets.Length > 0 &&
             !string.Equals(audioRoot, Path.GetDirectoryName(path), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
             await Services.Assets.AudioAssetService.CopyAsync(audioRoot, Path.GetDirectoryName(path)!, snapshot.Audio.Assets);
+        var targetRoot = Path.GetDirectoryName(path)!;
+        var copyingScripts = ProjectDirectory is null || !string.Equals(ProjectDirectory, targetRoot, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        if (copyingScripts)
+            foreach (var script in snapshot.Scripts) ScriptFiles.Ensure(targetRoot, script, requireSame: true);
         await store.SaveAsync(path, snapshot);
         if ((deletedFiles.Length > 0 || undo.Any(s => s.DeletedFiles.Length > 0) || redo.Any(s => s.DeletedFiles.Length > 0)) && projectPath is not null && !string.Equals(Path.GetDirectoryName(path), ProjectDirectory,
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
@@ -182,6 +191,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         }
         savedProject = snapshot;
         projectPath = path;
+        StartScriptWatcher();
         EndEditGroup();
         NotifyProjectChanged();
         Log("Проект сохранён.");
@@ -198,6 +208,10 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         ResetAuthoring();
         ResetAssets();
         ResetCharacters();
+        SelectedScriptId = null;
+        InspectorTarget = InspectorTarget.Project; InspectedActionId = null;
+        StopScriptWatcher();
+        scriptDiagnostics.Clear();
         gitSummary = path is null ? "Git: сохраните проект для проверки" : "Git: проверка…";
         if (value is null) gitSummary = "Git: проект не открыт";
         fileExplorerRoot = null;
@@ -214,6 +228,8 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
             Changed(name);
         NotifyAssetsChanged();
         NotifyCharactersChanged();
+        Changed(nameof(ScriptLibraryTitle));
+        Changed(nameof(SelectedScript));
         RebuildProjectEntry();
         NotifyAuthoringChanged();
         NotifyCommands();
@@ -235,7 +251,9 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
              new ExplorerEntry($"Изображения ({project.Images.Length})", "Библиотека изображений",
                  project.Images.Select(image => new ExplorerEntry(image.Name, image.RelativePath, [], ImageAssetId: image.Id)).ToArray(), IsAssetLibrary: true),
              new ExplorerEntry($"Персонажи ({project.Characters.Length})", "Персонажи и состояния",
-                 project.Characters.Select(character => new ExplorerEntry(character.Name, character.Id.ToString(), [], CharacterId: character.Id)).ToArray(), IsCharacterLibrary: true)]);
+                 project.Characters.Select(character => new ExplorerEntry(character.Name, character.Id.ToString(), [], CharacterId: character.Id)).ToArray(), IsCharacterLibrary: true),
+             new ExplorerEntry($"Lua-скрипты ({project.Scripts.Length})", "Lua-ресурсы внутри .novell",
+                 project.Scripts.Select(script => new ExplorerEntry(script.Name, script.Id.ToString(), [], ScriptId: script.Id)).ToArray(), IsScriptLibrary: true)]);
         if (Explorer.Count == 0) Explorer.Add(row);
         else Explorer[0] = row;
     }
@@ -288,7 +306,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
 
     private void NotifyCommands()
     {
-        foreach (var command in new[] { NewCommand, OpenCommand, SaveCommand, SaveAsCommand, CloseProjectCommand, RefreshGitCommand, OpenExampleCommand, ExportWindowsCommand, ExportWindowsInstallerCommand })
+        foreach (var command in new[] { NewCommand, OpenCommand, SaveCommand, SaveAsCommand, CloseProjectCommand, RefreshGitCommand, OpenExampleCommand, ExportWindowsCommand, ExportWindowsInstallerCommand, OpenScriptLibraryCommand })
             command.NotifyCanExecuteChanged();
     }
 

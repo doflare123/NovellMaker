@@ -40,7 +40,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         PreviousLineCommand = EditorSession.Command(() => Navigate(-1), () => Session.IsIdle && CanPrevious);
         NextLineCommand = EditorSession.Command(() => Navigate(1), () => Session.IsIdle && CanNext);
         CloseCommand = EditorSession.Command(() => Session.CloseDocument(this), () => Session.IsIdle);
-        OpenPhraseScriptCommand = EditorSession.Command(() => SelectedSection = 4, () => Session.IsIdle && SelectedLine is not null);
+        OpenPhraseScriptCommand = EditorSession.Command(Session.InspectPhrase, () => Session.IsIdle && SelectedLine is not null);
         Synchronize(scene);
     }
 
@@ -90,6 +90,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
             selectedLine = value;
             Session.EndEditGroup();
             RefreshLineSelection();
+            if (Session.ActiveScene?.Id == Id) Session.InspectPhrase();
         }
     }
 

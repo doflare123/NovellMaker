@@ -72,8 +72,8 @@ public sealed class AudioTests
         var node = JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject(); node["formatVersion"] = 8;
         await File.WriteAllTextAsync(path, node.ToJsonString());
         await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
-        node.Remove("audio"); await File.WriteAllTextAsync(path, node.ToJsonString()); var before = File.ReadAllBytes(path);
-        var migrated = await store.LoadAsync(path); Assert.AreEqual(9, migrated.FormatVersion); Assert.AreEqual(0, migrated.Audio.Assets.Length);
+        node.Remove("audio"); node.Remove("scripts"); await File.WriteAllTextAsync(path, node.ToJsonString()); var before = File.ReadAllBytes(path);
+        var migrated = await store.LoadAsync(path); Assert.AreEqual(NovelProject.CurrentFormatVersion, migrated.FormatVersion); Assert.AreEqual(0, migrated.Audio.Assets.Length);
         CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
     }
     [TestMethod] public void WaveParserRejectsTruncationCompressionAndBadAlignmentWithoutReadingPcm()

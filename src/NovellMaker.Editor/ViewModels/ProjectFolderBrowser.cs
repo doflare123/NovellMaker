@@ -44,7 +44,7 @@ public sealed class ProjectFolderBrowser : INotifyPropertyChanged, IDisposable
     public FolderTile? SelectedTile
     {
         get => selectedTile;
-        set { selectedTile = value; Changed(); Changed(nameof(SelectionDetail)); }
+        set { var previous = selectedTile?.Entry.ScriptId; selectedTile = value; Changed(); Changed(nameof(SelectionDetail)); if (value?.Entry.ScriptId is { } id && id != previous) session.InspectScript(id); }
     }
     public string SelectionDetail => SelectedTile?.Detail ?? $"Элементов: {Tiles.Count}";
     public bool IsEmpty => Tiles.Count == 0;
@@ -151,6 +151,8 @@ public sealed class ProjectFolderBrowser : INotifyPropertyChanged, IDisposable
         if (entry.SceneId is { } scene) session.OpenScene(scene);
         else if (entry.ImageAssetId is { } image) session.SelectImage(image);
         else if (entry.CharacterId is { } character) session.SelectCharacter(character);
+        else if (entry.ScriptId is { } script) _ = session.OpenScriptExternallyAsync(script);
+        else if (entry.IsScriptLibrary) session.OpenScriptLibrary();
         else if (entry.IsProjectSettings) session.SelectedDocument = session.Documents.FirstOrDefault();
     }
     private void Update()

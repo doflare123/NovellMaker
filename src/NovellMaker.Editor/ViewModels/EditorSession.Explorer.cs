@@ -44,9 +44,11 @@ public sealed partial class EditorSession
                 new ExplorerEntry(state.Name, state.Id.ToString(), [], CharacterId: character.Id, CharacterStateId: state.Id)).ToArray(),
                 CharacterId: character.Id, ExpandInitially: false, IsDirectory: true)).ToArray(),
             IsCharacterLibrary: true, ExpandInitially: false, IsDirectory: true);
-        var disk = fileExplorerRoot.Items.Select(entry => entry.IsDirectory && entry.Label is "Сцены/" or "Персонажи/"
+        var scripts = new ExplorerEntry("Lua-скрипты/", "Lua-ресурсы внутри .novell", project.Scripts.Select(script =>
+            new ExplorerEntry(script.Name, script.Id.ToString(), [], ScriptId: script.Id)).ToArray(), IsScriptLibrary: true, ExpandInitially: false, IsDirectory: true);
+        var disk = fileExplorerRoot.Items.Select(entry => entry.IsDirectory && entry.Label is "Сцены/" or "Персонажи/" or "Lua-скрипты/"
             ? entry with { Label = entry.Label + " (файлы)" } : entry);
-        var view = new ExplorerEntry(ProjectName, projectPath ?? "Несохранённый проект", [scenes, characters, .. disk], IsDirectory: true);
+        var view = new ExplorerEntry(ProjectName, projectPath ?? "Несохранённый проект", [scenes, characters, scripts, .. disk], IsDirectory: true);
         if (Explorer.FirstOrDefault() is { } previous) PreserveFolderExpansion(view, previous);
         if (Explorer.Count == 0) Explorer.Add(view);
         else Explorer[0] = view;
@@ -86,10 +88,12 @@ public sealed partial class EditorSession
                     string.Equals(Path.GetFullPath(Path.Combine(root, item.Path)), fullPath,
                         OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
                 var badge = change is null ? "" : $"{change.IndexStatus}{change.WorkTreeStatus}  ";
+                var script = project?.Scripts.FirstOrDefault(s => string.Equals(Path.Combine(ProjectDirectory!, "Scripts", s.Id.ToString("N") + ".lua"), fullPath,
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
                 result.Add(new ExplorerEntry(badge + info.Name + (isFolder ? "/" : ""),
                     fullPath + (isLink ? " (ссылка; обход отключён)" : ""), [], ImageAssetId: image?.Id,
                     FilePath: fullPath, IsProjectSettings: fullPath == projectPath, ExpandInitially: false, IsDirectory: isFolder,
-                    ChildLoader: isFolder && !isLink ? () => ReadProjectDirectory(fullPath) : null, GitStatus: badge.Trim()));
+                    ChildLoader: isFolder && !isLink ? () => ReadProjectDirectory(fullPath) : null, GitStatus: badge.Trim(), ScriptId: script?.Id));
             }
             return result;
         }

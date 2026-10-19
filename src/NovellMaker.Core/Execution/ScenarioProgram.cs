@@ -42,6 +42,13 @@ public static class ScenarioProgram
         var ids = new HashSet<Guid> { project.Id };
         ids.UnionWith(project.Images.Select(i => i.Id));
         ids.UnionWith(project.Audio.Assets.Select(a => a.Id));
+        if (project.Scripts.IsDefault) throw new ArgumentException("Коллекция скриптов отсутствует.");
+        foreach (var script in project.Scripts)
+        {
+            if (script is null) throw new ArgumentException("Коллекция скриптов содержит null.");
+            script.Validate();
+            if (!ids.Add(script.Id)) throw new ArgumentException("Повторный ID скрипта.");
+        }
         ids.UnionWith(project.Characters.Select(c => c.Id));
         ids.UnionWith(project.Characters.SelectMany(c => c.States).Select(s => s.Id));
         ids.UnionWith(project.Scenes.Select(s => s.Id));
@@ -83,13 +90,14 @@ public static class ScenarioProgram
             WaitAction a => Duration(a.Seconds) && (a.Mode switch { "input" or "actions" => true, "timer" => true,
                 "interaction" => a.Token != Guid.Empty, _ => false }),
             ChoiceAction a => !a.Options.IsDefaultOrEmpty && a.Options.Length <= 8 && a.Options.All(o => o is not null && o.Id != Guid.Empty &&
-                !string.IsNullOrWhiteSpace(o.Text) && TargetExists(o.TargetSceneId, o.TargetActionId)) && a.Options.Select(o => o.Id).Distinct().Count() == a.Options.Length,
+                !string.IsNullOrWhiteSpace(o.Text) && o.Text.Length <= LuaLimits.MaximumValueLength && TargetExists(o.TargetSceneId, o.TargetActionId)) && a.Options.Select(o => o.Id).Distinct().Count() == a.Options.Length,
             JumpAction a => TargetExists(a.SceneId, a.ActionId),
-            BranchAction a => !string.IsNullOrWhiteSpace(a.Variable) && a.EqualsValue is not null && TargetExists(a.SceneId, a.ActionId),
-            SetAction a => !string.IsNullOrWhiteSpace(a.Variable) && a.Value is not null,
+            BranchAction a => LuaLimits.ValidVariable(a.Variable, a.EqualsValue) && TargetExists(a.SceneId, a.ActionId),
+            SetAction a => LuaLimits.ValidVariable(a.Variable, a.Value),
+            RunScriptAction a => project.Scripts.Any(s => s.Id == a.ScriptId),
             ScriptAction a => !string.IsNullOrWhiteSpace(a.Name) && a.Source is not null && a.Source.Length <= LuaActionScript.MaximumSourceLength && a.References is not null &&
-                a.References.All(r => System.Text.RegularExpressions.Regex.IsMatch(r.Key, "^[A-Za-z_][A-Za-z0-9_]*$") && r.Value != Guid.Empty),
-            HotspotAction a => a.ObjectId != Guid.Empty && a.Label is not null && double.IsFinite(a.X) && double.IsFinite(a.Y) &&
+                LuaActionScript.ValidReferences(a.References),
+            HotspotAction a => a.ObjectId != Guid.Empty && a.Label is not null && a.Label.Length <= LuaLimits.MaximumValueLength && double.IsFinite(a.X) && double.IsFinite(a.Y) &&
                 a.X >= 0 && a.Y >= 0 && a.Width > 0 && a.Height > 0 && a.X + a.Width <= 1 && a.Y + a.Height <= 1,
             _ => false,
         };
