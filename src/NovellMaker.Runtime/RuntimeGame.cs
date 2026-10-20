@@ -245,7 +245,7 @@ internal sealed partial class RuntimeGame : Game
     {
         player.Dispose();
         screens.Dispose();
-        foreach (var texture in pauseTextures) texture.Texture.Dispose();
+        pauseTextures?.Dispose();
         audio?.Dispose();
         foreach (var button in mixerButtons) button.Texture.Dispose();
         actionHelp?.Dispose();

@@ -1,11 +1,11 @@
 using System.Collections.Immutable;
 using System.Text;
 using System.Text.Json;
-using NovellMaker.Core.Projects;
 
 namespace NovellMaker.Core.Execution;
 
-public sealed record LuaWorkerRequest(string Mode, string Source, string Name, ScriptAction? Action = null, GameState? State = null, NovelProject? Project = null);
+public sealed record LuaWorkerRequest(string Mode, string Source, string Name, ScriptAction? Action = null,
+    LuaStateSnapshot? State = null, LuaCommandCatalog? Catalog = null);
 public sealed record LuaWorkerResponse(string? Error, ImmutableArray<ScenarioAction> Commands);
 
 /// <summary>No MoonSharp parser or VM executes in the editor/game process.</summary>
@@ -22,6 +22,9 @@ public static class LuaWorkerClient
     /// <summary>Bounded isolated RPC. Caller cancellation throws; timeout/protocol/process failures return an error and no commands.</summary>
     public static Task<LuaWorkerResponse> InvokeAsync(LuaWorkerRequest request, CancellationToken cancellationToken = default) =>
         Transport.InvokeAsync(request, cancellationToken);
+
+    internal static Task<LuaWorkerResponse> InvokePreparedAsync(Func<LuaRequestPreparation, LuaWorkerRequest> createRequest, CancellationToken cancellationToken) =>
+        Transport.InvokePreparedAsync(createRequest, cancellationToken);
 
     internal static string Host()
     {
@@ -75,8 +78,8 @@ public static class LuaWorkerEntry
             {
                 LuaLimits.CheckSource(request.Source);
                 if (request.Mode == "syntax") { LuaActionScript.ValidateInWorker(request.Source, request.Name); result = new(null, []); }
-                else if (request.Mode == "run" && request.Action is { } action && request.State is { } state && request.Project is { } project)
-                    result = new(null, LuaActionScript.RunInWorker(action, state, project));
+                else if (request.Mode == "run" && request.Action is { } action && request.State is { } state && request.Catalog is { } catalog)
+                    result = new(null, LuaActionScript.RunInWorker(action, state, catalog));
                 else throw new ArgumentException("Неизвестный запрос Lua.");
             }
             catch (Exception error) when (error is ArgumentException or InvalidOperationException)

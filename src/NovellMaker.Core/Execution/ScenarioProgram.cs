@@ -10,29 +10,60 @@ namespace NovellMaker.Core.Execution;
 public static class ScenarioProgram
 {
     /// <summary>Legacy dialogue cues compile to ordinary actions; no second interpreter.</summary>
-    public static ImmutableArray<ScenarioAction> Compile(NovelScene scene)
+    public static ImmutableArray<ScenarioAction> Compile(NovelScene scene) => Compile(scene, CancellationToken.None);
+
+    public static ImmutableArray<ScenarioAction> Compile(NovelScene scene, CancellationToken cancellationToken)
     {
-        if (scene.HasLegacyActionScript) return scene.Actions;
-        var actions = ImmutableArray.CreateBuilder<ScenarioAction>();
-        void Blocks(Guid? line, ScriptPhase phase) => actions.AddRange(scene.ScriptBlocks.Where(b => b.LineId == line && b.Phase == phase).Select(b => b.Action));
-        Blocks(null, ScriptPhase.SceneStart);
+        cancellationToken.ThrowIfCancellationRequested();
+        return scene.HasLegacyActionScript ? scene.Actions : [.. EnumerateActions(scene, cancellationToken)];
+    }
+
+    internal static IEnumerable<ScenarioAction> EnumerateActions(NovelScene scene, CancellationToken cancellationToken)
+        => EnumerateActions(scene, cancellationToken.ThrowIfCancellationRequested);
+
+    internal static IEnumerable<ScenarioAction> EnumerateActions(NovelScene scene, Action checkpoint)
+    {
+        checkpoint();
+        if (scene.HasLegacyActionScript)
+        {
+            foreach (var action in scene.Actions)
+            { checkpoint(); yield return action; }
+            yield break;
+        }
+        // Preserve order within each event without scanning all blocks for every phrase.
+        var blocks = new Dictionary<(Guid?, ScriptPhase), List<ScenarioAction>>();
+        foreach (var block in scene.ScriptBlocks)
+        {
+            checkpoint();
+            var key = (block.LineId, block.Phase);
+            if (!blocks.TryGetValue(key, out var eventActions)) blocks.Add(key, eventActions = []);
+            eventActions.Add(block.Action);
+        }
+        IEnumerable<ScenarioAction> Blocks(Guid? line, ScriptPhase phase)
+        {
+            if (!blocks.TryGetValue((line, phase), out var eventActions)) yield break;
+            foreach (var action in eventActions)
+            { checkpoint(); yield return action; }
+        }
+        foreach (var action in Blocks(null, ScriptPhase.SceneStart)) yield return action;
         foreach (var line in scene.Lines)
         {
+            checkpoint();
             var cue = 0;
             Guid Id() => new(MD5.HashData(Encoding.UTF8.GetBytes($"{line.Id}/cue/{cue++}")));
-            actions.Add(new LineEntryAction(LineEntryId(line.Id), line.Id));
-            foreach (var placement in line.Placements) actions.Add(new PlaceAction(Id(), placement.CharacterId, placement.Placement));
-            if (line.HideCharacterId is { } hidden) actions.Add(new HideAction(Id(), hidden));
-            if (line.CharacterStateId is { } state) actions.Add(new StateAction(Id(), line.SpeakerId ?? Guid.Empty, state));
-            if (line.SpeakerId is { } speaker) actions.Add(new ShowAction(Id(), speaker));
-            Blocks(line.Id, ScriptPhase.BeforeLine);
-            actions.Add(new TextAction(Id(), line.Id));
-            Blocks(line.Id, ScriptPhase.DuringLine);
-            actions.Add(new WaitAction(Id(), "input"));
-            Blocks(line.Id, ScriptPhase.AfterLine);
+            yield return new LineEntryAction(LineEntryId(line.Id), line.Id);
+            foreach (var placement in line.Placements)
+            { checkpoint(); yield return new PlaceAction(Id(), placement.CharacterId, placement.Placement); }
+            if (line.HideCharacterId is { } hidden) yield return new HideAction(Id(), hidden);
+            if (line.CharacterStateId is { } state) yield return new StateAction(Id(), line.SpeakerId ?? Guid.Empty, state);
+            if (line.SpeakerId is { } speaker) yield return new ShowAction(Id(), speaker);
+            foreach (var action in Blocks(line.Id, ScriptPhase.BeforeLine)) yield return action;
+            yield return new TextAction(Id(), line.Id);
+            foreach (var action in Blocks(line.Id, ScriptPhase.DuringLine)) yield return action;
+            yield return new WaitAction(Id(), "input");
+            foreach (var action in Blocks(line.Id, ScriptPhase.AfterLine)) yield return action;
         }
-        Blocks(null, ScriptPhase.SceneEnd);
-        return actions.ToImmutable();
+        foreach (var action in Blocks(null, ScriptPhase.SceneEnd)) yield return action;
     }
 
     public static Guid LineEntryId(Guid lineId) => new(MD5.HashData(Encoding.UTF8.GetBytes($"{lineId}/entry")));
@@ -76,15 +107,24 @@ public static class ScenarioProgram
 
     internal static bool IsValidAction(NovelProject project, NovelScene scene, ScenarioAction action)
     {
-        bool ObjectExists(Guid id) => project.Characters.Any(c => c.Id == id);
-        bool TargetExists(Guid sceneId, Guid actionId) => project.Scenes.Any(s => s.Id == sceneId && Compile(s).Any(a => a.Id == actionId));
+        return IsValidAction(action, id => project.Characters.Any(c => c.Id == id),
+            (id, state) => project.Characters.Any(c => c.Id == id && c.States.Any(s => s.Id == state)),
+            id => scene.Lines.Any(l => l.Id == id),
+            (sceneId, actionId) => project.Scenes.Any(s => s.Id == sceneId && Compile(s).Any(a => a.Id == actionId)),
+            id => project.Scripts.Any(s => s.Id == id));
+    }
+
+    internal static bool IsValidAction(ScenarioAction action, Func<Guid, bool> ObjectExists,
+        Func<Guid, Guid, bool> StateExists, Func<Guid, bool> LineExists,
+        Func<Guid, Guid, bool> TargetExists, Func<Guid, bool> ScriptExists)
+    {
         return action switch
         {
-            TextAction a => scene.Lines.Any(l => l.Id == a.LineId),
-            LineEntryAction a => scene.Lines.Any(l => l.Id == a.LineId),
+            TextAction a => LineExists(a.LineId),
+            LineEntryAction a => LineExists(a.LineId),
             ShowAction a => ObjectExists(a.ObjectId),
             HideAction a => ObjectExists(a.ObjectId),
-            StateAction a => project.Characters.Any(c => c.Id == a.ObjectId && c.States.Any(s => s.Id == a.StateId)),
+            StateAction a => StateExists(a.ObjectId, a.StateId),
             PlaceAction a => ObjectExists(a.ObjectId) && (a.Placement is null || a.Placement.IsValid),
             MoveAction a => ObjectExists(a.ObjectId) && a.Target is { IsValid: true } && Duration(a.Seconds),
             WaitAction a => Duration(a.Seconds) && (a.Mode switch { "input" or "actions" => true, "timer" => true,
@@ -94,7 +134,7 @@ public static class ScenarioProgram
             JumpAction a => TargetExists(a.SceneId, a.ActionId),
             BranchAction a => LuaLimits.ValidVariable(a.Variable, a.EqualsValue) && TargetExists(a.SceneId, a.ActionId),
             SetAction a => LuaLimits.ValidVariable(a.Variable, a.Value),
-            RunScriptAction a => project.Scripts.Any(s => s.Id == a.ScriptId),
+            RunScriptAction a => ScriptExists(a.ScriptId),
             ScriptAction a => !string.IsNullOrWhiteSpace(a.Name) && a.Source is not null && a.Source.Length <= LuaActionScript.MaximumSourceLength && a.References is not null &&
                 LuaActionScript.ValidReferences(a.References),
             HotspotAction a => a.ObjectId != Guid.Empty && a.Label is not null && a.Label.Length <= LuaLimits.MaximumValueLength && double.IsFinite(a.X) && double.IsFinite(a.Y) &&

@@ -11,6 +11,32 @@ public sealed class ScreenLuaWorkerTests
 {
     // Trusted, fixed fixtures exercise worker logic in isolation. Hostile loops run only in real children below.
     private const string Empty = "return { on_event = function(event) end }";
+
+    [TestMethod]
+    public async Task RealWorkerSkipsStaleClickAndKeepsClosureVersionForNextEvent()
+    {
+        var (stack, instance) = ScreenLuaSessionTests.Fixture();
+        await using var session = new ScreenLuaSession(stack);
+        session.Attach(instance, """
+            local count = 0
+            return {on_event = function(event)
+              count = count + 1
+              ui.set_text(refs.label, count .. ':' .. ui.get('value'))
+              if event.kind == 'click' then ui.set_enabled(refs.button, false) end
+            end}
+            """, ImmutableDictionary<string, Guid>.Empty.Add("button", instance.Definition.Nodes[1].Id)
+                .Add("label", instance.Definition.Nodes[2].Id));
+        await ScreenLuaSessionTests.Drain(session);
+        var first = ImmutableDictionary<string, string>.Empty.Add("value", "first");
+        session.Enqueue(instance, new("click", instance.Definition.Nodes[1].Id), first);
+        session.Enqueue(instance, new("click", instance.Definition.Nodes[1].Id), first);
+        session.Enqueue(instance, new("update"), first.SetItem("value", "fresh"));
+        await ScreenLuaSessionTests.Drain(session);
+        Assert.AreEqual("2:fresh", instance.Definition.Nodes[2].Text);
+        Assert.AreEqual(3L, instance.Version);
+        Assert.IsTrue(session.IsAvailable(instance));
+        Assert.AreEqual(ScreenLuaIssueKind.StaleEvent, session.Issues.Single().Kind);
+    }
     private static (ScreenLuaWorkerService Service, ScreenLuaRequest Load) Worker(string source = Empty)
     {
         var definition = ScreenLuaProtocolTests.Definition();
@@ -202,7 +228,7 @@ public sealed class ScreenLuaWorkerTests
         Assert.IsNull((await LuaWorkerClient.InvokeAsync(new("syntax", "return 1", "v1.lua"))).Error);
         for (var i = 1; i <= 3; i++)
         {
-            session.Enqueue(instance, new("update", Seconds: 0.1)); await ScreenLuaSessionTests.Drain(session);
+            session.EnqueueUsingInstanceSnapshot(instance, new("update", Seconds: 0.1)); await ScreenLuaSessionTests.Drain(session);
             Assert.AreEqual($"count={i}", instance.Definition.Nodes[2].Text);
         }
         stack.Clear(); session.Poll(); await ScreenLuaSessionTests.Drain(session);
@@ -221,7 +247,7 @@ public sealed class ScreenLuaWorkerTests
         await using var session = new ScreenLuaSession(stack);
         session.Attach(instance, source); await ScreenLuaSessionTests.Drain(session);
         Assert.IsTrue(session.Diagnostics.IsEmpty);
-        session.Enqueue(instance, new("update")); await ScreenLuaSessionTests.Drain(session);
+        session.EnqueueUsingInstanceSnapshot(instance, new("update")); await ScreenLuaSessionTests.Drain(session);
         Assert.IsFalse(session.IsAvailable(instance)); Assert.IsFalse(session.Diagnostics.IsEmpty);
         Assert.AreSame(before, instance.Definition); Assert.AreEqual(1L, instance.Version);
         Assert.IsTrue(stack.Route(new(ScreenInputKind.Back)).Consumed);

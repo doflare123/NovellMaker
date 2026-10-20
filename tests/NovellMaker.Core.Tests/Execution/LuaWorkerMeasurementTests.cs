@@ -66,10 +66,16 @@ public sealed class LuaWorkerMeasurementTests
             var project = NovelProject.Create("Measurement") with { Scenes = [scene] };
             var state = new ScenarioPlayer(project, scene.Id, "ru").State;
             var action = new ScriptAction(Guid.NewGuid(), "game.set('measured', 'yes')", "measure.lua");
-            var request = new LuaWorkerRequest("run", action.Source, action.Name, action, state, project);
+            var timer = Stopwatch.StartNew();
+            var catalog = LuaCommandCatalog.Capture(project, state.SceneId);
+            var catalogColdMs = timer.Elapsed.TotalMilliseconds;
+            timer.Restart();
+            for (var i = 0; i < 100; i++) Assert.AreSame(catalog, LuaCommandCatalog.Capture(project, state.SceneId));
+            var catalogWarmMs = timer.Elapsed.TotalMilliseconds / 100;
+            var request = new LuaWorkerRequest("run", action.Source, action.Name, action, LuaStateSnapshot.Capture(state), catalog);
             // Same serializer and request shape as the production client. Production timing below
             // includes serialization, process startup, IPC, VM execution and parent validation.
-            var timer = Stopwatch.StartNew();
+            timer.Restart();
             var bytes = JsonSerializer.SerializeToUtf8Bytes(request).Length;
             var serializationMs = timer.Elapsed.TotalMilliseconds;
             Assert.IsLessThan(LuaWorkerClient.MaximumRequestBytes, bytes);
@@ -85,6 +91,7 @@ public sealed class LuaWorkerMeasurementTests
             var sorted = samples.Order().ToArray();
             cases.Add(new { Label = label, LineCount = lineCount, TextCharactersPerLine = textLength,
                 RequestBytes = bytes, SerializationMilliseconds = serializationMs, SamplesMilliseconds = samples,
+                CatalogColdMilliseconds = catalogColdMs, CatalogWarmMeanMilliseconds = catalogWarmMs,
                 FirstMilliseconds = samples[0], MedianMilliseconds = (sorted[5] + sorted[6]) / 2,
                 P95Milliseconds = sorted[(int)Math.Ceiling(sorted.Length * 0.95) - 1] });
         }
@@ -93,7 +100,7 @@ public sealed class LuaWorkerMeasurementTests
             MeasuredAtUtc = DateTimeOffset.UtcNow, OS = RuntimeInformation.OSDescription,
             Framework = RuntimeInformation.FrameworkDescription, Architecture = RuntimeInformation.ProcessArchitecture.ToString(),
             ProcessorCount = Environment.ProcessorCount, SamplesPerCase = 12,
-            Note = "Each call starts a fresh process. OS disk caches are not flushed. Includes serialization and parent validation; not a pure process-start benchmark. Run without coverage and parallel benchmarks.",
+            Note = "Each call starts a fresh process with a warm project catalog. Cold catalog build and 100 warm lookups are measured separately. OS disk caches are not flushed. Includes serialization and parent validation; not a pure process-start benchmark. Run without coverage and parallel benchmarks.",
             Cases = cases
         }, new JsonSerializerOptions { WriteIndented = true }));
     }

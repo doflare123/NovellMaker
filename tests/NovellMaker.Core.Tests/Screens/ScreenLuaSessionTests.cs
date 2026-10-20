@@ -44,6 +44,13 @@ public sealed class ScreenLuaSessionTests
         public override long GetTimestamp() => ticks;
         internal void Advance(double seconds) => ticks += TimeSpan.FromSeconds(seconds).Ticks;
     }
+    private sealed class SchedulingClock(int expiresAfter = 3) : TimeProvider
+    {
+        private int reads;
+        internal void ExpireAfterReads(int count) { reads = 0; expiresAfter = count; }
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => Interlocked.Increment(ref reads) >= expiresAfter ? TimeSpan.FromSeconds(5).Ticks : 0;
+    }
     internal static (ScreenStack Stack, ScreenInstance Instance) Fixture()
     {
         var stack = new ScreenStack(Guid.NewGuid());
@@ -66,6 +73,143 @@ public sealed class ScreenLuaSessionTests
     }
 
     [TestMethod]
+    public async Task DeadlineExpiringInBackgroundSchedulerBeforeAnyExchangeDoesNotPoisonConversation()
+    {
+        var (stack, instance) = Fixture(); var connection = new Connection(true);
+        await using var session = new ScreenLuaSession(stack, () => connection, new SchedulingClock());
+        session.Attach(instance, "return {}"); session.Poll();
+        try { await Ready(session); } catch (IOException) { }
+        session.Poll();
+        Assert.IsEmpty(connection.Seen); Assert.IsFalse(session.IsAvailable(instance));
+        Assert.AreEqual(ScreenLuaIssueKind.QueueExpired, session.Issues.Single().Kind);
+        Assert.IsFalse(connection.Disposed);
+        var other = stack.Open(Guid.NewGuid(), instance.Definition); session.Attach(other, "return {}"); await Drain(session);
+        Assert.IsTrue(session.IsAvailable(other)); Assert.AreEqual(1L, session.Generation); Assert.AreEqual(1L, other.Version);
+    }
+
+    [TestMethod]
+    public async Task ExpiredControlCloseRetiresConversationRatherThanLeakingRemoteVm()
+    {
+        var (stack, instance) = Fixture(); var connection = new Connection(true); var clock = new SchedulingClock(int.MaxValue);
+        await using var session = new ScreenLuaSession(stack, () => connection, clock);
+        session.Attach(instance, "return {}"); await Drain(session);
+        stack.Close(instance); clock.ExpireAfterReads(3); session.Poll();
+        try { await Ready(session); } catch (IOException) { }
+        session.Poll(); await session.DisposeAsync();
+        Assert.IsTrue(connection.Disposed); Assert.IsFalse(session.HasPending);
+        Assert.AreEqual(ScreenLuaIssueKind.Conversation, session.Issues.Single().Kind);
+        Assert.IsFalse(connection.Seen.Any(r => r.Kind == "close"));
+    }
+
+    [TestMethod]
+    public async Task ClosingWhileUnsentEventExpiresStillDeliversControlCloseForLoadedVm()
+    {
+        var (stack, instance) = Fixture(); var connection = new Connection(true); var clock = new SchedulingClock(int.MaxValue);
+        await using var session = new ScreenLuaSession(stack, () => connection, clock);
+        session.Attach(instance, "return {}"); await Drain(session);
+        clock.ExpireAfterReads(3); session.EnqueueUsingInstanceSnapshot(instance, new("update")); session.Poll();
+        stack.Close(instance);
+        try { await Ready(session); } catch (IOException) { }
+        session.Poll(); await Drain(session);
+        Assert.IsTrue(session.Diagnostics.IsEmpty); Assert.IsFalse(connection.Disposed);
+        Assert.AreEqual(1, connection.Seen.Count(r => r.Kind == "close"));
+        Assert.IsFalse(connection.Seen.Any(r => r.Kind == "event"));
+    }
+
+    [TestMethod]
+    public void NoOpBatchPreservesDefinitionIdentityButStillKeepsCloseCommand()
+    {
+        var definition = ScreenLuaProtocolTests.Definition(); var node = definition.Nodes[1];
+        var batch = ScreenLuaProtocol.Prepare(definition, [new("text", node.Id, node.Text, null),
+            new("enabled", node.Id, null, node.Enabled), new("visible", node.Id, null, node.Visible),
+            new("close", null, null, null)]);
+        Assert.AreSame(definition, batch.Definition); Assert.IsTrue(batch.Close);
+        batch = ScreenLuaProtocol.Prepare(definition, [new("text", node.Id, "changed", null), new("text", node.Id, node.Text, null)]);
+        Assert.AreSame(definition, batch.Definition); Assert.IsFalse(batch.Close);
+    }
+
+    [TestMethod]
+    [DataRow("enabled", false)][DataRow("visible", false)][DataRow("parent-visible", false)]
+    public async Task QueuedClickInvalidatedByEarlierHandlerDoesNotChangeVmVersionOrOtherScreens(string kind, bool value)
+    {
+        var (stack, instance) = Fixture(); var other = stack.Open(Guid.NewGuid(), instance.Definition);
+        var connection = new Connection(true);
+        await using var session = new ScreenLuaSession(stack, () => connection);
+        session.Attach(instance, "return {}"); session.Attach(other, "return {}"); await Drain(session);
+        var button = instance.Definition.Nodes[1].Id;
+        connection.Response = request => ScreenLuaProtocolTests.Reply(request,
+            request.Stamp.InstanceId == instance.Id && request.Event?.Kind == "click"
+                ? [new ScreenChange(kind == "parent-visible" ? "visible" : kind,
+                    kind == "parent-visible" ? instance.Definition.Nodes[0].Id : button, null, value)] : []);
+        session.EnqueueUsingInstanceSnapshot(instance, new("click", button));
+        session.EnqueueUsingInstanceSnapshot(instance, new("click", button));
+        session.EnqueueUsingInstanceSnapshot(other, new("update"));
+        await Drain(session);
+        Assert.AreEqual(1, connection.Seen.Count(r => r.Kind == "event" && r.Stamp.InstanceId == instance.Id));
+        Assert.AreEqual(2L, instance.Version); Assert.AreEqual(2L, other.Version);
+        Assert.IsTrue(session.IsAvailable(instance)); Assert.IsTrue(session.IsAvailable(other));
+        Assert.AreEqual(ScreenLuaIssueKind.StaleEvent, session.Issues.Single().Kind);
+        session.EnqueueUsingInstanceSnapshot(instance, new("update")); await Drain(session);
+        Assert.AreEqual(3L, instance.Version);
+    }
+
+    [TestMethod]
+    public async Task ExpiredQueuedEventDoesNotDisableLoadedVmOrFreshWorkFromAnotherOwner()
+    {
+        var (stack, instance) = Fixture(); var other = stack.Open(Guid.NewGuid(), instance.Definition);
+        var clock = new Clock(); var connection = new Connection(true);
+        await using var session = new ScreenLuaSession(stack, () => connection, clock);
+        session.Attach(instance, "return {}"); session.Attach(other, "return {}"); await Drain(session);
+        session.EnqueueUsingInstanceSnapshot(instance, new("update")); clock.Advance(5);
+        session.EnqueueUsingInstanceSnapshot(other, new("update")); await Drain(session);
+        Assert.AreEqual(1L, instance.Version); Assert.AreEqual(2L, other.Version);
+        Assert.IsTrue(session.IsAvailable(instance)); Assert.IsTrue(session.IsAvailable(other));
+        Assert.AreEqual(ScreenLuaIssueKind.QueueExpired, session.Issues.Single().Kind);
+        session.EnqueueUsingInstanceSnapshot(instance, new("update")); await Drain(session);
+        Assert.AreEqual(2L, instance.Version); Assert.AreEqual(1L, session.Generation);
+    }
+
+    [TestMethod]
+    public async Task EventSnapshotIsExplicitAndCapturedAtAdmissionWhileInstanceReuseIsNamed()
+    {
+        var (stack, instance) = Fixture(); var connection = new Connection(true);
+        await using var session = new ScreenLuaSession(stack, () => connection);
+        var initial = ImmutableDictionary<string, string>.Empty.Add("value", "initial");
+        session.Attach(instance, "return {}", snapshot: initial); await Drain(session);
+        var fresh = initial.SetItem("value", "fresh");
+        session.Enqueue(instance, new("update"), fresh);
+        fresh = fresh.SetItem("value", "later");
+        session.EnqueueUsingInstanceSnapshot(instance, new("update")); await Drain(session);
+        var events = connection.Seen.Where(r => r.Kind == "event").ToArray();
+        Assert.AreEqual("fresh", events[0].Snapshot["value"]); Assert.AreEqual("initial", events[1].Snapshot["value"]);
+        Assert.ThrowsExactly<ArgumentNullException>(() => session.Enqueue(instance, new("update"), null!));
+    }
+
+    [TestMethod]
+    public async Task ConversationCrashInvalidatesAllVmsAndReopenNeverReplaysSurvivingScreens()
+    {
+        var (stack, first) = Fixture(); var other = stack.Open(Guid.NewGuid(), first.Definition);
+        var broken = new Connection(); var fresh = new Connection(true);
+        var connections = new Queue<Connection>([broken, fresh]);
+        await using var session = new ScreenLuaSession(stack, () => connections.Dequeue());
+        session.Attach(first, "return {}"); session.Poll(); var load = await broken.Next(); load.Reply(); await Ready(session); session.Poll();
+        session.Attach(other, "return {}"); session.Poll(); load = await broken.Next(); load.Reply(); await Ready(session); session.Poll();
+        session.EnqueueUsingInstanceSnapshot(first, new("update")); session.Poll(); var call = await broken.Next();
+        session.EnqueueUsingInstanceSnapshot(other, new("update"));
+        call.Completion.SetException(new IOException("process memory limit"));
+        try { await Ready(session); } catch (IOException) { }
+        session.Poll();
+        Assert.IsFalse(session.IsAvailable(first)); Assert.IsFalse(session.IsAvailable(other));
+        Assert.IsFalse(session.HasPending); Assert.AreEqual(1L, first.Version); Assert.AreEqual(1L, other.Version);
+        Assert.AreEqual(ScreenLuaIssueKind.Conversation, session.Issues.Single().Kind);
+        var reopened = stack.Open(first.OwnerId, first.Definition); session.Attach(reopened, "return {}"); await Drain(session);
+        Assert.IsTrue(broken.Disposed); Assert.AreEqual(2L, session.Generation);
+        Assert.IsTrue(session.IsAvailable(reopened)); Assert.IsFalse(session.IsAvailable(other));
+        Assert.AreEqual(1, fresh.Seen.Count(r => r.Kind == "load"));
+        Assert.IsFalse(fresh.Seen.Any(r => r.Kind == "event"));
+    }
+
+    [TestMethod]
     public async Task TextCommitPreservesPointerCaptureButDisablingCapturedButtonCancelsActivation()
     {
         var (stack, instance) = Fixture(); var connection = new Connection();
@@ -74,7 +218,7 @@ public sealed class ScreenLuaSessionTests
         stack.Route(new(ScreenInputKind.PointerDown, 20, 20));
         load.Reply(new ScreenChange("text", instance.Definition.Nodes[2].Id, "loaded", null)); await Ready(session); session.Poll();
         Assert.AreEqual(instance.Definition.Nodes[1].Id, stack.Route(new(ScreenInputKind.PointerUp, 20, 20)).Activation?.NodeId);
-        session.Enqueue(instance, new("update")); session.Poll(); var update = await connection.Next();
+        session.EnqueueUsingInstanceSnapshot(instance, new("update")); session.Poll(); var update = await connection.Next();
         stack.Route(new(ScreenInputKind.PointerDown, 20, 20));
         update.Reply(new ScreenChange("enabled", instance.Definition.Nodes[1].Id, null, false)); await Ready(session); session.Poll();
         Assert.IsNull(stack.Focus); Assert.IsNull(stack.Route(new(ScreenInputKind.PointerUp, 20, 20)).Activation);
@@ -133,7 +277,7 @@ public sealed class ScreenLuaSessionTests
         await using var session = new ScreenLuaSession(stack, () => connection);
         session.Attach(instance, "return {}"); session.Poll(); var load = await connection.Next();
         load.Reply(); await Ready(session); session.Poll();
-        session.Enqueue(instance, new("update")); session.Poll(); var update = await connection.Next();
+        session.EnqueueUsingInstanceSnapshot(instance, new("update")); session.Poll(); var update = await connection.Next();
         update.Completion.SetException(new IOException("worker crashed"));
         try { await Ready(session); } catch (IOException) { }
         session.Poll(); Assert.IsFalse(session.HasPending);
@@ -156,7 +300,7 @@ public sealed class ScreenLuaSessionTests
         Assert.IsTrue(session.Poll()); Assert.AreEqual("loaded", instance.Definition.Nodes[2].Text);
         Assert.AreEqual(1L, instance.Version); Assert.AreEqual(1, session.AppliedBatches);
         Assert.IsFalse(session.Poll());
-        Assert.AreEqual(ScreenEventAdmission.Accepted, session.Enqueue(instance, new("click", before.Nodes[1].Id)));
+        Assert.AreEqual(ScreenEventAdmission.Accepted, session.EnqueueUsingInstanceSnapshot(instance, new("click", before.Nodes[1].Id)));
         session.Poll(); var click = await connection.Next();
         Assert.AreEqual(1L, click.Request.Stamp.Version); Assert.AreEqual(stack.SessionId, click.Request.Stamp.SessionId);
         Assert.IsTrue(click.Request.Nodes.IsEmpty); Assert.IsNull(click.Request.Source); Assert.IsTrue(click.Request.References.IsEmpty);
@@ -216,15 +360,15 @@ public sealed class ScreenLuaSessionTests
         var (stack, instance) = Fixture(); var connection = new Connection();
         await using var session = new ScreenLuaSession(stack, () => connection);
         session.Attach(instance, "return {}"); session.Poll(); var load = await connection.Next();
-        Assert.AreEqual(ScreenEventAdmission.Accepted, session.Enqueue(instance, new("move", X: 1)));
-        Assert.AreEqual(ScreenEventAdmission.Coalesced, session.Enqueue(instance, new("move", X: 2)));
-        Assert.AreEqual(ScreenEventAdmission.Accepted, session.Enqueue(instance, new("click", instance.Definition.Nodes[1].Id)));
-        Assert.AreEqual(ScreenEventAdmission.Accepted, session.Enqueue(instance, new("move", X: 3)));
-        Assert.AreEqual(ScreenEventAdmission.Accepted, session.Enqueue(instance, new("hover", instance.Definition.Nodes[1].Id)));
-        Assert.AreEqual(ScreenEventAdmission.Coalesced, session.Enqueue(instance, new("hover", instance.Definition.Nodes[1].Id, X: 9)));
-        Assert.AreEqual(ScreenEventAdmission.Accepted, session.Enqueue(instance, new("hover", instance.Definition.Nodes[2].Id)));
-        while (session.QueuedEvents < 128) Assert.AreEqual(ScreenEventAdmission.Accepted, session.Enqueue(instance, new("click", instance.Definition.Nodes[1].Id)));
-        Assert.AreEqual(ScreenEventAdmission.Busy, session.Enqueue(instance, new("click", instance.Definition.Nodes[1].Id)));
+        Assert.AreEqual(ScreenEventAdmission.Accepted, session.EnqueueUsingInstanceSnapshot(instance, new("move", X: 1)));
+        Assert.AreEqual(ScreenEventAdmission.Coalesced, session.EnqueueUsingInstanceSnapshot(instance, new("move", X: 2)));
+        Assert.AreEqual(ScreenEventAdmission.Accepted, session.EnqueueUsingInstanceSnapshot(instance, new("click", instance.Definition.Nodes[1].Id)));
+        Assert.AreEqual(ScreenEventAdmission.Accepted, session.EnqueueUsingInstanceSnapshot(instance, new("move", X: 3)));
+        Assert.AreEqual(ScreenEventAdmission.Accepted, session.EnqueueUsingInstanceSnapshot(instance, new("hover", instance.Definition.Nodes[1].Id)));
+        Assert.AreEqual(ScreenEventAdmission.Coalesced, session.EnqueueUsingInstanceSnapshot(instance, new("hover", instance.Definition.Nodes[1].Id, X: 9)));
+        Assert.AreEqual(ScreenEventAdmission.Accepted, session.EnqueueUsingInstanceSnapshot(instance, new("hover", instance.Definition.Nodes[2].Id)));
+        while (session.QueuedEvents < 128) Assert.AreEqual(ScreenEventAdmission.Accepted, session.EnqueueUsingInstanceSnapshot(instance, new("click", instance.Definition.Nodes[1].Id)));
+        Assert.AreEqual(ScreenEventAdmission.Busy, session.EnqueueUsingInstanceSnapshot(instance, new("click", instance.Definition.Nodes[1].Id)));
         Assert.AreEqual(128, session.QueuedEvents); StringAssert.Contains(session.Diagnostics.Last(), "не принято");
         load.Reply(); await Ready(session); session.Poll();
         var move = await connection.Next(); Assert.AreEqual(2d, move.Request.Event?.X);
@@ -240,7 +384,7 @@ public sealed class ScreenLuaSessionTests
         var (stack, first) = Fixture(); var second = stack.Open(Guid.NewGuid(), first.Definition);
         var connection = new Connection(true); await using var session = new ScreenLuaSession(stack, () => connection);
         session.Attach(first, "return {}"); session.Attach(second, "return {}"); await Drain(session);
-        for (var i = 0; i < 128; i++) session.Enqueue(second, new("update"));
+        for (var i = 0; i < 128; i++) session.EnqueueUsingInstanceSnapshot(second, new("update"));
         stack.Close(first); session.Poll(); await Ready(session); session.Poll();
         Assert.IsTrue(connection.Seen.Any(r => r.Kind == "close" && r.Stamp.InstanceId == first.Id));
         Assert.IsTrue(session.IsAvailable(second)); await Drain(session);
@@ -279,7 +423,7 @@ public sealed class ScreenLuaSessionTests
         session.Attach(instance, "return {}"); session.Attach(other, "return {}"); await Drain(session);
         Assert.IsFalse(session.IsAvailable(instance)); Assert.IsTrue(session.IsAvailable(other)); Assert.AreEqual(0L, instance.Version);
         Assert.AreEqual(1L, other.Version); Assert.AreEqual("handler failed", session.Diagnostics.Single());
-        Assert.AreEqual(ScreenEventAdmission.Unavailable, session.Enqueue(instance, new("update")));
+        Assert.AreEqual(ScreenEventAdmission.Unavailable, session.EnqueueUsingInstanceSnapshot(instance, new("update")));
     }
 
     [TestMethod]
@@ -292,13 +436,13 @@ public sealed class ScreenLuaSessionTests
         Assert.IsEmpty(connection.Seen); StringAssert.Contains(session.Diagnostics.Single(), "ожидания");
         var next = stack.Open(Guid.NewGuid(), instance.Definition);
         session.Attach(next, "return {}"); session.Poll();
-        // Reset after a fault creates a new generation; retirement may still be finishing.
+        // Expiry before dispatch does not retire the shared conversation or change generation.
         for (var i = 0; i < 100 && session.PendingTask is null; i++) { await Task.Delay(1); session.Poll(); }
         var load = await connection.Next();
-        for (var i = 0; i < 170; i++) session.Enqueue(next, new("update"));
+        for (var i = 0; i < 170; i++) session.EnqueueUsingInstanceSnapshot(next, new("update"));
         Assert.AreEqual(32, session.Diagnostics.Length);
         load.Reply(); await Ready(session); session.Poll();
-        session.Enqueue(next, new("update"));
+        session.EnqueueUsingInstanceSnapshot(next, new("update"));
         Assert.ThrowsExactly<InvalidOperationException>(() => session.Attach(stack.Open(Guid.NewGuid(), instance.Definition), "return {}"));
     }
 
@@ -315,7 +459,7 @@ public sealed class ScreenLuaSessionTests
         Assert.IsEmpty(connection.Seen);
         session.Attach(instance, "return {}");
         Assert.ThrowsExactly<ArgumentException>(() => session.Attach(instance, "return {}"));
-        Assert.ThrowsExactly<ArgumentException>(() => session.Enqueue(instance, new("unknown")));
+        Assert.ThrowsExactly<ArgumentException>(() => session.EnqueueUsingInstanceSnapshot(instance, new("unknown")));
         Assert.ThrowsExactly<ArgumentException>(() => session.Enqueue(instance, new("update"), ImmutableDictionary<string, string>.Empty.Add("", "x")));
         await Drain(session);
         Assert.ThrowsExactly<ArgumentException>(() => session.Attach(instance, "return {}"));

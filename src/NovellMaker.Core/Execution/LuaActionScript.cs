@@ -49,7 +49,9 @@ public static class LuaActionScript
         cancellationToken.ThrowIfCancellationRequested();
         try { LuaLimits.CheckSource(action.Source); }
         catch (ArgumentException error) { throw new InvalidOperationException(error.Message, error); }
-        var result = await LuaWorkerClient.InvokeAsync(new("run", action.Source, action.Name, action, state, project), cancellationToken).ConfigureAwait(false);
+        // Construction runs after admission, off-host and inside the transport's original deadline.
+        var result = await LuaWorkerClient.InvokePreparedAsync(preparation => new LuaWorkerRequest("run", action.Source, action.Name, action,
+            LuaStateSnapshot.Capture(state), LuaCommandCatalog.Capture(project, state.SceneId, preparation)), cancellationToken).ConfigureAwait(false);
         if (result.Error is not null) throw new InvalidOperationException($"Lua «{action.Name}» ({action.Id}): {result.Error}");
         return result.Commands;
     }
@@ -66,7 +68,7 @@ public static class LuaActionScript
         return commands;
     }
 
-    internal static ImmutableArray<ScenarioAction> RunInWorker(ScriptAction action, GameState state, NovelProject project)
+    internal static ImmutableArray<ScenarioAction> RunInWorker(ScriptAction action, LuaStateSnapshot state, LuaCommandCatalog catalog)
     {
         LuaLimits.CheckSource(action.Source);
         // No libraries with non-preemptible native loops, filesystem, loading or CLR interop.
@@ -74,11 +76,10 @@ public static class LuaActionScript
         var api = new Table(script);
         var commands = ImmutableArray.CreateBuilder<ScenarioAction>();
         var variables = state.Variables.ToBuilder();
-        var scene = project.Scenes.First(s => s.Id == state.SceneId);
         void Add(ScenarioAction command)
         {
             if (commands.Count >= MaximumCommands) throw new ScriptRuntimeException("Превышен лимит команд Lua.");
-            if (!ScenarioProgram.IsValidAction(project, scene, command)) throw new ScriptRuntimeException($"Некорректные параметры или ссылки команды {command.GetType().Name}.");
+            if (!catalog.IsValid(command)) throw new ScriptRuntimeException($"Некорректные параметры или ссылки команды {command.GetType().Name}.");
             commands.Add(command);
         }
         string Str(CallbackArguments args, int index) => args.AsType(index, "game", DataType.String, false).String;

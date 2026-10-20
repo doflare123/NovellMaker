@@ -83,6 +83,8 @@ internal static class ScreenLuaProtocol
                 nodes[id] = change.Kind == "visible" ? node with { Visible = value } : node with { Enabled = value };
             else throw new InvalidOperationException("Недопустимая команда экрана.");
         }
-        return new(new(definition.Id, [.. definition.Nodes.Select(n => nodes[n.Id])]), close);
+        // Still advance protocol versions for successful no-ops, but preserve view identity.
+        return new(definition.Nodes.All(n => n == nodes[n.Id]) ? definition :
+            new(definition.Id, [.. definition.Nodes.Select(n => nodes[n.Id])]), close);
     }
 }

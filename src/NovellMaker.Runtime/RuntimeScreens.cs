@@ -68,7 +68,7 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
         if (result.Activation is { } activation)
         {
             var instance = Stack.Instances.Single(i => i.Id == activation.InstanceId);
-            var accepted = Scripts?.Enqueue(instance, new("click", activation.NodeId)) is ScreenEventAdmission.Accepted or ScreenEventAdmission.Coalesced;
+            var accepted = Scripts?.EnqueueUsingInstanceSnapshot(instance, new("click", activation.NodeId)) is ScreenEventAdmission.Accepted or ScreenEventAdmission.Coalesced;
             if (activation.NodeId == ContinueId)
             {
                 if (!accepted) Stack.Close(instance); // Engine fallback remains usable when the handler fails.

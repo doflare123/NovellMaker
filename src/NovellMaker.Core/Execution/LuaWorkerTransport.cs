@@ -30,9 +30,15 @@ internal sealed class LuaWorkerTransport
         capacity = sharedCapacity ?? new(checked(maximumWorkers + maximumPending));
     }
 
-    internal async Task<LuaWorkerResponse> InvokeAsync(LuaWorkerRequest request, CancellationToken cancellationToken = default)
+    internal Task<LuaWorkerResponse> InvokeAsync(LuaWorkerRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        return InvokePreparedAsync(_ => request, cancellationToken);
+    }
+
+    internal async Task<LuaWorkerResponse> InvokePreparedAsync(Func<LuaRequestPreparation, LuaWorkerRequest> createRequest, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(createRequest);
         cancellationToken.ThrowIfCancellationRequested();
         var submittedAt = clock.GetTimestamp();
         if (!capacity.Wait(0)) return new("Очередь изолированного Lua заполнена. Повторите запрос позже.", []);
@@ -45,7 +51,7 @@ internal sealed class LuaWorkerTransport
             admitted = true;
             CheckDeadline(submittedAt, operation.Token);
             // Process.Start and bounded JSON serialization can be synchronous/expensive.
-            var response = await Task.Run(() => ExchangeAsync(request, submittedAt, operation.Token), operation.Token).ConfigureAwait(false);
+            var response = await Task.Run(() => ExchangeAsync(createRequest, submittedAt, operation.Token), operation.Token).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             CheckDeadline(submittedAt, operation.Token);
             return response;
@@ -74,8 +80,10 @@ internal sealed class LuaWorkerTransport
         if (clock.GetElapsedTime(submittedAt) >= timeout) throw new OperationCanceledException(token);
     }
 
-    private async Task<LuaWorkerResponse> ExchangeAsync(LuaWorkerRequest request, long submittedAt, CancellationToken token)
+    private async Task<LuaWorkerResponse> ExchangeAsync(Func<LuaRequestPreparation, LuaWorkerRequest> createRequest, long submittedAt, CancellationToken token)
     {
+        CheckDeadline(submittedAt, token);
+        var request = createRequest(new(token, () => CheckDeadline(submittedAt, token)));
         CheckDeadline(submittedAt, token);
         using var buffer = new LuaWorkerClient.BoundedBuffer(LuaWorkerClient.MaximumRequestBytes);
         await JsonSerializer.SerializeAsync(buffer, request, cancellationToken: token).ConfigureAwait(false);

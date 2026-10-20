@@ -15,6 +15,99 @@ public sealed class LuaWorkerTransportTests
     private static async Task<T> Guard<T>(Task<T> task) => await task.WaitAsync(TimeSpan.FromSeconds(10));
     private static async Task Guard(Task task) => await task.WaitAsync(TimeSpan.FromSeconds(10));
 
+    private sealed class PreparationClock : TimeProvider
+    {
+        private int reads;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        // No timer callback: a monotonic checkpoint inside the real builder must observe expiry.
+        public override long GetTimestamp() => Interlocked.Increment(ref reads) >= 160 ? TimeSpan.FromSeconds(5).Ticks : 0;
+    }
+
+    [TestMethod]
+    public async Task MonotonicDeadlineInterruptsActualCatalogBeforeFactoryReturnsAndAllowsRetry()
+    {
+        var project = LuaInvocationSnapshotTests.CatalogFixture(); var scene = project.Scenes[0];
+        var starts = 0; var returnedNormally = false; using var process = new FakeProcess();
+        var transport = new LuaWorkerTransport(() => { starts++; return process; }, new PreparationClock(), maximumWorkers: 1, maximumPending: 0);
+        var response = await Guard(transport.InvokePreparedAsync(preparation =>
+        {
+            LuaCommandCatalog.Capture(project, scene.Id, preparation);
+            returnedNormally = true; return Request;
+        }));
+        StringAssert.Contains(response.Error!, "таймаут"); Assert.IsEmpty(response.Commands);
+        Assert.IsFalse(returnedNormally); Assert.AreEqual(0, starts);
+        var retry = transport.InvokePreparedAsync(preparation =>
+        { LuaCommandCatalog.Capture(project, scene.Id, preparation); return Request; });
+        await Guard(process.InputCompleted.Task); process.Finish();
+        Assert.IsNull((await Guard(retry)).Error); Assert.AreEqual(1, starts);
+    }
+
+    [TestMethod]
+    [DataRow(false)][DataRow(true)]
+    public async Task CancellationOrDeadlineInterruptsPreparationBeforeItReturnsAndReleasesSlot(bool timeout)
+    {
+        var clock = new ManualClock(); var entered = Signal(); var exited = Signal(); var starts = 0;
+        using var cancellation = new CancellationTokenSource();
+        using var process = new FakeProcess();
+        var transport = new LuaWorkerTransport(() => { starts++; return process; }, clock, maximumWorkers: 1, maximumPending: 0);
+        var task = transport.InvokePreparedAsync(preparation =>
+        {
+            var token = preparation.CancellationToken;
+            entered.SetResult();
+            try
+            {
+                // No normal return or external release: only the token supplied by the transport stops preparation.
+                if (!token.WaitHandle.WaitOne(TimeSpan.FromSeconds(10))) throw new InvalidOperationException("Preparation was not cancelled.");
+                token.ThrowIfCancellationRequested();
+                throw new InvalidOperationException("Preparation continued after cancellation.");
+            }
+            finally { exited.SetResult(); }
+        }, cancellation.Token);
+        await Guard(entered.Task);
+        if (timeout) clock.Advance(TimeSpan.FromSeconds(5)); else cancellation.Cancel();
+        if (timeout)
+        {
+            var response = await Guard(task);
+            StringAssert.Contains(response.Error!, "таймаут"); Assert.IsEmpty(response.Commands);
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<OperationCanceledException>(() => Guard(task));
+            Assert.AreEqual(cancellation.Token, error.CancellationToken);
+        }
+        await Guard(exited.Task); Assert.AreEqual(0, starts);
+        var next = transport.InvokeAsync(Request); await Guard(process.InputCompleted.Task); process.Finish();
+        Assert.IsNull((await Guard(next)).Error); Assert.AreEqual(1, starts);
+    }
+
+    [TestMethod]
+    public async Task SnapshotConstructionRunsOffCallerAndRemainsInsideOriginalDeadline()
+    {
+        var clock = new ManualClock(); var starts = 0;
+        var entered = Signal(); var release = Signal();
+        var transport = new LuaWorkerTransport(() => { starts++; throw new IOException("must not start"); }, clock);
+        var task = transport.InvokePreparedAsync(_ =>
+        {
+            entered.SetResult(); release.Task.GetAwaiter().GetResult();
+            clock.Advance(TimeSpan.FromSeconds(5)); return Request;
+        });
+        try { await Guard(entered.Task); Assert.IsFalse(task.IsCompleted); }
+        finally { release.TrySetResult(); }
+        var result = await Guard(task);
+        Assert.AreEqual(0, starts); Assert.IsEmpty(result.Commands); StringAssert.Contains(result.Error!, "таймаут");
+    }
+
+    [TestMethod]
+    public async Task FailingSnapshotConstructionReleasesAdmissionWithoutStartingProcess()
+    {
+        using var process = new FakeProcess(); var starts = 0;
+        var transport = new LuaWorkerTransport(() => { starts++; return process; }, maximumWorkers: 1, maximumPending: 0);
+        var result = await Guard(transport.InvokePreparedAsync(_ => throw new InvalidOperationException("snapshot failed")));
+        StringAssert.Contains(result.Error!, "snapshot failed"); Assert.AreEqual(0, starts);
+        var next = transport.InvokeAsync(Request); await Guard(process.InputCompleted.Task); process.Finish();
+        Assert.IsNull((await Guard(next)).Error); Assert.AreEqual(1, starts);
+    }
+
     [TestMethod]
     public async Task DelayedWorkerDoesNotBlockCallerAndReceivesInputOnlyAfterLimits()
     {
@@ -45,8 +138,10 @@ public sealed class LuaWorkerTransportTests
         await Guard(first.InputCompleted.Task);
         using var cancellation = new CancellationTokenSource();
         var waiting = transport.InvokeAsync(Request, cancellation.Token);
-        var busy = await Guard(transport.InvokeAsync(Request));
+        var constructed = false;
+        var busy = await Guard(transport.InvokePreparedAsync(_ => { constructed = true; return Request; }));
         StringAssert.Contains(busy.Error!, "заполнена");
+        Assert.IsFalse(constructed);
         Assert.AreEqual(1, starts);
         cancellation.Cancel();
         await Assert.ThrowsAsync<OperationCanceledException>(() => Guard(waiting));

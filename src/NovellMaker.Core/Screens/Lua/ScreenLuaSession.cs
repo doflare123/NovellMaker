@@ -4,11 +4,14 @@ using NovellMaker.Core.Execution;
 namespace NovellMaker.Core.Screens.Lua;
 
 public enum ScreenEventAdmission { Accepted, Coalesced, Busy, Unavailable }
+public enum ScreenLuaIssueKind { StaleEvent, QueueExpired, Busy, Handler, Conversation }
+public sealed record ScreenLuaIssue(ScreenLuaIssueKind Kind, Guid? InstanceId, string Message);
 
 /// <summary>Single-host-thread lifecycle/queue. Only Poll commits asynchronously prepared batches.</summary>
 public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
 {
     public const int MaximumQueuedEvents = 128;
+    private sealed class QueueExpiredException() : IOException("Превышен срок ожидания события экрана (5 секунд): событие не исполнено.");
     private sealed class Entry(ScreenInstance instance, string source, ImmutableDictionary<string, Guid> references,
         ImmutableDictionary<string, string> snapshot)
     {
@@ -39,6 +42,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     private readonly Queue<Entry> closes = [];
     private readonly List<Task> retiring = [];
     private readonly Queue<string> diagnostics = [];
+    private readonly Queue<ScreenLuaIssue> issues = [];
     private Conversation conversation;
     private Pending? pending;
     private bool disposed;
@@ -59,6 +63,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     public bool HasPending => pending is not null || queue.Count != 0 || closes.Count != 0;
     public Task? PendingTask => pending?.Task;
     public ImmutableArray<string> Diagnostics => [.. diagnostics];
+    public ImmutableArray<ScreenLuaIssue> Issues => [.. issues];
     public bool IsAvailable(ScreenInstance instance) => !disposed && entries.TryGetValue(instance.Id, out var entry) &&
         ReferenceEquals(entry.Instance, instance) && entry.Error is null && !entry.Closing && Current(instance);
 
@@ -79,13 +84,18 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         queue.AddLast(new Work(entry, "load", null, snapshot, clock.GetTimestamp()));
     }
 
+    /// <summary>Explicitly reuse the immutable snapshot captured at Attach.</summary>
+    public ScreenEventAdmission EnqueueUsingInstanceSnapshot(ScreenInstance instance, ScreenLuaEvent value)
+        => IsAvailable(instance) ? Enqueue(instance, value, entries[instance.Id].Snapshot) : ScreenEventAdmission.Unavailable;
+
+    /// <summary>The host captures data at admission; later mutations cannot change this event's snapshot.</summary>
     public ScreenEventAdmission Enqueue(ScreenInstance instance, ScreenLuaEvent value,
-        ImmutableDictionary<string, string>? snapshot = null)
+        ImmutableDictionary<string, string> snapshot)
     {
         if (!IsAvailable(instance)) return ScreenEventAdmission.Unavailable;
         var entry = entries[instance.Id];
         ScreenLuaProtocol.ValidateEvent(instance.Definition, value);
-        snapshot ??= entry.Snapshot;
+        ArgumentNullException.ThrowIfNull(snapshot);
         if (!LuaLimits.ValidVariables(snapshot)) throw new ArgumentException("Превышен бюджет снимка события.");
         var work = new Work(entry, "event", value, snapshot, clock.GetTimestamp());
         // Coalesce only adjacent motion; never move it across a significant click.
@@ -93,7 +103,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             ReferenceEquals(last.Value.Entry, entry) && last.Value.Event?.Kind == value.Kind && last.Value.Event.NodeId == value.NodeId)
         { last.Value = work; return ScreenEventAdmission.Coalesced; }
         if (queue.Count >= MaximumQueuedEvents)
-        { Report("Очередь событий экрана заполнена: событие не принято."); return ScreenEventAdmission.Busy; }
+        { Report("Очередь событий экрана заполнена: событие не принято.", ScreenLuaIssueKind.Busy, instance.Id); return ScreenEventAdmission.Busy; }
         queue.AddLast(work);
         return ScreenEventAdmission.Accepted;
     }
@@ -119,7 +129,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                 {
                     entry.Loaded = false;
                     entry.Error = error;
-                    if (Current(entry.Instance)) Report(error);
+                    if (Current(entry.Instance)) Report(error, ScreenLuaIssueKind.Handler, entry.Instance.Id);
                     RemoveQueued(entry);
                 }
                 else
@@ -136,6 +146,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                     if (entry.Closing) ScheduleClose(entry);
                 }
             }
+            catch (QueueExpiredException error) { Expire(ready.Work, error.Message); }
             catch (Exception error) when (error is IOException or InvalidOperationException or ArgumentException or OperationCanceledException)
             { Fail(error.Message); }
             Reconcile();
@@ -152,9 +163,17 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             work = new(closing, "close", null, ImmutableDictionary<string, string>.Empty, clock.GetTimestamp());
         else if (queue.First is { } first) { work = first.Value; queue.RemoveFirst(); }
         if (work is null) return;
-        if (clock.GetElapsedTime(work.Submitted) >= TimeSpan.FromSeconds(5))
-        { Fail("Превышен срок ожидания события экрана (5 секунд)."); return; }
         var entry = work.Entry;
+        if (clock.GetElapsedTime(work.Submitted) >= TimeSpan.FromSeconds(5))
+        {
+            Expire(work, "Превышен срок ожидания события экрана (5 секунд): событие не исполнено.");
+            return;
+        }
+        if (work.Event is { Kind: "click" } click && !entry.Instance.Definition.Buttons.Any(n => n.Id == click.NodeId))
+        {
+            Report("Устаревшее нажатие экрана пропущено.", ScreenLuaIssueKind.StaleEvent, entry.Instance.Id);
+            return;
+        }
         var stamp = new ScreenLuaStamp(Guid.NewGuid(), stack.SessionId, Generation, entry.Instance.OwnerId,
             entry.Instance.Id, entry.Instance.Version);
         if (work.Kind == "close") stamp = stamp with { Version = entry.RemoteVersion };
@@ -170,11 +189,18 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         ScreenDefinition definition, TimeProvider clock)
     {
         var remaining = TimeSpan.FromSeconds(5) - clock.GetElapsedTime(work.Submitted);
+        // Task scheduling is part of queue time. No exchange has touched the conversation yet.
+        conversation.Cancellation.Token.ThrowIfCancellationRequested();
+        if (remaining <= TimeSpan.Zero) throw new QueueExpiredException();
         using var deadline = new CancellationTokenSource(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(conversation.Cancellation.Token, deadline.Token);
         var token = operation.Token;
+        var exchangeStarted = false;
         void CheckDeadline()
         {
+            if (!exchangeStarted && !conversation.Cancellation.IsCancellationRequested &&
+                (deadline.IsCancellationRequested || clock.GetElapsedTime(work.Submitted) >= TimeSpan.FromSeconds(5)))
+                throw new QueueExpiredException();
             token.ThrowIfCancellationRequested();
             if (clock.GetElapsedTime(work.Submitted) >= TimeSpan.FromSeconds(5)) throw new IOException("Превышен общий срок события экрана (5 секунд).");
         }
@@ -185,6 +211,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             var hello = new ScreenLuaRequest(ScreenLuaProtocol.Version, "handshake",
                 stamp with { RequestId = Guid.NewGuid(), OwnerId = Guid.Empty, InstanceId = Guid.Empty, Version = 0 },
                 Guid.Empty, [], null, ImmutableDictionary<string, Guid>.Empty, null, ImmutableDictionary<string, string>.Empty);
+            exchangeStarted = true;
             var helloTask = conversation.Connection.ExchangeAsync(hello, token);
             ScreenLuaConnection.Observe(helloTask);
             var response = await helloTask.WaitAsync(token).ConfigureAwait(false);
@@ -197,6 +224,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         var request = new ScreenLuaRequest(ScreenLuaProtocol.Version, work.Kind, stamp, definition.Id,
             work.Kind == "load" ? definition.Nodes : [], work.Kind == "load" ? entry.Source : null,
             work.Kind == "load" ? entry.References : ImmutableDictionary<string, Guid>.Empty, work.Event, work.Snapshot);
+        exchangeStarted = true;
         var exchange = conversation.Connection.ExchangeAsync(request, token);
         ScreenLuaConnection.Observe(exchange);
         var result = await exchange.WaitAsync(token).ConfigureAwait(false);
@@ -208,6 +236,17 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     }
 
     private bool Current(ScreenInstance instance) => stack.Instances.Any(i => ReferenceEquals(i, instance));
+    private void Expire(Work work, string message)
+    {
+        // A control-close cannot be dropped: otherwise the remote VM would be retained indefinitely.
+        if (work.Kind == "close") { Fail(message); return; }
+        var entry = work.Entry;
+        if (Current(entry.Instance) && !entry.Closing)
+            Report(message, ScreenLuaIssueKind.QueueExpired, entry.Instance.Id);
+        // Nothing was sent: the remote VM and its version are still valid.
+        if (work.Kind == "load") { entry.Error = "Истёк срок загрузки экрана."; RemoveQueued(entry); }
+        if (entry.Closing) ScheduleClose(entry);
+    }
     private void RemoveQueued(Entry entry)
     {
         var node = queue.First;
@@ -230,10 +269,13 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     {
         foreach (var entry in entries.Values.ToArray()) if (!Current(entry.Instance)) Detach(entry);
     }
-    private void Report(string message)
+    private void Report(string message, ScreenLuaIssueKind kind = ScreenLuaIssueKind.Conversation, Guid? instanceId = null)
     {
         if (diagnostics.Count == 32) diagnostics.Dequeue();
-        diagnostics.Enqueue(message.Length > 4096 ? message[..4096] : message);
+        if (issues.Count == 32) issues.Dequeue();
+        var text = message.Length > 4096 ? message[..4096] : message;
+        diagnostics.Enqueue(text);
+        issues.Enqueue(new(kind, instanceId, text));
     }
     private void Fail(string message)
     {
@@ -263,7 +305,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         Retire();
-        entries.Clear(); queue.Clear(); closes.Clear(); diagnostics.Clear();
+        entries.Clear(); queue.Clear(); closes.Clear(); diagnostics.Clear(); issues.Clear();
         Generation++; faulted = false;
         conversation = new(factory());
     }

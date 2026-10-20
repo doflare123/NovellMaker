@@ -188,15 +188,21 @@ internal static class DialogueTextureRenderer
         return new RenderedTexture(CreateTexture(graphicsDevice, bitmap), width, height);
     }
 
-    public static RenderedTexture RenderButton(GraphicsDevice device, string text, int width, int height)
+    public static RenderedTexture RenderButton(GraphicsDevice device, string text, int width, int height,
+        int offsetX = 0, int offsetY = 0, double? logicalHeight = null)
     {
+        if (width <= 0 || height <= 0 || width > ScreenTextureCache<RenderedTexture>.MaximumTextureSide ||
+            height > ScreenTextureCache<RenderedTexture>.MaximumTextureSide ||
+            (long)width * height > ScreenTextureCache<RenderedTexture>.MaximumTexturePixels)
+            throw new ArgumentOutOfRangeException(nameof(width), "Превышен бюджет текстуры кнопки.");
         using var bitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
         using var canvas = new SKCanvas(bitmap);
         canvas.Clear(new SKColor(40, 45, 52, 245));
         using var typeface = CreateTypeface("Segoe UI");
         using var font = new SKFont(typeface, 18);
         using var paint = new SKPaint { IsAntialias = true, Color = new SKColor(230, 231, 233) };
-        canvas.DrawText(text, 12, height / 2f - (font.Metrics.Ascent + font.Metrics.Descent) / 2, font, paint);
+        canvas.DrawText(text, 12 - offsetX, (float)((logicalHeight ?? height) / 2) - offsetY -
+            (font.Metrics.Ascent + font.Metrics.Descent) / 2, font, paint);
         return new RenderedTexture(CreateTexture(device, bitmap), width, height);
     }
 
