@@ -9,7 +9,7 @@ namespace NovellMaker.Core.Execution;
 public enum PlaybackMode { AuthorPreview, Game }
 
 /// <summary>Presentation/navigation facade over the shared action interpreter.</summary>
-public sealed class ScenePlayer
+public sealed class ScenePlayer : IDisposable, IAsyncDisposable
 {
     private readonly NovelProject project;
     private readonly NovelScene scene;
@@ -72,6 +72,7 @@ public sealed class ScenePlayer
     public bool Seek(Guid lineId)
     {
         if (!CanNavigate || !scene.Lines.Any(l => l.Id == lineId)) return false;
+        Execution.Dispose();
         Execution = new(project, scene.Id, language);
         while (Execution.State.LineId != lineId && Execution.Advance()) { }
         ResetNavigationAudio();
@@ -80,6 +81,9 @@ public sealed class ScenePlayer
     }
 
     public void Tick(TimeSpan elapsed) { Execution.Tick(elapsed); UpdateFrame(); }
+    public bool PollLua() { var changed = Execution.PollLua(); if (changed) UpdateFrame(); return changed; }
+    public void Dispose() => Execution.Dispose();
+    public ValueTask DisposeAsync() => Execution.DisposeAsync();
     public bool Choose(Guid optionId) { var changed = Execution.Choose(optionId); if (changed) UpdateFrame(); return changed; }
     public bool Click(Guid objectId) { var changed = Execution.Click(objectId); if (changed) UpdateFrame(); return changed; }
     /// <summary>Validates and replaces state atomically. Does not replay commands, advance time or run Lua.</summary>

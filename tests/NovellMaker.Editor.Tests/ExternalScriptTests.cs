@@ -9,7 +9,7 @@ using NovellMaker.Editor.ViewModels;
 namespace NovellMaker.Editor.Tests;
 
 [TestClass]
-public sealed class ExternalScriptTests
+public sealed partial class ExternalScriptTests
 {
     [TestMethod]
     public void OpenOnCreationIsOffByDefaultAndPersistsIndependentlyOfApplication()

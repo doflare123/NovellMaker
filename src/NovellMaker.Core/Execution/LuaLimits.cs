@@ -3,6 +3,18 @@ namespace NovellMaker.Core.Execution;
 /// <summary>Iterative preflight plus bounded data accepted from the isolated Lua VM.</summary>
 public static class LuaLimits
 {
+    internal static System.Collections.Immutable.ImmutableDictionary<string, string> SetVariable(
+        System.Collections.Immutable.ImmutableDictionary<string, string> variables, ref int characters, string name, string value)
+    {
+        if (!ValidVariable(name, value)) throw new InvalidOperationException("Превышен бюджет переменных.");
+        var exists = variables.TryGetValue(name, out var previous);
+        var total = characters + value.Length + (exists ? -previous!.Length : name.Length);
+        if ((!exists && variables.Count >= MaximumVariableCount) || total > MaximumVariableCharacters)
+            throw new InvalidOperationException("Превышен бюджет переменных.");
+        var result = variables.SetItem(name, value);
+        characters = total;
+        return result;
+    }
     public const int MaximumNesting = 64;
     public const int MaximumTokens = 4096;
     public const int MaximumValueLength = 8192;

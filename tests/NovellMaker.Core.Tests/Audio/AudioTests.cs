@@ -40,10 +40,10 @@ public sealed class AudioTests
         var scene = project.Scenes[0];
         var second = NovelScene.Create("Вторая") with { Lines = [DialogueLine.Create("ru", "Три")] };
         project = project with { Scenes = project.Scenes.Add(second) };
-        var player = new ScenarioPlayer(project, scene.Id, "ru");
+        var player = new ScenarioPlayer(project, scene.Id, "ru").Settled();
         CollectionAssert.AreEqual(new[] { AudioEventKind.Scene, AudioEventKind.Line }, player.DrainAudioEvents().Select(e => e.Kind).ToArray());
         var save = GameSave.Serialize(player);
-        Assert.IsTrue(player.Advance());
+        Assert.IsTrue(player.AdvanceSettled());
         CollectionAssert.AreEqual(new[] { AudioEventKind.Continue, AudioEventKind.Line }, player.DrainAudioEvents().Select(e => e.Kind).ToArray());
         GameSave.Load(player, save);
         CollectionAssert.AreEqual(new[] { AudioEventKind.Restore }, player.DrainAudioEvents().Select(e => e.Kind).ToArray());
@@ -53,7 +53,7 @@ public sealed class AudioTests
         // A real branch into another scene stops transient sounds before starting its background and voice.
         scene = scene with { ScriptBlocks = [new(scene.Lines[0].Id, ScriptPhase.AfterLine, new JumpAction(Guid.NewGuid(), second.Id, ScenarioProgram.LineEntryId(second.Lines[0].Id)))] };
         project = project with { Scenes = project.Scenes.SetItem(0, scene) };
-        player = new(project, scene.Id, "ru"); player.DrainAudioEvents(); player.Advance();
+        player = new(project, scene.Id, "ru"); player.DrainAudioEvents(); player.AdvanceSettled();
         CollectionAssert.AreEqual(new[] { AudioEventKind.Continue, AudioEventKind.Jump, AudioEventKind.Scene, AudioEventKind.Line }, player.DrainAudioEvents().Select(e => e.Kind).ToArray());
     }
     [TestMethod] public void RestoreRestartsOnlyBackgroundAndLanguageNeverFallsBackToWrongVoice()

@@ -7,11 +7,12 @@ using NovellMaker.Core.Styling;
 namespace NovellMaker.Core.Execution;
 
 /// <summary>Shared action interpreter, driven exclusively by host input and elapsed game time.</summary>
-public sealed class ScenarioPlayer
+public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
 {
     private readonly NovelProject project;
     private readonly string language;
     private readonly Dictionary<Guid, ImmutableArray<ScenarioAction>> programs;
+    private int variableCharacters;
     public GameState State { get; private set; }
     public NovelProject Project => project;
     private readonly Queue<AudioEvent> audioEvents = new();
@@ -21,16 +22,22 @@ public sealed class ScenarioPlayer
 
     public void Cancel()
     {
+        CancelPendingLua();
         State = State with { ActiveActions = [], QueuedActions = [], Wait = null, Choice = null };
         Fail("Исполнение отменено.");
     }
 
     public ScenarioPlayer(NovelProject project, Guid sceneId, string language)
+        : this(project, sceneId, language, LuaActionScript.RequestCommandsAsync) { }
+
+    internal ScenarioPlayer(NovelProject project, Guid sceneId, string language,
+        Func<ScriptAction, GameState, NovelProject, CancellationToken, Task<ImmutableArray<ScenarioAction>>> runLua)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentException.ThrowIfNullOrWhiteSpace(language);
         this.project = project;
         this.language = language;
+        this.runLua = runLua;
         programs = project.Scenes.ToDictionary(s => s.Id, ScenarioProgram.Compile);
         if (!programs.TryGetValue(sceneId, out var actions)) throw new ArgumentException($"Сцена {sceneId} отсутствует.", nameof(sceneId));
         State = new GameState { ProjectId = project.Id, Revision = ScenarioProgram.Fingerprint(project), SceneId = sceneId, NextActionId = actions.FirstOrDefault()?.Id };
@@ -40,7 +47,7 @@ public sealed class ScenarioPlayer
 
     public bool Advance()
     {
-        if (State.Wait?.Mode != "input" || State.Error is not null) return false;
+        if (disposed || IsPaused || HasPendingLua || State.Wait?.Mode != "input" || State.Error is not null) return false;
         Audio(AudioEventKind.Continue);
         State = State with { Wait = null };
         Pump();
@@ -49,7 +56,7 @@ public sealed class ScenarioPlayer
 
     public bool Choose(Guid optionId)
     {
-        if (State.Error is not null || State.Choice?.Options.FirstOrDefault(o => o.Id == optionId) is not { } option) return false;
+        if (disposed || IsPaused || HasPendingLua || State.Error is not null || State.Choice?.Options.FirstOrDefault(o => o.Id == optionId) is not { } option) return false;
         State = State with { Choice = null };
         Jump(option.TargetSceneId, option.TargetActionId);
         Pump();
@@ -58,10 +65,11 @@ public sealed class ScenarioPlayer
 
     public bool Click(Guid objectId)
     {
-        if (State.Error is not null || State.Wait is not { Mode: "interaction" } wait || wait.Token is not null && wait.Token != objectId ||
+        if (disposed || IsPaused || HasPendingLua || State.Error is not null || State.Wait is not { Mode: "interaction" } wait || wait.Token is not null && wait.Token != objectId ||
             !State.Hotspots.Any(h => h.ObjectId == objectId && h.Enabled)) return false;
-        State = State with { Wait = null, Variables = State.Variables.SetItem("input.object", objectId.ToString()),
-            Hotspots = [] };
+        try { SetVariable("input.object", objectId.ToString()); }
+        catch (InvalidOperationException error) { Fail(error.Message); return false; }
+        State = State with { Wait = null, Hotspots = [] };
         Pump();
         return true;
     }
@@ -70,7 +78,9 @@ public sealed class ScenarioPlayer
     {
         var remaining = elapsed.TotalSeconds;
         if (!double.IsFinite(remaining) || remaining < 0) throw new ArgumentOutOfRangeException(nameof(elapsed));
-        if (State.Error is not null) return;
+        if (disposed || IsPaused || State.Error is not null) return;
+        // Pending wall time is never added to scenario time, including the completion frame.
+        if (HasPendingLua) { PollLua(); return; }
         // Split at wait boundaries, so a long frame agrees with several short frames.
         for (var steps = 0; remaining > 0 && steps < 2048; steps++)
         {
@@ -95,7 +105,7 @@ public sealed class ScenarioPlayer
             State = State with { Time = State.Time + step, Placements = placements, ActiveActions = active.ToImmutable(), Wait = wait };
             remaining -= step;
             Pump();
-            if (State.Error is not null) return;
+            if (State.Error is not null || HasPendingLua) return;
             if (step == 0 && State.Wait is not null) break;
         }
         if (remaining > 0) Fail("Превышен лимит переходов ожиданий за кадр.");
@@ -130,22 +140,21 @@ public sealed class ScenarioPlayer
 
     private void Pump()
     {
-        if (State.Error is not null) return;
+        if (disposed || IsPaused || HasPendingLua || State.Error is not null || State.Completed) return;
         GameState? failedLuaState = null;
         try
         {
-            var luaCalls = 0;
-            var luaTime = System.Diagnostics.Stopwatch.StartNew();
-            for (var budget = 0; budget < 2048; budget++)
+            passTime ??= System.Diagnostics.Stopwatch.StartNew();
+            while (++passActions <= 2048)
             {
-                if (State.Wait is not null || State.Choice is not null) return;
+                if (State.Wait is not null || State.Choice is not null) { ResetPass(); return; }
                 var before = State;
                 ScenarioAction? action;
                 if (!State.QueuedActions.IsEmpty)
                 { action = State.QueuedActions[0]; State = State with { QueuedActions = State.QueuedActions.RemoveAt(0) }; }
                 else
                 {
-                    if (State.NextActionId is not { } next) { State = State with { Completed = true }; Audio(AudioEventKind.Stop); return; }
+                    if (State.NextActionId is not { } next) { State = State with { Completed = true }; ResetPass(); Audio(AudioEventKind.Stop); return; }
                     var actions = programs[State.SceneId];
                     var index = Find(actions, next);
                     if (index < 0) throw new InvalidOperationException($"Действие {next} отсутствует.");
@@ -153,8 +162,15 @@ public sealed class ScenarioPlayer
                     State = State with { NextActionId = index + 1 < actions.Length ? actions[index + 1].Id : null };
                 }
                 if (action is ScriptAction or RunScriptAction) failedLuaState = before;
-                if (action is ScriptAction or RunScriptAction && (++luaCalls > 32 || luaTime.Elapsed.TotalSeconds > 5))
+                if (action is ScriptAction or RunScriptAction && (++passLuaCalls > 32 || passTime.Elapsed.TotalSeconds > 5))
                     throw new InvalidOperationException("Превышен лимит действий Lua за проход (32 вызова / 5 секунд).");
+                if (action is ScriptAction or RunScriptAction)
+                {
+                    var after = State;
+                    State = before;
+                    BeginLua(action, before, after);
+                    return;
+                }
                 Execute(action);
                 failedLuaState = null;
             }
@@ -208,29 +224,12 @@ public sealed class ScenarioPlayer
             case BranchAction a: if (State.Variables.GetValueOrDefault(a.Variable) == a.EqualsValue) Jump(a.SceneId, a.ActionId); break;
             case SetAction a:
                 if (string.IsNullOrWhiteSpace(a.Variable) || a.Value is null) throw new InvalidOperationException("Некорректная переменная.");
-                var variables = State.Variables.SetItem(a.Variable, a.Value);
-                if (!LuaLimits.ValidVariables(variables)) throw new InvalidOperationException("Превышен бюджет переменных сценария.");
-                State = State with { Variables = variables }; break;
-            case ScriptAction a:
-                RunScript(a); break;
-            case RunScriptAction a:
-                var resource = project.Scripts.FirstOrDefault(s => s.Id == a.ScriptId)
-                    ?? throw new InvalidOperationException($"Ресурс Lua {a.ScriptId} отсутствует.");
-                RunScript(new ScriptAction(a.Id, resource.Source, resource.Name) { References = resource.References }); break;
+                SetVariable(a.Variable, a.Value); break;
             case HotspotAction a:
                 if (!double.IsFinite(a.X) || !double.IsFinite(a.Y) || a.X < 0 || a.Y < 0 || a.Width <= 0 || a.Height <= 0 || !(a.X + a.Width <= 1) || !(a.Y + a.Height <= 1)) throw new InvalidOperationException("Некорректная область предмета.");
                 State = State with { Hotspots = State.Hotspots.Where(h => h.ObjectId != a.ObjectId).ToImmutableArray().Add(a) }; break;
             default: throw new InvalidOperationException("Неизвестное действие.");
         }
-    }
-
-    private void RunScript(ScriptAction action)
-    {
-        var commands = LuaActionScript.Run(action, State, project);
-        if (commands.Length + State.QueuedActions.Length > 4096)
-            throw new InvalidOperationException("Превышен лимит очереди Lua (4096 команд).");
-        if (!LuaLimits.ValidQueue(commands.Concat(State.QueuedActions))) throw new InvalidOperationException("Превышен размер очереди Lua.");
-        State = State with { QueuedActions = commands.AddRange(State.QueuedActions) };
     }
 
     private void Show(Guid id)
@@ -244,6 +243,12 @@ public sealed class ScenarioPlayer
         { Diagnostic($"Изображение {pose.ImageId} отсутствует."); State = State with { VisibleObjects = State.VisibleObjects.Remove(id) }; return; }
         State = State with { ObjectStates = State.ObjectStates.SetItem(id, pose.Id),
             VisibleObjects = State.VisibleObjects.Contains(id) ? State.VisibleObjects : State.VisibleObjects.Add(id) };
+    }
+
+    private void SetVariable(string name, string value)
+    {
+        var variables = LuaLimits.SetVariable(State.Variables, ref variableCharacters, name, value);
+        State = State with { Variables = variables };
     }
 
     private CharacterPlacement Placement(Guid id)
@@ -272,8 +277,12 @@ public sealed class ScenarioPlayer
 
     public void Restore(GameState state)
     {
+        ObjectDisposedException.ThrowIf(disposed, this);
         GameSave.Validate(state, project);
+        CancelPendingLua();
+        ResetPass();
         State = state;
+        variableCharacters = state.Variables.Sum(v => v.Key.Length + v.Value.Length);
         audioEvents.Clear();
         Audio(state.Completed || state.Error is not null ? AudioEventKind.Stop : AudioEventKind.Restore);
     }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Immutable;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using NovellMaker.Core.Execution;
@@ -11,6 +12,45 @@ namespace NovellMaker.Core.Tests.Execution;
 [TestClass]
 public sealed class LuaWorkerMeasurementTests
 {
+    [TestMethod]
+    [TestCategory("LuaMeasurement")]
+    public void MeasureReadyLuaCommitOnHostWithoutWorkerOrProjectCompilationTime()
+    {
+        var directory = Environment.GetEnvironmentVariable("NOVELLMAKER_LUA_BENCHMARK_DIR");
+        if (string.IsNullOrWhiteSpace(directory)) Assert.Inconclusive("Enable scripts/check.ps1 -MeasureLua.");
+        Directory.CreateDirectory(directory);
+        var cases = new List<object>();
+        foreach (var lines in new[] { 2, 1500 })
+        {
+            var script = new ScriptAction(Guid.NewGuid(), "-- host commit measurement", "commit.lua");
+            var scene = NovelScene.Create("Commit") with { UseActions = true,
+                Lines = [.. Enumerable.Range(0, lines).Select(_ => DialogueLine.Create("ru", new string('a', 256)))],
+                Actions = [script, new WaitAction(Guid.NewGuid(), "input")] };
+            var project = NovelProject.Create("Commit") with { Scenes = [scene] };
+            var commands = Enumerable.Range(0, 256).Select(i => (ScenarioAction)new SetAction(Guid.NewGuid(), "v" + i, "yes")).ToImmutableArray();
+            var samples = new List<double>();
+            for (var i = 0; i < 36; i++)
+            {
+                using var player = new ScenarioPlayer(project, scene.Id, "ru", (_, _, _, _) => Task.FromResult(commands));
+                player.PendingLuaTask!.GetAwaiter().GetResult(); // Prepare/validate off-host before timing the ready commit.
+                var timer = Stopwatch.StartNew();
+                var applied = player.PollLua();
+                var elapsed = timer.Elapsed.TotalMilliseconds;
+                Assert.IsTrue(applied);
+                Assert.HasCount(256, player.State.Variables);
+                if (i >= 4) samples.Add(elapsed);
+            }
+            var sorted = samples.Order().ToArray();
+            cases.Add(new { Lines = lines, Commands = 256, SamplesMilliseconds = samples,
+                MedianMilliseconds = (sorted[15] + sorted[16]) / 2,
+                P95Milliseconds = sorted[(int)Math.Ceiling(sorted.Length * 0.95) - 1] });
+        }
+        File.WriteAllText(Path.Combine(directory, "host-lua-commit.json"), JsonSerializer.Serialize(new {
+            MeasuredAtUtc = DateTimeOffset.UtcNow, Framework = RuntimeInformation.FrameworkDescription,
+            Note = "Controlled validated ready result; measures queue commit and Pump on host. Four warmups, 32 samples per case. Excludes background validation, project compilation, worker, MonoGame rendering and GPU; not an FPS guarantee.", Cases = cases
+        }, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     [TestMethod]
     [TestCategory("LuaMeasurement")]
     public void MeasureFreshWorkerRoundTripsForSmallAndLargeProjects()

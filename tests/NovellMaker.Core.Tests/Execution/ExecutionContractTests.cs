@@ -13,14 +13,14 @@ public sealed class ExecutionContractTests
         var line = DialogueLine.Create("ru", "Последняя фраза");
         var scene = NovelScene.Create("Начало") with { Lines = [line] };
         var project = NovelProject.Create("Игра") with { Scenes = [scene] };
-        var author = new ScenePlayer(project, scene.Id, "ru");
+        var author = new ScenePlayer(project, scene.Id, "ru").Settled();
         Assert.IsFalse(author.Frame.CanNext);
-        var game = new ScenePlayer(project, scene.Id, "ru", mode: PlaybackMode.Game);
+        var game = new ScenePlayer(project, scene.Id, "ru", mode: PlaybackMode.Game).Settled();
         Assert.IsTrue(game.Frame.CanNext);
         Assert.IsFalse(game.Seek(line.Id)); Assert.IsFalse(game.Previous());
-        Assert.IsTrue(game.Next()); Assert.IsTrue(game.Execution.State.Completed);
-        Assert.IsFalse(game.Next());
-        Assert.ThrowsExactly<ArgumentException>(() => new ScenePlayer(project, scene.Id, "ru", line.Id, PlaybackMode.Game));
+        Assert.IsTrue(game.NextSettled()); Assert.IsTrue(game.Execution.State.Completed);
+        Assert.IsFalse(game.NextSettled());
+        Assert.ThrowsExactly<ArgumentException>(() => new ScenePlayer(project, scene.Id, "ru", line.Id, PlaybackMode.Game).Settled());
     }
 
     [TestMethod]
@@ -31,12 +31,12 @@ public sealed class ExecutionContractTests
         var start = NovelScene.Create("Начало") with { ScriptBlocks = [new(null, ScriptPhase.SceneStart,
             new JumpAction(Guid.NewGuid(), end.Id, ScenarioProgram.LineEntryId(line.Id)))] };
         var project = NovelProject.Create("Переход") with { Scenes = [start, end] };
-        var player = new ScenePlayer(project, start.Id, "ru");
+        var player = new ScenePlayer(project, start.Id, "ru").Settled();
         Assert.AreEqual(end.Id, player.Execution.State.SceneId);
         Assert.IsTrue(player.UsesActions);
         Assert.IsFalse(player.Seek(line.Id)); Assert.IsFalse(player.Previous());
         var save = GameSave.Serialize(player.Execution);
-        Assert.IsTrue(player.Next()); Assert.IsTrue(player.Execution.State.Completed);
+        Assert.IsTrue(player.NextSettled()); Assert.IsTrue(player.Execution.State.Completed);
         player.LoadSave(save);
         Assert.AreEqual(line.Id, player.Frame.LineId); Assert.IsTrue(player.Frame.CanNext);
     }
@@ -53,19 +53,19 @@ public sealed class ExecutionContractTests
             new(line.Id, ScriptPhase.AfterLine, new SetAction(Guid.NewGuid(), "after", "yes"))
         ] };
         var project = NovelProject.Create("Игра") with { Scenes = [scene] };
-        var game = new ScenePlayer(project, scene.Id, "ru", mode: PlaybackMode.Game);
+        var game = new ScenePlayer(project, scene.Id, "ru", mode: PlaybackMode.Game).Settled();
         Assert.AreEqual(line.Id, game.Frame.LineId);
         Assert.AreEqual("timer", game.Execution.State.Wait?.Mode);
-        Assert.IsFalse(game.Next()); Assert.IsFalse(game.Execution.State.Variables.ContainsKey("late"));
-        game.Tick(TimeSpan.FromSeconds(1));
+        Assert.IsFalse(game.NextSettled()); Assert.IsFalse(game.Execution.State.Variables.ContainsKey("late"));
+        game.TickSettled(TimeSpan.FromSeconds(1));
         var saved = GameSave.Serialize(game.Execution);
-        game.Tick(TimeSpan.FromSeconds(1));
+        game.TickSettled(TimeSpan.FromSeconds(1));
         Assert.AreEqual("before", game.Execution.State.Variables["early"]);
         Assert.AreEqual("after", game.Execution.State.Variables["late"]);
         game.LoadSave(saved);
         Assert.AreEqual(saved, GameSave.Serialize(game.Execution), "Load must only restore, without pumping commands or running Lua.");
         Assert.IsFalse(game.Execution.State.Variables.ContainsKey("queued"));
-        game.Tick(TimeSpan.FromSeconds(1));
-        Assert.IsTrue(game.Next()); Assert.AreEqual("yes", game.Execution.State.Variables["after"]);
+        game.TickSettled(TimeSpan.FromSeconds(1));
+        Assert.IsTrue(game.NextSettled()); Assert.AreEqual("yes", game.Execution.State.Variables["after"]);
     }
 }

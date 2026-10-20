@@ -228,6 +228,7 @@ public sealed class EditorWindowTests
         await UntilAsync(() => !session.IsBusy && dialogs.CodeEditor.Opened.Count > 0);
         Assert.AreSame(document, session.SelectedDocument); Assert.AreEqual(documentCount, session.Documents.Count);
         Assert.AreEqual(InspectorTarget.Script, session.InspectorTarget);
+        await session.RefreshExternalScriptsAsync();
         Dispatcher.UIThread.RunJobs(); Capture(window, "editor-script-properties-before-settings.png");
         Find<Expander>(window, "CodeEditorSettings").IsExpanded = true; Dispatcher.UIThread.RunJobs();
         Click(window, Find<Button>(window, "ChooseCodeEditor"));
@@ -241,10 +242,10 @@ public sealed class EditorWindowTests
         Assert.IsFalse(window.GetVisualDescendants().OfType<TextBox>().Any(t => t.Name is "LuaAssetSource" or "LuaSourceBox"));
         var file = dialogs.CodeEditor.Opened.Last();
         await File.WriteAllTextAsync(file, "game.set('gui_script', 'yes')");
-        await UntilAsync(() => session.SelectedScript!.Source.Contains("gui_script"));
+        await UntilAsync(() => session.SelectedScript!.Source.Contains("gui_script") && session.SelectedScriptDiagnostic == "Синтаксис корректен");
         StringAssert.Contains(Find<TextBlock>(window, "LuaAssetStatus").Text!, "Синтаксис корректен");
         await File.WriteAllTextAsync(file, "if then");
-        await UntilAsync(() => session.SelectedScript!.Source == "if then" && !session.SelectedScriptDiagnostic.Contains("Синтаксис корректен"));
+        await UntilAsync(() => session.SelectedScript!.Source == "if then" && !session.SelectedScriptDiagnostic.Contains("Синтаксис корректен") && !session.SelectedScriptDiagnostic.Contains("Проверка синтаксиса"));
         await File.WriteAllTextAsync(file, "return " + new string('(', 12000) + "1" + new string(')', 12000));
         await UntilAsync(() => session.SelectedScriptDiagnostic.Contains("вложенности"));
         Assert.IsTrue(window.IsVisible); Assert.AreSame(document, session.SelectedDocument);
@@ -252,7 +253,7 @@ public sealed class EditorWindowTests
         await UntilAsync(() => session.SelectedScriptDiagnostic == "Синтаксис корректен");
         await File.WriteAllTextAsync(file + ".tmp", "game.set('gui_script', 'yes')\n-- atomic save");
         File.Move(file + ".tmp", file, overwrite: true);
-        await UntilAsync(() => session.SelectedScript!.Source.Contains("atomic save"));
+        await UntilAsync(() => session.SelectedScript!.Source.Contains("atomic save") && session.SelectedScriptDiagnostic == "Синтаксис корректен");
         Find<Expander>(window, "LuaReferencesSettings").IsExpanded = true; Dispatcher.UIThread.RunJobs();
         Find<TextBox>(window, "LuaAssetReferenceAlias").Text = "scene";
         Assert.IsNotNull(Find<ComboBox>(window, "LuaAssetReferenceTarget").SelectedItem);
@@ -262,7 +263,7 @@ public sealed class EditorWindowTests
         Assert.AreEqual(sceneId, linked);
         Find<Expander>(window, "LuaReferencesSettings").IsExpanded = false; Dispatcher.UIThread.RunJobs();
         Click(window, Find<Button>(window, "AttachLuaScriptToScene"));
-        var player = new NovellMaker.Core.Execution.ScenarioPlayer(session.Project!, sceneId, "ru");
+        var player = new NovellMaker.Core.Execution.ScenarioPlayer(session.Project!, sceneId, "ru").Settled();
         Assert.IsNull(player.State.Error, player.State.Error); Assert.AreEqual("yes", player.State.Variables["gui_script"]);
         Assert.AreEqual(id, ((NovellMaker.Core.Execution.RunScriptAction)session.Project!.Scenes[0].ScriptBlocks.Single().Action).ScriptId);
         Find<ScrollViewer>(window, "LuaScriptInspector").Offset = default; Dispatcher.UIThread.RunJobs();

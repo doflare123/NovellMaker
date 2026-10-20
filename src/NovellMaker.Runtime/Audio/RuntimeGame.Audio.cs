@@ -11,14 +11,15 @@ internal sealed partial class RuntimeGame
     private readonly MonoGameAudioBackend audioBackend = new();
     private bool audioPaused;
     private bool showMixer;
+    private bool ShouldPauseAudio => audioPaused || showMixer || player.Execution.HasPendingLua || player.Execution.IsPaused;
     private readonly List<(AudioGroup Group, int Change, Rectangle Bounds, RenderedTexture Texture)> mixerButtons = [];
     private void InitializeAudio() => audio = new(player.Execution.Project, arguments.AssetsRoot, arguments.Language, audioBackend);
     private void SynchronizeAudio()
     {
         if (audio is null) return;
         var diagnosticCount = audio.Diagnostics.Count;
+        audio.Pause(ShouldPauseAudio);
         foreach (var cue in player.DrainAudioEvents()) audio.Handle(cue);
-        audio.Pause(audioPaused || showMixer);
         audio.Update();
         if (audio.Diagnostics.Count != diagnosticCount) RefreshTextTextures();
     }
@@ -26,7 +27,7 @@ internal sealed partial class RuntimeGame
     private void RefreshMixer()
     {
         if (audio is null) return;
-        audio.Pause(audioPaused || showMixer);
+        audio.Pause(ShouldPauseAudio);
         foreach (var b in mixerButtons) b.Texture.Dispose();
         mixerButtons.Clear();
         if (!showMixer) return;

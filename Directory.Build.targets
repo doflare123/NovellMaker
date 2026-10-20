@@ -1,4 +1,7 @@
 <Project>
+  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)tests/PlaybackTestHost.cs" Link="PlaybackTestHost.cs" />
+  </ItemGroup>
   <Target Name="CopyIsolatedLuaTestHost" AfterTargets="Build" Condition="'$(IsTestProject)' == 'true'">
     <ItemGroup>
       <LuaTestHost Include="$(MSBuildThisFileDirectory)src/NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/**/*"

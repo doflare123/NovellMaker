@@ -20,17 +20,17 @@ public sealed class ScenarioPlayerTests
             new MoveAction(Id(), actor.Id, new(0.8, 0.6, 2, 2), 4), new TextAction(Id(), line.Id), new WaitAction(Id(), "input")] };
         var player = Player(project, scene);
         var snapshot = player.State;
-        player.Tick(TimeSpan.FromSeconds(1));
+        player.TickSettled(TimeSpan.FromSeconds(1));
         Assert.AreEqual(line.Id, player.State.LineId);
         Assert.AreEqual("Рассказчик", player.Frame.Text);
         Assert.AreEqual("", player.Frame.SpeakerName);
         Assert.AreEqual(0.35, player.State.Placements[actor.Id].X, 1e-9);
         Assert.AreEqual(0.2, snapshot.Placements[actor.Id].X);
         Assert.AreEqual("input", player.State.Wait?.Mode);
-        player.Tick(TimeSpan.FromSeconds(3));
+        player.TickSettled(TimeSpan.FromSeconds(3));
         Assert.IsTrue(player.State.ActiveActions.IsEmpty);
         Assert.AreEqual(0.8, player.State.Placements[actor.Id].X);
-        Assert.IsTrue(player.Advance()); Assert.IsTrue(player.State.Completed);
+        Assert.IsTrue(player.AdvanceSettled()); Assert.IsTrue(player.State.Completed);
     }
 
     [TestMethod]
@@ -41,8 +41,8 @@ public sealed class ScenarioPlayerTests
             new WaitAction(Id(), "timer", 1), new SetAction(Id(), "first", "yes"), new WaitAction(Id(), "actions"),
             new SetAction(Id(), "done", "yes"), new WaitAction(Id(), "input")] };
         var big = Player(project, scene); var small = Player(project, scene);
-        big.Tick(TimeSpan.FromSeconds(5));
-        for (var i = 0; i < 20; i++) small.Tick(TimeSpan.FromSeconds(0.25));
+        big.TickSettled(TimeSpan.FromSeconds(5));
+        for (var i = 0; i < 20; i++) small.TickSettled(TimeSpan.FromSeconds(0.25));
         Assert.AreEqual(GameSave.Serialize(big), GameSave.Serialize(small));
         Assert.AreEqual("yes", big.State.Variables["done"]);
     }
@@ -63,20 +63,20 @@ public sealed class ScenarioPlayerTests
                 game.set("phase", "done")
                 """, "restore.lua")] };
         project = project with { Scenes = [scene] };
-        var original = new ScenarioPlayer(project, scene.Id, "ru");
-        original.Tick(TimeSpan.FromSeconds(1));
+        var original = new ScenarioPlayer(project, scene.Id, "ru").Settled();
+        original.TickSettled(TimeSpan.FromSeconds(1));
         Assert.IsNull(original.State.Error, original.State.Error);
         Assert.AreEqual(3, original.State.QueuedActions.Length);
-        var restored = new ScenarioPlayer(project, scene.Id, "ru");
+        var restored = new ScenarioPlayer(project, scene.Id, "ru").Settled();
         GameSave.Load(restored, GameSave.Serialize(original));
         Assert.AreEqual(GameSave.Serialize(original), GameSave.Serialize(restored));
-        Assert.IsFalse(restored.Click(Id()));
-        Assert.IsTrue(original.Click(hotspot)); Assert.IsTrue(restored.Click(hotspot));
+        Assert.IsFalse(restored.ClickSettled(Id()));
+        Assert.IsTrue(original.ClickSettled(hotspot)); Assert.IsTrue(restored.ClickSettled(hotspot));
         Assert.AreEqual("win", restored.State.Variables["minigame.result"]);
         var timedSave = GameSave.Serialize(restored);
-        restored.Tick(TimeSpan.FromSeconds(100));
+        restored.TickSettled(TimeSpan.FromSeconds(100));
         GameSave.Load(restored, timedSave);
-        original.Tick(TimeSpan.FromSeconds(2)); restored.Tick(TimeSpan.FromSeconds(2));
+        original.TickSettled(TimeSpan.FromSeconds(2)); restored.TickSettled(TimeSpan.FromSeconds(2));
         Assert.AreEqual(GameSave.Serialize(original), GameSave.Serialize(restored));
         Assert.AreEqual("done", restored.State.Variables["phase"]);
     }
@@ -90,12 +90,12 @@ public sealed class ScenarioPlayerTests
         scene = scene with { Actions = [new ChoiceAction(Id(), [new(option, "Перейти", destination.Id, target)])] };
         project = project with { Scenes = [scene, destination] };
         ScenarioProgram.Validate(project);
-        var player = new ScenarioPlayer(project, scene.Id, "ru");
-        var json = GameSave.Serialize(player); Assert.IsFalse(player.Advance()); Assert.IsFalse(player.Choose(Id()));
-        Assert.IsTrue(player.Choose(option)); Assert.AreEqual(destination.Id, player.State.SceneId);
+        var player = new ScenarioPlayer(project, scene.Id, "ru").Settled();
+        var json = GameSave.Serialize(player); Assert.IsFalse(player.AdvanceSettled()); Assert.IsFalse(player.ChooseSettled(Id()));
+        Assert.IsTrue(player.ChooseSettled(option)); Assert.AreEqual(destination.Id, player.State.SceneId);
         Assert.AreEqual("yes", player.State.Variables["arrived"]);
         GameSave.Load(player, json); Assert.IsNotNull(player.State.Choice);
-        Assert.IsTrue(player.Choose(option));
+        Assert.IsTrue(player.ChooseSettled(option));
     }
 
     [TestMethod]
@@ -116,9 +116,9 @@ public sealed class ScenarioPlayerTests
         var player = Player(project, scene);
         Assert.IsNull(player.State.Error, player.State.Error);
         Assert.HasCount(1, player.Frame.Characters);
-        player.Tick(TimeSpan.FromSeconds(1));
+        player.TickSettled(TimeSpan.FromSeconds(1));
         Assert.AreEqual(0.65, player.State.Placements[actor.Id].X, 1e-9);
-        player.Advance(); Assert.AreEqual("yes", player.State.Variables["good"]); Assert.IsFalse(player.State.Variables.ContainsKey("bad"));
+        player.AdvanceSettled(); Assert.AreEqual("yes", player.State.Variables["good"]); Assert.IsFalse(player.State.Variables.ContainsKey("bad"));
     }
 
     [TestMethod]
@@ -136,7 +136,7 @@ public sealed class ScenarioPlayerTests
         Assert.IsNotNull(player.State.Error);
         StringAssert.Contains(player.State.Error, "broken.lua");
         Assert.IsFalse(player.State.Variables.ContainsKey("bad"));
-        Assert.IsFalse(player.Advance());
+        Assert.IsFalse(player.AdvanceSettled());
     }
 
     [TestMethod]
@@ -228,10 +228,10 @@ public sealed class ScenarioPlayerTests
         var player = Player(project, scene);
         Assert.IsNull(player.State.Error, player.State.Error);
         Assert.AreEqual(0.3, player.State.Placements[actor.Id].X);
-        var save = GameSave.Serialize(player); player.Choose(option); GameSave.Load(player, save);
-        Assert.IsNotNull(player.State.Choice); Assert.IsTrue(player.Choose(option));
+        var save = GameSave.Serialize(player); player.ChooseSettled(option); GameSave.Load(player, save);
+        Assert.IsNotNull(player.State.Choice); Assert.IsTrue(player.ChooseSettled(option));
         player.Cancel(); var cancelled = player.State;
-        Assert.IsFalse(player.Advance()); player.Tick(TimeSpan.FromSeconds(3)); Assert.AreSame(cancelled, player.State);
+        Assert.IsFalse(player.AdvanceSettled()); player.TickSettled(TimeSpan.FromSeconds(3)); Assert.AreSame(cancelled, player.State);
     }
 
     [TestMethod]
@@ -275,7 +275,7 @@ public sealed class ScenarioPlayerTests
     }
 
     private static Guid Id() => Guid.NewGuid();
-    private static ScenarioPlayer Player(NovelProject project, NovelScene scene) => new(project with { Scenes = [scene] }, scene.Id, "ru");
+    private static ScenarioPlayer Player(NovelProject project, NovelScene scene) => new ScenarioPlayer(project with { Scenes = [scene] }, scene.Id, "ru").Settled();
     private static (NovelProject Project, NovelScene Scene, NovelCharacter Actor, DialogueLine Line) Fixture()
     {
         var image = new ImageAsset(Id(), "Спрайт", "Assets/Images/a.png", 300, 600);

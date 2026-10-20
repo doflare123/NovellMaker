@@ -33,17 +33,17 @@ public sealed class LuaCompatibilityTests
         scene = scene with { UseActions = true, Actions = [.. prefix, tail, new WaitAction(Guid.NewGuid(), "input")] };
         project = project with { Scenes = [scene] };
         ScenarioProgram.Validate(project);
-        var player = new ScenarioPlayer(project, scene.Id, "ru");
+        var player = new ScenarioPlayer(project, scene.Id, "ru").Settled();
         var before = GameSave.Serialize(player);
-        Assert.IsFalse(player.Advance());
-        Assert.IsFalse(player.Click(Guid.NewGuid()));
-        Assert.IsFalse(player.Choose(Guid.NewGuid()));
+        Assert.IsFalse(player.AdvanceSettled());
+        Assert.IsFalse(player.ClickSettled(Guid.NewGuid()));
+        Assert.IsFalse(player.ChooseSettled(Guid.NewGuid()));
         Assert.AreEqual(before, GameSave.Serialize(player));
         switch (kind)
         {
-            case "timer": case "actions": player.Tick(TimeSpan.FromSeconds(2)); break;
-            case "interaction": Assert.IsTrue(player.Click(hotspot)); break;
-            default: Assert.IsTrue(player.Choose(option)); break;
+            case "timer": case "actions": player.TickSettled(TimeSpan.FromSeconds(2)); break;
+            case "interaction": Assert.IsTrue(player.ClickSettled(hotspot)); break;
+            default: Assert.IsTrue(player.ChooseSettled(option)); break;
         }
         Assert.IsNull(player.State.Error, player.State.Error);
         Assert.AreEqual("yes", player.State.Variables["finished"]);
@@ -60,7 +60,7 @@ public sealed class LuaCompatibilityTests
         scene = scene with { ScriptBlocks = [
             new(null, ScriptPhase.SceneStart, new RunScriptAction(Guid.NewGuid(), first.Id)),
             new(null, ScriptPhase.SceneStart, new RunScriptAction(Guid.NewGuid(), second.Id))] };
-        var player = new ScenarioPlayer(project with { Scenes = [scene], Scripts = [first, second] }, scene.Id, "ru");
+        var player = new ScenarioPlayer(project with { Scenes = [scene], Scripts = [first, second] }, scene.Id, "ru").Settled();
         Assert.IsNull(player.State.Error, player.State.Error);
         Assert.AreEqual(first.Id.ToString(), player.State.Variables["first"]);
         Assert.AreEqual("yes", player.State.Variables["isolated"]);
@@ -74,18 +74,18 @@ public sealed class LuaCompatibilityTests
         var parent = new ScriptAction(Guid.NewGuid(), "game.set('before', 'yes'); game.wait(1); game.run(refs.child); game.set('tail', 'bad')", "parent.lua")
         { References = ImmutableDictionary<string, Guid>.Empty.Add("child", child.Id) };
         scene = scene with { ScriptBlocks = [new(null, ScriptPhase.SceneStart, parent)] };
-        var player = new ScenarioPlayer(project with { Scenes = [scene], Scripts = [child] }, scene.Id, "ru");
+        var player = new ScenarioPlayer(project with { Scenes = [scene], Scripts = [child] }, scene.Id, "ru").Settled();
         var queuedChild = player.State.QueuedActions[0];
         Assert.IsInstanceOfType<RunScriptAction>(queuedChild);
-        player.Tick(TimeSpan.FromSeconds(1));
+        player.TickSettled(TimeSpan.FromSeconds(1));
         Assert.IsNotNull(player.State.Error);
         Assert.AreEqual("yes", player.State.Variables["before"]);
         Assert.IsFalse(player.State.Variables.ContainsKey("partial"));
         Assert.IsFalse(player.State.Variables.ContainsKey("tail"));
         Assert.AreEqual(queuedChild.Id, player.State.QueuedActions[0].Id);
         var failed = player.State;
-        player.Tick(TimeSpan.FromSeconds(10));
-        Assert.IsFalse(player.Advance());
+        player.TickSettled(TimeSpan.FromSeconds(10));
+        Assert.IsFalse(player.AdvanceSettled());
         Assert.AreSame(failed, player.State);
     }
 
@@ -95,11 +95,11 @@ public sealed class LuaCompatibilityTests
         var (project, scene, _) = Fixture();
         scene = scene with { ScriptBlocks = [new(null, ScriptPhase.SceneStart,
             new ScriptAction(Guid.NewGuid(), "game.wait(2); game.set('tail', 'once')", "save.lua"))] };
-        var player = new ScenarioPlayer(project with { Scenes = [scene] }, scene.Id, "ru");
-        player.Tick(TimeSpan.FromSeconds(0.5));
+        var player = new ScenarioPlayer(project with { Scenes = [scene] }, scene.Id, "ru").Settled();
+        player.TickSettled(TimeSpan.FromSeconds(0.5));
         var saved = GameSave.Serialize(player);
         var ids = player.State.QueuedActions.Select(a => a.Id).ToArray();
-        player.Tick(TimeSpan.FromSeconds(1.5));
+        player.TickSettled(TimeSpan.FromSeconds(1.5));
         Assert.AreEqual("once", player.State.Variables["tail"]);
         GameSave.Load(player, saved);
         Assert.AreEqual(saved, GameSave.Serialize(player));
@@ -124,7 +124,7 @@ public sealed class LuaCompatibilityTests
                 game.finish('win')
                 game.wait_input()
                 """, "legacy.lua") { References = ImmutableDictionary<string, Guid>.Empty.Add("actor", actor.Id) })] };
-        var player = new ScenarioPlayer(project with { Scenes = [scene] }, scene.Id, "ru");
+        var player = new ScenarioPlayer(project with { Scenes = [scene] }, scene.Id, "ru").Settled();
         Assert.IsNull(player.State.Error, player.State.Error);
         Assert.AreEqual(0.2, player.State.Placements[actor.Id].X);
         Assert.AreEqual("win", player.State.Variables["minigame.result"]);
@@ -137,7 +137,7 @@ public sealed class LuaCompatibilityTests
     public async Task CancelledSavePreservesPreviousSlotAndLeavesNoTemporaryFile()
     {
         var (project, scene, _) = Fixture();
-        var player = new ScenarioPlayer(project, scene.Id, "ru");
+        var player = new ScenarioPlayer(project, scene.Id, "ru").Settled();
         var directory = Path.Combine(Path.GetTempPath(), "novell-slot-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "slot.json");

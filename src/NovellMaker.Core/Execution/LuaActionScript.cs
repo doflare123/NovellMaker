@@ -17,9 +17,13 @@ public static class LuaActionScript
 
     /// <summary>Parse only: validation never executes project code.</summary>
     public static void ValidateSyntax(string source, string name)
+        => ValidateSyntaxAsync(source, name).GetAwaiter().GetResult();
+
+    public static async Task ValidateSyntaxAsync(string source, string name, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         LuaLimits.CheckSource(source);
-        var response = LuaWorkerClient.Invoke(new("syntax", source, name));
+        var response = await LuaWorkerClient.InvokeAsync(new("syntax", source, name), cancellationToken).ConfigureAwait(false);
         if (response.Error is not null) throw new ArgumentException(response.Error);
     }
 
@@ -31,18 +35,34 @@ public static class LuaActionScript
     }
 
     public static ImmutableArray<ScenarioAction> Run(ScriptAction action, GameState state, NovelProject project)
+        => RunAsync(action, state, project).GetAwaiter().GetResult();
+
+    public static async Task<ImmutableArray<ScenarioAction>> RunAsync(ScriptAction action, GameState state, NovelProject project, CancellationToken cancellationToken = default)
     {
+        var commands = await RequestCommandsAsync(action, state, project, cancellationToken).ConfigureAwait(false);
+        return await Task.Run(() => ValidateCommands(commands, state, project), cancellationToken).ConfigureAwait(false);
+    }
+
+    // Only consumers that validate the complete batch before use may call this raw producer.
+    internal static async Task<ImmutableArray<ScenarioAction>> RequestCommandsAsync(ScriptAction action, GameState state, NovelProject project, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         try { LuaLimits.CheckSource(action.Source); }
         catch (ArgumentException error) { throw new InvalidOperationException(error.Message, error); }
-        var result = LuaWorkerClient.Invoke(new("run", action.Source, action.Name, action, state, project));
+        var result = await LuaWorkerClient.InvokeAsync(new("run", action.Source, action.Name, action, state, project), cancellationToken).ConfigureAwait(false);
         if (result.Error is not null) throw new InvalidOperationException($"Lua «{action.Name}» ({action.Id}): {result.Error}");
-        var commands = result.Commands;
+        return result.Commands;
+    }
+
+    internal static ImmutableArray<ScenarioAction> ValidateCommands(ImmutableArray<ScenarioAction> commands, GameState state, NovelProject project)
+    {
         var scene = project.Scenes.First(s => s.Id == state.SceneId);
         if (commands.IsDefault || commands.Length > MaximumCommands || commands.Any(a => a is null || a.Id == Guid.Empty || !ScenarioProgram.IsValidAction(project, scene, a)) || commands.Select(a => a.Id).Distinct().Count() != commands.Length)
             throw new InvalidOperationException("Изолированный Lua вернул некорректные команды.");
         var variables = state.Variables;
-        foreach (var command in commands.OfType<SetAction>()) variables = variables.SetItem(command.Variable, command.Value);
         if (!LuaLimits.ValidVariables(variables)) throw new InvalidOperationException("Превышен бюджет переменных Lua.");
+        var characters = variables.Sum(v => v.Key.Length + v.Value.Length);
+        foreach (var command in commands.OfType<SetAction>()) variables = LuaLimits.SetVariable(variables, ref characters, command.Variable, command.Value);
         return commands;
     }
 

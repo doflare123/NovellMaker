@@ -22,6 +22,7 @@ public sealed partial class EditorSession
         await store.SaveAsync(path, example);
         SetProject(example, path, saved: true);
         InitializeScriptFiles();
+        await AwaitScriptValidationAsync();
         OpenScene(example.Scenes[0].Id);
         ActiveScene!.SelectedSection = 4;
         Log("Открыта отдельная копия примера во временной папке. F6 — запуск; F7/F8 в игре — сохранить/загрузить. Используйте «Сохранить как…» для постоянной копии.");
@@ -30,7 +31,7 @@ public sealed partial class EditorSession
     public Task PreviewSceneAsync() => RunAsync(async () =>
     {
         if (project is null || ActiveScene is not { } document) return;
-        ValidateExternalScriptsForRun();
+        await ValidateExternalScriptsForRunAsync();
         if (!IsNameValid || !AreDocumentsValid || !document.IsEditingLanguageValid)
             throw new InvalidOperationException("Исправьте названия и язык перед запуском предпросмотра.");
         var request = new PreviewRequest(project, ProjectDirectory ?? Path.GetTempPath(), document.Id,
@@ -39,5 +40,5 @@ public sealed partial class EditorSession
         Log("Запущен игровой предпросмотр снимка сцены. Повторный запуск применит текущие изменения.");
     });
 
-    public void Dispose() { StopScriptWatcher(); previewService.Dispose(); }
+    public void Dispose() { sessionDisposed = true; StopScriptWatcher(); previewService.Dispose(); }
 }

@@ -13,6 +13,20 @@ public sealed partial class EditorSession
     private int scriptWatchGeneration;
     private readonly Dictionary<Guid, string> scriptDiagnostics = [];
     private readonly Dictionary<Guid, string> checkedScriptSources = [];
+    private CancellationTokenSource? syntaxCancellation;
+    private int syntaxGeneration;
+    private Task scriptValidation = Task.CompletedTask;
+    internal Task SyntaxValidationTask => scriptValidation;
+    private bool sessionDisposed;
+    private int waitingForSyntax;
+    private bool cancellingSyntaxForClose;
+    private async Task AwaitScriptValidationAsync()
+    {
+        waitingForSyntax++;
+        try { await scriptValidation; }
+        finally { waitingForSyntax--; }
+    }
+    internal Func<string, string, CancellationToken, Task> ValidateLuaSyntax { get; set; } = LuaActionScript.ValidateSyntaxAsync;
     public string CodeEditorLabel => codeEditor.Executable is { } executable ? Path.GetFileNameWithoutExtension(executable) : "Системное приложение для .lua";
     public bool OpenCodeOnCreation => codeEditor.OpenOnCreation;
     public Task SetOpenCodeOnCreationAsync(bool value) => RunAsync(() => { codeEditor.OpenOnCreation = value; Changed(nameof(OpenCodeOnCreation)); return Task.CompletedTask; });
@@ -82,11 +96,16 @@ public sealed partial class EditorSession
         StartScriptWatcher(); RefreshExternalScriptsCore();
     }
 
-    public Task RefreshExternalScriptsAsync() => RunAsync(() => { RefreshExternalScriptsCore(); return Task.CompletedTask; });
+    public Task RefreshExternalScriptsAsync() => RunAsync(async () => { RefreshExternalScriptsCore(); await AwaitScriptValidationAsync(); });
 
     private void RefreshExternalScriptsCore()
     {
-        if (project is null || ProjectDirectory is not { } root) return;
+        if (sessionDisposed || project is null || ProjectDirectory is not { } root) return;
+        CancelSyntaxValidation();
+        var cancellation = syntaxCancellation = new();
+        var generation = syntaxGeneration;
+        var projectId = project.Id;
+        var checks = new List<(Guid Id, string Source, string File, string Name)>();
         var scripts = project.Scripts;
         var changed = false;
         foreach (var script in scripts)
@@ -98,9 +117,8 @@ public sealed partial class EditorSession
                 var source = ScriptFiles.Read(file);
                 if (source != script.Source) { project = project with { Scripts = project.Scripts.Replace(script, script with { Source = source }) }; changed = true; }
                 if (checkedScriptSources.TryGetValue(script.Id, out var checkedSource) && checkedSource == source && scriptDiagnostics.ContainsKey(script.Id)) continue;
-                checkedScriptSources[script.Id] = source;
-                LuaActionScript.ValidateSyntax(source, file);
-                diagnostic = "Синтаксис корректен";
+                checks.Add((script.Id, source, file, script.Name));
+                diagnostic = "Проверка синтаксиса…";
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
             { diagnostic = error.Message; checkedScriptSources.Remove(script.Id); }
@@ -112,17 +130,71 @@ public sealed partial class EditorSession
         }
         if (changed) { EndEditGroup(); NotifyProjectChanged(); }
         Changed(nameof(SelectedScriptDiagnostic)); Changed(nameof(SelectedScriptPath));
+        scriptValidation = ValidateScriptBatchAsync(checks, generation, projectId, cancellation.Token);
     }
 
-    private void ValidateExternalScriptsForRun()
+    private async Task ValidateScriptBatchAsync(List<(Guid Id, string Source, string File, string Name)> checks,
+        int generation, Guid projectId, CancellationToken token)
+    {
+        foreach (var check in checks)
+        {
+            string diagnostic;
+            try { await ValidateLuaSyntax(check.Source, check.File, token); diagnostic = "Синтаксис корректен"; }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+            catch (ArgumentException error) { diagnostic = error.Message; }
+            if (sessionDisposed || token.IsCancellationRequested || generation != syntaxGeneration || project?.Id != projectId) return;
+            if (project.Scripts.FirstOrDefault(s => s.Id == check.Id)?.Source != check.Source) continue;
+            try
+            {
+                if (ScriptFiles.Read(ScriptFiles.Resolve(ProjectDirectory!, check.Id)) != check.Source)
+                {
+                    checkedScriptSources.Remove(check.Id);
+                    scriptDiagnostics[check.Id] = "Исходник изменён во время проверки. Обновите ресурсы.";
+                    ScheduleScriptRefresh();
+                    Changed(nameof(SelectedScriptDiagnostic));
+                    continue;
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+            { diagnostic = error.Message; }
+            scriptDiagnostics[check.Id] = diagnostic;
+            if (diagnostic == "Синтаксис корректен") checkedScriptSources[check.Id] = check.Source;
+            else checkedScriptSources.Remove(check.Id);
+            Log(check.Name + ": " + diagnostic);
+            Changed(nameof(SelectedScriptDiagnostic));
+        }
+    }
+
+    private void CancelSyntaxValidation()
+    {
+        syntaxGeneration++;
+        syntaxCancellation?.Cancel();
+        syntaxCancellation?.Dispose();
+        syntaxCancellation = null;
+    }
+
+    private async Task ValidateExternalScriptsForRunAsync()
     {
         RefreshExternalScriptsCore();
+        var generation = syntaxGeneration;
+        await AwaitScriptValidationAsync();
+        if (sessionDisposed || generation != syntaxGeneration) throw new OperationCanceledException();
         if (project is null) return;
         foreach (var script in project.Scripts)
         {
-            if (ProjectDirectory is not null && scriptDiagnostics.GetValueOrDefault(script.Id) is { } diagnostic && diagnostic != "Синтаксис корректен")
-                throw new InvalidOperationException(script.Name + ": " + diagnostic);
-            LuaActionScript.ValidateSyntax(script.Source, script.Name);
+            if (ProjectDirectory is not null)
+            {
+                if (scriptDiagnostics.GetValueOrDefault(script.Id) != "Синтаксис корректен")
+                    throw new InvalidOperationException(script.Name + ": " + scriptDiagnostics.GetValueOrDefault(script.Id, "Скрипт ещё не проверен."));
+            }
+            else
+            {
+                syntaxCancellation ??= new();
+                waitingForSyntax++;
+                try { await ValidateLuaSyntax(script.Source, script.Name, syntaxCancellation.Token); }
+                finally { waitingForSyntax--; }
+                if (sessionDisposed || generation != syntaxGeneration) throw new OperationCanceledException();
+            }
         }
     }
 
@@ -152,6 +224,7 @@ public sealed partial class EditorSession
     }
     private void StopScriptWatcher()
     {
+        CancelSyntaxValidation();
         scriptWatchGeneration++;
         scriptWatcher?.Dispose(); scriptWatcher = null;
         scriptRefreshTimer?.Dispose(); scriptRefreshTimer = null;

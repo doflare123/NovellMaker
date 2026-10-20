@@ -26,9 +26,9 @@ public sealed class PhraseScriptTests
         Assert.AreEqual(line.Texts["ru"], player.Frame.Text); Assert.AreEqual("input", player.State.Wait?.Mode);
         Assert.AreEqual("yes", player.State.Variables["start"]); Assert.IsFalse(player.State.Variables.ContainsKey("after"));
         Assert.AreEqual(actor.Id, player.Frame.Characters.Single().CharacterId);
-        player.Tick(TimeSpan.FromSeconds(1)); Assert.AreEqual(0.65, player.State.Placements[actor.Id].X, 1e-9);
-        player.Advance(); Assert.AreEqual("yes", player.State.Variables["after"]); Assert.IsFalse(player.State.Variables.ContainsKey("end"));
-        player.Advance(); Assert.AreEqual("yes", player.State.Variables["end"]); Assert.IsTrue(player.State.Completed);
+        player.TickSettled(TimeSpan.FromSeconds(1)); Assert.AreEqual(0.65, player.State.Placements[actor.Id].X, 1e-9);
+        player.AdvanceSettled(); Assert.AreEqual("yes", player.State.Variables["after"]); Assert.IsFalse(player.State.Variables.ContainsKey("end"));
+        player.AdvanceSettled(); Assert.AreEqual("yes", player.State.Variables["end"]); Assert.IsTrue(player.State.Completed);
     }
 
     [TestMethod]
@@ -41,7 +41,7 @@ public sealed class PhraseScriptTests
         scene = scene with { Lines = [second, first] };
         var player = Player(project, scene);
         Assert.AreEqual(second.Id, player.Frame.LineId); Assert.AreEqual("second", player.State.Variables["phase"]);
-        player.Advance(); Assert.AreEqual(first.Id, player.Frame.LineId); Assert.AreEqual("first", player.State.Variables["phase"]);
+        player.AdvanceSettled(); Assert.AreEqual(first.Id, player.Frame.LineId); Assert.AreEqual("first", player.State.Variables["phase"]);
         Assert.IsTrue(ScenarioProgram.Compile(scene).Any(a => a.Id == hook.Id)); Assert.AreEqual(entry, ScenarioProgram.LineEntryId(first.Id));
     }
 
@@ -54,7 +54,7 @@ public sealed class PhraseScriptTests
             { References = ImmutableDictionary<string, Guid>.Empty.Add("actor", actor.Id).Add("scene", scene.Id).Add("next", scene.Lines[1].Id) }),
             new(scene.Lines[1].Id, ScriptPhase.BeforeLine, new SetAction(Id(), "entered", "yes"))] };
         project = project with { Characters = [actor with { Name = "Переименованный" }] };
-        var player = Player(project, scene); player.Advance();
+        var player = Player(project, scene); player.AdvanceSettled();
         Assert.IsNull(player.State.Error, player.State.Error); Assert.AreEqual(scene.Lines[1].Id, player.Frame.LineId);
         Assert.AreEqual("yes", player.State.Variables["entered"]); Assert.AreEqual("Переименованный", player.Frame.Characters[0].Name);
     }
@@ -69,7 +69,7 @@ public sealed class PhraseScriptTests
         {
             var store = new JsonProjectStore(); project = project with { Scenes = [scene] }; await store.SaveAsync(path, project);
             var loaded = await store.LoadAsync(path); Assert.IsTrue(project.ContentEquals(loaded));
-            var player = new ScenarioPlayer(loaded, scene.Id, "ru"); var save = GameSave.Serialize(player); player.Advance(); GameSave.Load(player, save);
+            var player = new ScenarioPlayer(loaded, scene.Id, "ru").Settled(); var save = GameSave.Serialize(player); player.AdvanceSettled(); GameSave.Load(player, save);
             Assert.AreEqual(scene.Lines[0].Id, player.Frame.LineId);
             var node = JsonNode.Parse(await File.ReadAllTextAsync(path))!; node["formatVersion"] = 7; node.AsObject().Remove("audio"); node.AsObject().Remove("scripts");
             node["scenes"]![0]!.AsObject().Remove("scriptBlocks");
@@ -117,7 +117,7 @@ public sealed class PhraseScriptTests
             var script = json["scenes"]![0]!["actions"]![0]!.AsObject(); script.Remove("references");
             await File.WriteAllTextAsync(path, json.ToJsonString()); var bytes = await File.ReadAllBytesAsync(path);
             var migrated = await store.LoadAsync(path); Assert.IsTrue(project.ContentEquals(migrated));
-            Assert.AreEqual("yes", new ScenarioPlayer(migrated, scene.Id, "ru").State.Variables["old"]);
+            Assert.AreEqual("yes", new ScenarioPlayer(migrated, scene.Id, "ru").Settled().State.Variables["old"]);
             CollectionAssert.AreEqual(bytes, await File.ReadAllBytesAsync(path));
             script["references"] = new JsonObject { ["actor"] = actor.Id.ToString() };
             await File.WriteAllTextAsync(path, json.ToJsonString());
@@ -127,7 +127,7 @@ public sealed class PhraseScriptTests
     }
 
     private static Guid Id() => Guid.NewGuid();
-    private static ScenarioPlayer Player(NovelProject project, NovelScene scene) => new(project with { Scenes = [scene] }, scene.Id, "ru");
+    private static ScenarioPlayer Player(NovelProject project, NovelScene scene) => new ScenarioPlayer(project with { Scenes = [scene] }, scene.Id, "ru").Settled();
     private static (NovelProject, NovelScene, NovelCharacter) Fixture()
     {
         var image = new ImageAsset(Id(), "Спрайт", "Assets/Images/actor.png", 200, 400);

@@ -16,7 +16,7 @@ public sealed class ScriptAssetTests
         script = script with { Name = "переименован.lua", References = Refs(("scene", scene.Id), ("line", scene.Lines[1].Id)) };
         project = project with { Scripts = [script] };
         ScenarioProgram.Validate(project);
-        var player = new ScenarioPlayer(project, scene.Id, "ru");
+        var player = new ScenarioPlayer(project, scene.Id, "ru").Settled();
         Assert.IsNull(player.State.Error, player.State.Error);
         Assert.AreEqual(scene.Lines[1].Id, player.State.LineId);
     }
@@ -29,17 +29,17 @@ public sealed class ScriptAssetTests
         child = child with { References = Refs(("self", child.Id)) };
         script = script with { References = Refs(("child", child.Id)) };
         project = project with { Scripts = [script, child] };
-        var player = new ScenarioPlayer(project, scene.Id, "ru");
+        var player = new ScenarioPlayer(project, scene.Id, "ru").Settled();
         Assert.AreEqual("before", player.State.Variables["value"]);
         Assert.IsFalse(player.State.Variables.ContainsKey("seen"));
         var save = GameSave.Serialize(player);
-        player.Tick(TimeSpan.FromSeconds(1));
+        player.TickSettled(TimeSpan.FromSeconds(1));
         Assert.AreEqual("after", player.State.Variables["seen"]);
         Assert.AreEqual(child.Id.ToString(), player.State.Variables["own"]);
         Assert.AreEqual("done", player.State.Variables["tail"]);
         GameSave.Load(player, save);
         Assert.IsFalse(player.State.Variables.ContainsKey("seen"), "Loading must not execute a pending script.");
-        player.Tick(TimeSpan.FromSeconds(1));
+        player.TickSettled(TimeSpan.FromSeconds(1));
         Assert.AreEqual("after", player.State.Variables["seen"]);
     }
 
@@ -51,7 +51,7 @@ public sealed class ScriptAssetTests
             new ScriptAction(Guid.NewGuid(), "game.jump_line(refs.scene, refs.line)\ngame.run(refs.script)", "inline.lua")
             { References = Refs(("scene", scene.Id), ("line", scene.Lines[1].Id), ("script", script.Id)) })] };
         project = project with { Scenes = [scene] };
-        var player = new ScenarioPlayer(project, scene.Id, "ru");
+        var player = new ScenarioPlayer(project, scene.Id, "ru").Settled();
         Assert.IsNull(player.State.Error, player.State.Error);
         Assert.AreEqual(scene.Lines[1].Id, player.State.LineId);
         Assert.IsFalse(player.State.Variables.ContainsKey("unexpected"));
@@ -62,7 +62,7 @@ public sealed class ScriptAssetTests
     {
         var (project, scene, script) = Fixture("game.run(refs.self)");
         script = script with { References = Refs(("self", script.Id)) };
-        var player = new ScenarioPlayer(project with { Scripts = [script] }, scene.Id, "ru");
+        var player = new ScenarioPlayer(project with { Scripts = [script] }, scene.Id, "ru").Settled();
         Assert.IsNotNull(player.State.Error);
         StringAssert.Contains(player.State.Error, "лимит действий");
     }
@@ -72,8 +72,9 @@ public sealed class ScriptAssetTests
     {
         var (project, scene, script) = Fixture("game.wait(0.01)\nlocal i=0 while i<250 do game.run(refs.self) i=i+1 end");
         script = script with { References = Refs(("self", script.Id)) };
-        var player = new ScenarioPlayer(project with { Scripts = [script] }, scene.Id, "ru");
-        player.Tick(TimeSpan.FromSeconds(1));
+        var player = new ScenarioPlayer(project with { Scripts = [script] }, scene.Id, "ru").Settled();
+        // Pending Lua is a host boundary: resume it before supplying the next virtual tick.
+        for (var i = 0; i < 30 && player.State.Error is null; i++) player.TickSettled(TimeSpan.FromSeconds(0.01));
         Assert.IsNotNull(player.State.Error);
         StringAssert.Contains(player.State.Error, "лимит очереди Lua");
     }
@@ -82,7 +83,7 @@ public sealed class ScriptAssetTests
     public void FailingResourceDiscardsItsBatchAndReportsSourceAndLine()
     {
         var (project, scene, _) = Fixture("game.set('partial', 'bad')\nmissing_function()");
-        var player = new ScenarioPlayer(project, scene.Id, "ru");
+        var player = new ScenarioPlayer(project, scene.Id, "ru").Settled();
         Assert.IsNotNull(player.State.Error);
         StringAssert.Contains(player.State.Error, "chapter.lua");
         Assert.IsFalse(player.State.Variables.ContainsKey("partial"));

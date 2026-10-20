@@ -60,7 +60,7 @@ public sealed class WindowsExportTests
         Assert.AreEqual(edited.Id, package.ProjectId);
         Assert.AreEqual(second.Id, package.StartSceneId);
         var exported = await new JsonProjectStore().LoadAsync(Path.Combine(destination, GamePackage.ProjectName));
-        Assert.AreEqual("yes", new ScenarioPlayer(exported, second.Id, "ru").State.Variables["exported_script"]);
+        Assert.AreEqual("yes", new ScenarioPlayer(exported, second.Id, "ru").Settled().State.Variables["exported_script"]);
         Assert.IsTrue(edited.ContentEquals(await new JsonProjectStore().LoadAsync(Path.Combine(destination, GamePackage.ProjectName))));
         foreach (var image in project.Images)
             CollectionAssert.AreEqual(await File.ReadAllBytesAsync(Path.Combine(source, image.RelativePath)), await File.ReadAllBytesAsync(Path.Combine(destination, image.RelativePath)));

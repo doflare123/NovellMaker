@@ -1,10 +1,32 @@
 using NovellMaker.Core.Execution;
+using System.Collections.Immutable;
 
 namespace NovellMaker.Core.Tests.Execution;
 
 [TestClass]
 public sealed class LuaLimitBoundaryTests
 {
+    [TestMethod]
+    public void IncrementalVariableBudgetMatchesFullValidationAndRejectsOverflowWithoutChangingBudget()
+    {
+        var variables = System.Collections.Immutable.ImmutableDictionary<string, string>.Empty;
+        var characters = 0;
+        for (var i = 0; i < 256; i++) variables = LuaLimits.SetVariable(variables, ref characters, "v" + i, "x");
+        Assert.IsTrue(LuaLimits.ValidVariables(variables));
+        Assert.AreEqual(variables.Sum(v => v.Key.Length + v.Value.Length), characters);
+        var before = characters;
+        Assert.Throws<InvalidOperationException>(() => LuaLimits.SetVariable(variables, ref characters, "overflow", "x"));
+        Assert.AreEqual(before, characters);
+        variables = LuaLimits.SetVariable(variables, ref characters, "v0", new string('x', 8192));
+        Assert.AreEqual(variables.Sum(v => v.Key.Length + v.Value.Length), characters);
+        variables = LuaLimits.SetVariable(variables, ref characters, "v0", "");
+        Assert.AreEqual(variables.Sum(v => v.Key.Length + v.Value.Length), characters);
+        variables = Enumerable.Range(0, 16).ToImmutableDictionary(i => i.ToString("D2"), i => new string('x', i == 15 ? 8160 : 8192));
+        characters = variables.Sum(v => v.Key.Length + v.Value.Length);
+        Assert.Throws<InvalidOperationException>(() => LuaLimits.SetVariable(variables, ref characters, "15", new string('x', 8161)));
+        Assert.AreEqual(LuaLimits.MaximumVariableCharacters, characters);
+        Assert.Throws<InvalidOperationException>(() => LuaLimits.SetVariable(variables, ref characters, " ", "invalid"));
+    }
     [TestMethod]
     public void VariableLimitsAcceptTheBoundaryAndRejectTheNextCharacterOrEntry()
     {

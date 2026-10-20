@@ -22,6 +22,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
     private string draftName = "";
     private string? projectPath;
     private bool isBusy;
+    private TaskCompletionSource? operationFinished;
     private string status = "Создайте или откройте проект.";
     private string gitSummary = "Git: проект не открыт";
 
@@ -64,7 +65,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
     public bool IsDirty => project is not null && (!project.ContentEquals(savedProject) || draftName != savedProject?.Name);
     public bool IsNameValid => !string.IsNullOrWhiteSpace(ProjectName);
     public string NameValidation => IsNameValid || !HasProject ? "" : "Введите название проекта.";
-    public bool CanEdit => HasProject && !IsBusy;
+    public bool CanEdit => HasProject && !IsBusy && !sessionDisposed;
     public string ProjectId => project?.Id.ToString() ?? "—";
     public string FormatVersion => project?.FormatVersion.ToString() ?? "—";
     public string PathDisplay => projectPath ?? "Проект ещё не сохранён";
@@ -113,6 +114,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         var loaded = await store.LoadAsync(path);
         SetProject(loaded, Path.GetFullPath(path), saved: true);
         InitializeScriptFiles();
+        await AwaitScriptValidationAsync();
         RememberProject();
         Log("Проект открыт.");
         await UpdateGitAsync();
@@ -135,15 +137,28 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
 
     public async Task<bool> RequestCloseAsync()
     {
-        var allowed = false;
-        await RunAsync(async () => { allowed = await MayLeaveProjectAsync(); });
-        return allowed;
+        try
+        {
+            if (isBusy && waitingForSyntax > 0)
+            {
+                cancellingSyntaxForClose = true;
+                var finished = operationFinished!.Task;
+                CancelSyntaxValidation();
+                try { await finished.WaitAsync(TimeSpan.FromSeconds(2)); }
+                catch (TimeoutException) { return false; }
+            }
+            var allowed = false;
+            await RunAsync(async () => { allowed = await MayLeaveProjectAsync(); });
+            return allowed;
+        }
+        finally { cancellingSyntaxForClose = false; }
     }
 
     public Task RefreshGitAsync() => RunAsync(async () =>
     {
         RefreshExternalScriptsCore();
         RefreshAssetFiles();
+        await AwaitScriptValidationAsync();
         await UpdateGitAsync();
     });
 
@@ -171,6 +186,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         if (path is null) return false;
         path = Path.GetFullPath(path);
         RefreshExternalScriptsCore();
+        await AwaitScriptValidationAsync();
         var snapshot = project!;
         if (savedProject is not null && projectPath is not null && string.Equals(path, projectPath,
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
@@ -286,10 +302,12 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
 
     private async Task RunAsync(Func<Task> operation)
     {
-        if (isBusy) return;
+        if (isBusy || sessionDisposed) return;
+        var finished = operationFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
         isBusy = true;
         BusyChanged();
         try { await operation(); }
+        catch (OperationCanceledException) when (sessionDisposed || cancellingSyntaxForClose) { }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             Log($"Ошибка: {ex.Message}");
@@ -299,6 +317,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         {
             isBusy = false;
             BusyChanged();
+            finished.TrySetResult();
         }
     }
 

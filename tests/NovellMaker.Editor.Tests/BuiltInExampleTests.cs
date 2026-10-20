@@ -20,7 +20,7 @@ public sealed class BuiltInExampleTests
         var pruned = ActionReferences.Prune(project);
         Assert.IsTrue(pruned.Scenes[0].UseActions); Assert.IsTrue(pruned.Scenes[0].Actions.IsEmpty);
         ScenarioProgram.Validate(pruned);
-        Assert.IsTrue(new ScenarioPlayer(pruned, scene.Id, "ru").State.Completed);
+        Assert.IsTrue(new ScenarioPlayer(pruned, scene.Id, "ru").Settled().State.Completed);
     }
 
     [TestMethod]
@@ -35,23 +35,23 @@ public sealed class BuiltInExampleTests
             var path = Path.Combine(directory, "example.novell");
             await new JsonProjectStore().SaveAsync(path, project);
             project = await new JsonProjectStore().LoadAsync(path);
-            var scene = project.Scenes[0]; var player = new ScenarioPlayer(project, scene.Id, "ru");
+            var scene = project.Scenes[0]; var player = new ScenarioPlayer(project, scene.Id, "ru").Settled();
             Assert.IsNull(player.State.Error);
-            player.Tick(TimeSpan.FromSeconds(2));
+            player.TickSettled(TimeSpan.FromSeconds(2));
             var saved = GameSave.Serialize(player); var first = player.State;
-            player.Tick(TimeSpan.FromSeconds(2)); GameSave.Load(player, saved);
+            player.TickSettled(TimeSpan.FromSeconds(2)); GameSave.Load(player, saved);
             Assert.AreEqual(first.Placements.Values.First(p => p.X > 0.4).X, player.State.Placements.Values.First(p => p.X > 0.4).X);
-            Assert.IsTrue(player.Advance()); Assert.IsFalse(player.Advance());
-            Assert.IsTrue(player.Click(player.State.Hotspots[0].ObjectId));
+            Assert.IsTrue(player.AdvanceSettled()); Assert.IsFalse(player.AdvanceSettled());
+            Assert.IsTrue(player.ClickSettled(player.State.Hotspots[0].ObjectId));
             var game = GameSave.Serialize(player);
-            player.Tick(TimeSpan.FromSeconds(1)); GameSave.Load(player, game);
+            player.TickSettled(TimeSpan.FromSeconds(1)); GameSave.Load(player, game);
             var button = player.State.Hotspots.Single(h => h.Label == (win ? "4" : "5"));
-            Assert.IsTrue(player.Click(button.ObjectId));
+            Assert.IsTrue(player.ClickSettled(button.ObjectId));
             Assert.AreEqual(win ? "win" : "lose", player.State.Variables["minigame.result"]);
             StringAssert.Contains(player.Frame.Text, win ? "Ветка успеха" : "Ветка неудачи");
-            Assert.IsTrue(player.Advance()); Assert.IsNotNull(player.State.Choice);
-            Assert.IsTrue(player.Choose(player.State.Choice.Options[1].Id));
-            Assert.IsTrue(player.Advance()); Assert.IsTrue(player.State.Completed);
+            Assert.IsTrue(player.AdvanceSettled()); Assert.IsNotNull(player.State.Choice);
+            Assert.IsTrue(player.ChooseSettled(player.State.Choice.Options[1].Id));
+            Assert.IsTrue(player.AdvanceSettled()); Assert.IsTrue(player.State.Completed);
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
@@ -92,6 +92,7 @@ public sealed class BuiltInExampleTests
         Assert.IsTrue(trace.EnumerateArray().All(s => s.GetProperty("Success").GetBoolean()));
         StringAssert.Contains(trace[9].GetProperty("Text").GetString()!, "Ветка успеха");
         Assert.AreEqual(0, json.RootElement.GetProperty("Diagnostics").GetArrayLength());
+        Assert.IsGreaterThan(0, json.RootElement.GetProperty("PendingLuaDrawFrames").GetInt32(), "MonoGame must render frames while Lua is pending.");
         using var bitmap = SKBitmap.Decode(screenshot); Assert.IsNotNull(bitmap);
         // At restored t=2 the traveller is at x≈0.5675; later t=5 was undone.
         var actor = project.Characters[1].Id;

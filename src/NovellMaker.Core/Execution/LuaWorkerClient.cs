@@ -18,9 +18,6 @@ public static class LuaWorkerClient
     public const int MaximumPendingRequests = 32;
     private static readonly LuaWorkerTransport Transport = new(() => new LuaWorkerProcess(Host()));
 
-    // Compatibility bridge; runtime integration will stop using this in stage 1.2.
-    internal static LuaWorkerResponse Invoke(LuaWorkerRequest request) => InvokeAsync(request).GetAwaiter().GetResult();
-
     /// <summary>Bounded isolated RPC. Caller cancellation throws; timeout/protocol/process failures return an error and no commands.</summary>
     public static Task<LuaWorkerResponse> InvokeAsync(LuaWorkerRequest request, CancellationToken cancellationToken = default) =>
         Transport.InvokeAsync(request, cancellationToken);

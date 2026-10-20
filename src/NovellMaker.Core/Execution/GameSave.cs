@@ -17,6 +17,7 @@ public static class GameSave
 
     public static string Serialize(ScenarioPlayer player)
     {
+        player.EnsureCanSave();
         Validate(player.State, player.Project);
         return JsonSerializer.Serialize(new Document(CurrentVersion, player.State), Options);
     }

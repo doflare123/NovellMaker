@@ -20,7 +20,7 @@ public sealed class ScriptAuthoringTests
         session.AttachScriptToSceneStart(sceneId, script.Id);
         Assert.AreEqual(InspectorTarget.Script, session.InspectorTarget);
         Assert.AreEqual(sceneId, session.ActiveScene!.Id);
-        var player = new ScenarioPlayer(session.Project!, sceneId, "ru");
+        var player = new ScenarioPlayer(session.Project!, sceneId, "ru").Settled();
         Assert.AreEqual("yes", player.State.Variables["started"]);
         await session.DeleteScriptAsync(script.Id);
         Assert.IsEmpty(session.Project!.Scripts); Assert.IsEmpty(session.Project.Scenes[0].ScriptBlocks);

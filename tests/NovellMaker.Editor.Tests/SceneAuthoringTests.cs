@@ -449,7 +449,7 @@ public sealed class SceneAuthoringTests
         Assert.AreEqual(2, copies.Length); Assert.IsTrue(copies.All(c => originals.All(o => o.Action.Id != c.Action.Id)));
         document.MoveLine(-1);
         Assert.AreEqual(copy, session.Project.Scenes[0].Lines[0].Id);
-        Assert.AreEqual(copy, new NovellMaker.Core.Execution.ScenarioPlayer(session.Project, scene.Id, "ru").Frame.LineId);
+        Assert.AreEqual(copy, new NovellMaker.Core.Execution.ScenarioPlayer(session.Project, scene.Id, "ru").Settled().Frame.LineId);
         document.DeleteLine(); Assert.IsFalse(session.Project.Scenes[0].ScriptBlocks.Any(b => b.LineId == copy));
         session.Undo(); Assert.AreEqual(2, session.Project.Scenes[0].ScriptBlocks.Count(b => b.LineId == copy));
         session.Undo(); Assert.AreEqual(original, session.Project.Scenes[0].Lines[0].Id);

@@ -43,7 +43,7 @@ public sealed class LuaIsolationTests
     public void AuditMemoryBombDiesInWorkerAndLeavesCallerAndStateIntact()
     {
         var (project, scene, action) = Fixture("game.set('partial','bad'); local s='x'; for i=1,28 do s=s..s end; game.set('result',s)");
-        var player = new ScenarioPlayer(project, scene.Id, "ru");
+        var player = new ScenarioPlayer(project, scene.Id, "ru").Settled();
         Assert.IsNotNull(player.State.Error);
         Assert.IsEmpty(player.State.Variables);
         Assert.AreEqual(action.Id, player.State.NextActionId, "A rejected batch must not advance the script position.");
@@ -61,7 +61,7 @@ public sealed class LuaIsolationTests
         })
         {
             var (project, scene, action) = Fixture(source);
-            var player = new ScenarioPlayer(project, scene.Id, "ru");
+            var player = new ScenarioPlayer(project, scene.Id, "ru").Settled();
             Assert.IsNotNull(player.State.Error); Assert.IsEmpty(player.State.Variables);
             Assert.AreEqual(action.Id, player.State.NextActionId);
         }

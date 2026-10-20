@@ -40,13 +40,17 @@ internal sealed partial class RuntimeGame : Game
     private bool smokeReturned;
     private bool smokeWritten;
     private int drawFrames;
+    private int pendingLuaDrawFrames;
     private int initialVisibleCharacterCount;
+    private bool initialFrameCaptured;
     private int afterNextVisibleCharacterCount;
     private int afterPreviousVisibleCharacterCount;
     private readonly List<(Guid Id, Rectangle Bounds, RenderedTexture Texture)> interactionButtons = [];
     private string interactionKey = "";
     private readonly RuntimeSmokeStep[]? smokePlan;
     private readonly List<RuntimeActionTrace> actionTrace = [];
+    private RuntimeSmokeStep? pendingSmokeStep;
+    private bool pendingSmokeSuccess;
     private RenderedTexture? actionHelp;
     private string saveMessage = "F7/F8 — слот · Enter — дальше · F9 — звук · P — пауза";
     private string SavePath => RuntimeStorage.SavePath(player.Execution.State.ProjectId, arguments.Package is not null);
@@ -88,6 +92,7 @@ internal sealed partial class RuntimeGame : Game
         pixel.SetData([Color.White]);
         initialLineId = player.Frame.LineId;
         initialVisibleCharacterCount = player.Frame.Characters.Length;
+        initialFrameCaptured = !player.Execution.HasPendingLua;
         RefreshFrameResources();
         RefreshTextTextures();
         base.LoadContent();
@@ -95,12 +100,17 @@ internal sealed partial class RuntimeGame : Game
 
     protected override void Update(GameTime gameTime)
     {
+        var paused = audioPaused || showMixer || (arguments.SmokeOutputPath is null && !IsActive);
+        player.Execution.IsPaused = paused;
         SynchronizeAudio();
-        if (!audioPaused && !showMixer) lineElapsed += gameTime.ElapsedGameTime;
+        var scenarioTime = player.Execution.State.Time;
+        if (!paused && !UsesGameState) lineElapsed += gameTime.ElapsedGameTime;
         if (UsesGameState)
         {
             var line = player.Frame.LineId;
-            if (smokePlan is null && !audioPaused && !showMixer) player.Tick(gameTime.ElapsedGameTime);
+            if (smokePlan is null && !paused) player.Tick(gameTime.ElapsedGameTime);
+            else if (!paused) player.PollLua();
+            lineElapsed += TimeSpan.FromSeconds(Math.Max(0, player.Execution.State.Time - scenarioTime));
             if (line != player.Frame.LineId) lineElapsed = TimeSpan.Zero;
             RefreshFrameResources();
             RefreshTextTextures();
@@ -109,9 +119,15 @@ internal sealed partial class RuntimeGame : Game
 
         if (arguments.SmokeOutputPath is not null)
         {
+            if (!initialFrameCaptured && !player.Execution.HasPendingLua)
+            {
+                initialLineId = player.Frame.LineId;
+                initialVisibleCharacterCount = player.Frame.Characters.Length;
+                initialFrameCaptured = true;
+            }
             if (smokePlan is null) AdvanceSmokeSequence(); else AdvanceActionSmoke();
         }
-        else
+        else if (IsActive)
         {
             var keyboard = Keyboard.GetState();
             var mouse = Mouse.GetState();
@@ -120,7 +136,7 @@ internal sealed partial class RuntimeGame : Game
                 Exit();
             }
             else if (Pressed(keyboard, Keys.F9)) ToggleMixer();
-            else if (Pressed(keyboard, Keys.P)) { audioPaused = !audioPaused; audio!.Pause(audioPaused || showMixer); RefreshMixer(); }
+            else if (Pressed(keyboard, Keys.P)) { audioPaused = !audioPaused; audio!.Pause(ShouldPauseAudio); RefreshMixer(); }
             else if (UsesGameState && Pressed(keyboard, Keys.F7)) SaveGame();
             else if (UsesGameState && Pressed(keyboard, Keys.F8)) LoadGame();
             else if (!audioPaused && !showMixer && (Pressed(keyboard, Keys.Right) || Pressed(keyboard, Keys.Enter) ||
@@ -152,6 +168,7 @@ internal sealed partial class RuntimeGame : Game
             previousKeyboard = keyboard;
             previousMouse = mouse;
         }
+        else { previousKeyboard = Keyboard.GetState(); previousMouse = Mouse.GetState(); }
 
         SynchronizeAudio();
         base.Update(gameTime);
@@ -196,7 +213,9 @@ internal sealed partial class RuntimeGame : Game
         spriteBatch.End();
 
         drawFrames++;
-        if (arguments.SmokeOutputPath is not null && drawFrames >= Math.Max(4, (smokePlan?.Length ?? 0) + 1) && !smokeWritten)
+        if (player.Execution.HasPendingLua) pendingLuaDrawFrames++;
+        if (arguments.SmokeOutputPath is not null && drawFrames >= 4 &&
+            (smokePlan is null || actionTrace.Count == smokePlan.Length) && !player.Execution.HasPendingLua && !smokeWritten)
         {
             WriteSmokeArtifacts(sceneTarget);
             smokeWritten = true;
@@ -208,6 +227,7 @@ internal sealed partial class RuntimeGame : Game
 
     protected override void UnloadContent()
     {
+        player.Dispose();
         audio?.Dispose();
         foreach (var button in mixerButtons) button.Texture.Dispose();
         actionHelp?.Dispose();
@@ -229,6 +249,7 @@ internal sealed partial class RuntimeGame : Game
 
     private void AdvanceSmokeSequence()
     {
+        if (player.Execution.HasPendingLua) return;
         if (drawFrames >= 1 && !smokeAdvanced)
         {
             smokeNextResult = ApplyAction(RuntimeAction.Next);
@@ -256,7 +277,14 @@ internal sealed partial class RuntimeGame : Game
 
     private void AdvanceActionSmoke()
     {
-        var index = drawFrames - 1;
+        if (player.Execution.HasPendingLua) return;
+        if (pendingSmokeStep is { } finished)
+        {
+            actionTrace.Add(new(finished.Kind, pendingSmokeSuccess, player.Execution.State, player.Frame.Text));
+            pendingSmokeStep = null;
+            return;
+        }
+        var index = actionTrace.Count;
         if (index < 0 || index >= smokePlan!.Length) return;
         var step = smokePlan[index];
         var success = true;
@@ -274,7 +302,8 @@ internal sealed partial class RuntimeGame : Game
             default: throw new ArgumentException("Неизвестный шаг smoke-плана.");
         }
         RefreshFrameResources(); RefreshTextTextures(); RefreshInteractions();
-        actionTrace.Add(new(step.Kind, success, player.Execution.State, player.Frame.Text));
+        if (player.Execution.HasPendingLua) { pendingSmokeStep = step; pendingSmokeSuccess = success; }
+        else actionTrace.Add(new(step.Kind, success, player.Execution.State, player.Frame.Text));
     }
 
     private bool ApplyAction(RuntimeAction action)
@@ -308,7 +337,7 @@ internal sealed partial class RuntimeGame : Game
             GameSave.SaveAsync(SavePath, player.Execution).GetAwaiter().GetResult();
             saveMessage = "Игра сохранена · F8 — загрузить · Enter — продолжить";
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
         { saveMessage = "Не удалось сохранить: " + error.Message; success = false; }
         RefreshInteractions();
         return success;
@@ -565,6 +594,7 @@ internal sealed partial class RuntimeGame : Game
             AfterNextVisibleCharacterCount: afterNextVisibleCharacterCount,
             AfterPreviousVisibleCharacterCount: afterPreviousVisibleCharacterCount,
             Diagnostics: CurrentDiagnostics()) { ActionTrace = actionTrace, SavePath = SavePath,
+                PendingLuaDrawFrames = pendingLuaDrawFrames,
                 Packaged = arguments.Package is not null, WindowTitle = Window.Title,
                 RuntimeLibraryPath = typeof(object).Assembly.Location, AudioSources = audio?.ActiveSources ?? 0, AudioSubmittedBytes = audioBackend.SubmittedBytes, AudioOpenedSources = audioBackend.OpenedSources, AudioMixer = Enum.GetValues<NovellMaker.Core.Audio.AudioGroup>().ToDictionary(g => g, g => audio!.Bus(g)) };
         var options = new JsonSerializerOptions
@@ -597,6 +627,7 @@ internal sealed record RuntimeSmokeReport(
     IReadOnlyList<string> Diagnostics)
 {
     public IReadOnlyList<RuntimeActionTrace> ActionTrace { get; init; } = [];
+    public int PendingLuaDrawFrames { get; init; }
     public string? SavePath { get; init; }
     public bool Packaged { get; init; }
     public string? WindowTitle { get; init; }

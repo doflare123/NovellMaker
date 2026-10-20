@@ -130,6 +130,7 @@ public sealed class ScriptLibraryView : UserControl
 
     private void Changed(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(EditorSession.SelectedScriptDiagnostic)) { status.Text = session?.SelectedScriptDiagnostic; return; }
         if (e.PropertyName is nameof(EditorSession.SelectedScript) or nameof(EditorSession.CanEdit) or nameof(EditorSession.CodeEditorLabel)
             or nameof(EditorSession.SelectedScriptDiagnostic) or nameof(EditorSession.SelectedScriptPath) or nameof(EditorSession.OpenCodeOnCreation)) Refresh();
     }
