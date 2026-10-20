@@ -7,9 +7,10 @@ internal sealed class MonoGameAudioBackend : IAudioBackend
 {
     public long SubmittedBytes { get; private set; }
     public int OpenedSources { get; private set; }
+    public int PausedSources { get; private set; }
     public IAudioSource Open(string path, bool loop)
     {
-        try { var source = new WaveSource(path, loop, count => SubmittedBytes += count); OpenedSources++; return source; }
+        try { var source = new WaveSource(path, loop, count => SubmittedBytes += count, delta => PausedSources += delta); OpenedSources++; return source; }
         catch (Exception e) when (e is NoAudioHardwareException or InstancePlayLimitException)
         { throw new InvalidOperationException("Аудиоустройство недоступно: " + e.Message, e); }
     }
@@ -24,11 +25,13 @@ internal sealed class MonoGameAudioBackend : IAudioBackend
         private int remaining;
         private bool paused;
         private readonly Action<int> submitted;
+        private readonly Action<int> pausedChanged;
         public float Volume { set => sound.Volume = value; }
         public bool Finished => !loop && remaining == 0 && sound.PendingBufferCount == 0;
-        public WaveSource(string path, bool loop, Action<int> submitted)
+        public WaveSource(string path, bool loop, Action<int> submitted, Action<int> pausedChanged)
         {
             this.submitted = submitted;
+            this.pausedChanged = pausedChanged;
             stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             try
             {
@@ -67,10 +70,11 @@ internal sealed class MonoGameAudioBackend : IAudioBackend
         }
         public void Pause(bool value)
         {
+            if (paused != value) pausedChanged(value ? 1 : -1);
             paused = value;
             if (value && sound.State == SoundState.Playing) sound.Pause();
             else if (!value && sound.State == SoundState.Paused) sound.Resume();
         }
-        public void Dispose() { sound.Dispose(); stream.Dispose(); }
+        public void Dispose() { if (paused) { pausedChanged(-1); paused = false; } sound.Dispose(); stream.Dispose(); }
     }
 }

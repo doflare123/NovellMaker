@@ -9,9 +9,8 @@ internal sealed partial class RuntimeGame
 {
     private AudioService? audio;
     private readonly MonoGameAudioBackend audioBackend = new();
-    private bool audioPaused;
-    private bool showMixer;
-    private bool ShouldPauseAudio => audioPaused || showMixer || player.Execution.HasPendingLua || player.Execution.IsPaused;
+    private bool showMixer => screens.ShowMixer;
+    private bool ShouldPauseAudio => screens.Stack.PausesScenario || player.Execution.HasPendingLua || player.Execution.IsPaused;
     private readonly List<(AudioGroup Group, int Change, Rectangle Bounds, RenderedTexture Texture)> mixerButtons = [];
     private void InitializeAudio() => audio = new(player.Execution.Project, arguments.AssetsRoot, arguments.Language, audioBackend);
     private void SynchronizeAudio()
@@ -23,7 +22,7 @@ internal sealed partial class RuntimeGame
         audio.Update();
         if (audio.Diagnostics.Count != diagnosticCount) RefreshTextTextures();
     }
-    private void ToggleMixer() { showMixer = !showMixer; RefreshMixer(); }
+    private void ToggleMixer() { screens.ToggleMixer(); RefreshMixer(); }
     private void RefreshMixer()
     {
         if (audio is null) return;
@@ -44,19 +43,22 @@ internal sealed partial class RuntimeGame
         void Add(AudioGroup g, int change, int x, int y, int w, string label) =>
             mixerButtons.Add((g, change, new Rectangle(x, y, w, 52), DialogueTextureRenderer.RenderButton(GraphicsDevice, label, w, 52)));
     }
-    private bool ClickMixer(Point point)
+    private void ChangeMixer(AudioGroup group, int change)
     {
-        var b = mixerButtons.FirstOrDefault(b => b.Bounds.Contains(point));
-        if (b.Texture is null || b.Change == 0 || audio is null) return false;
-        var bus = audio.Bus(b.Group);
-        audio.SetBus(b.Group, b.Change == 2 ? bus with { Muted = !bus.Muted } : bus with { Volume = Math.Clamp(bus.Volume + b.Change * 0.1f, 0, 1) });
+        if (audio is null) return;
+        var bus = audio.Bus(group);
+        audio.SetBus(group, change == 2 ? bus with { Muted = !bus.Muted } : bus with { Volume = Math.Clamp(bus.Volume + change * 0.1f, 0, 1) });
         RefreshMixer();
-        return true;
     }
     private void DrawMixer(SpriteBatch batch)
     {
         if (!showMixer || pixel is null) return;
         batch.Draw(pixel, new Rectangle(140, 110, 1000, 340), new Color(20, 22, 26));
-        foreach (var b in mixerButtons) batch.Draw(b.Texture.Texture, b.Bounds, Color.White);
+        foreach (var b in mixerButtons)
+        {
+            var focused = RuntimeScreens.MixerCommands.TryGetValue(screens.Stack.Focus?.NodeId ?? Guid.Empty, out var command) &&
+                command.Group == b.Group && command.Change == b.Change;
+            batch.Draw(b.Texture.Texture, b.Bounds, focused ? new Color(160, 215, 255) : Color.White);
+        }
     }
 }

@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Xna.Framework;
 using NovellMaker.Core.Assets;
 using NovellMaker.Core.Characters;
+using NovellMaker.Core.Execution;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Scenes;
 using SkiaSharp;
@@ -134,6 +135,65 @@ public sealed class NativeRuntimeSmokeTests
         Assert.IsTrue(mixer.GetProperty("Voice").GetProperty("Muted").GetBoolean());
         Assert.AreEqual(3, root.GetProperty("AudioOpenedSources").GetInt32());
         Assert.AreEqual(0, root.GetProperty("Diagnostics").GetArrayLength());
+    }
+
+    [TestMethod]
+    public async Task NativeScreenStackPausesTimerMovementAndEveryAudioGroupWithoutReplayingCommands()
+    {
+        if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1") Assert.Inconclusive("Set NOVELLMAKER_NATIVE_SMOKE=1.");
+        var artifacts = Path.Combine(FindRepositoryRoot(), "artifacts", "screenshots");
+        var directory = Path.Combine(artifacts, "screens-fixture");
+        var images = Path.Combine(directory, "Assets", "Images"); Directory.CreateDirectory(images);
+        var fixture = await CreateFixtureAsync(directory, images, false);
+        var store = new JsonProjectStore(); var project = await store.LoadAsync(fixture.ProjectPath);
+        var actor = project.Characters[0]; var scene = project.Scenes[0];
+        scene = scene with { Actions = [
+            new PlaceAction(Guid.NewGuid(), actor.Id, new(0.2, 1, 1, 0)),
+            new ShowAction(Guid.NewGuid(), actor.Id), new MoveAction(Guid.NewGuid(), actor.Id, new(0.8, 1, 1, 0), 4),
+            new TextAction(Guid.NewGuid(), fixture.StartLineId), new WaitAction(Guid.NewGuid(), "timer", 5),
+            new WaitAction(Guid.NewGuid(), "input") ] };
+        await store.SaveAsync(fixture.ProjectPath, project with { Scenes = [scene] });
+        var png = Path.Combine(artifacts, "runtime-screens-pause.png"); var report = Path.ChangeExtension(png, ".json");
+        var plan = Path.Combine(directory, "screens-plan.json");
+        await File.WriteAllTextAsync(plan, """
+            [{"Kind":"tick","Seconds":1},{"Kind":"pause"},{"Kind":"tick","Seconds":20},
+             {"Kind":"click","X":450,"Y":400},{"Kind":"tick","Seconds":20},{"Kind":"back"},
+             {"Kind":"tick","Seconds":20},{"Kind":"click","X":450,"Y":320},{"Kind":"tick","Seconds":1},
+             {"Kind":"pause"},{"Kind":"activate"},{"Kind":"tick","Seconds":1},{"Kind":"pause"}]
+            """);
+        var runtime = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
+        var start = CreateStartInfo(runtime, fixture.ProjectPath, directory, fixture.SceneId, fixture.StartLineId, png, report);
+        start.ArgumentList.Add("--smoke-plan"); start.ArgumentList.Add(plan);
+        using var process = Process.Start(start)!;
+        var stderr = process.StandardError.ReadToEndAsync(); var stdout = process.StandardOutput.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException) { process.Kill(true); await process.WaitForExitAsync(); Assert.Fail("Screen smoke timed out."); }
+        Assert.AreEqual(0, process.ExitCode, await stderr + await stdout);
+        using var json = JsonDocument.Parse(File.ReadAllText(report)); var root = json.RootElement;
+        var trace = root.GetProperty("ActionTrace").EnumerateArray().ToArray();
+        Assert.AreEqual(13, trace.Length);
+        Assert.IsTrue(trace.All(t => t.GetProperty("Success").GetBoolean()));
+        for (var i = 1; i <= 7; i++)
+            Assert.AreEqual(trace[0].GetProperty("State").GetRawText(), trace[i].GetProperty("State").GetRawText(), $"Story mutated at menu step {i}.");
+        Assert.AreEqual(2, trace[3].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(1, trace[5].GetProperty("ScreenCount").GetInt32());
+        for (var i = 1; i <= 6; i++)
+        {
+            Assert.AreEqual(3, trace[i].GetProperty("PausedAudioSources").GetInt32());
+            Assert.AreEqual(trace[1].GetProperty("AudioSubmittedBytes").GetInt64(), trace[i].GetProperty("AudioSubmittedBytes").GetInt64());
+        }
+        Assert.AreEqual(0, trace[7].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(0, trace[7].GetProperty("PausedAudioSources").GetInt32());
+        Assert.AreEqual(0, trace[10].GetProperty("ScreenCount").GetInt32());
+        var state = JsonSerializer.Deserialize<GameState>(trace[11].GetProperty("State"))!;
+        Assert.AreEqual(3d, state.Time); Assert.AreEqual("timer", state.Wait?.Mode);
+        Assert.AreEqual(0.65, state.Placements[actor.Id].X, 1e-9);
+        Assert.IsTrue(trace.All(t => t.GetProperty("AudioOpenedSources").GetInt32() == 3), "Returning must resume existing sources.");
+        Assert.AreEqual(0, root.GetProperty("Diagnostics").GetArrayLength());
+        using var bitmap = SKBitmap.Decode(png);
+        Assert.AreEqual(new SKColor(20, 22, 26), bitmap.GetPixel(370, 210));
+        Assert.IsGreaterThan(50, CountBrightPixels(bitmap, new(400, 300, 880, 352)));
     }
 
     private static ProcessStartInfo CreateStartInfo(

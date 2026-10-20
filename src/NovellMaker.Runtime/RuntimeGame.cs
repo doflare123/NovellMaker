@@ -6,6 +6,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using NovellMaker.Core.Assets;
 using NovellMaker.Core.Execution;
+using NovellMaker.Core.Screens;
 
 namespace NovellMaker.Runtime;
 
@@ -30,6 +31,7 @@ internal sealed partial class RuntimeGame : Game
     private string diagnosticsKey = string.Empty;
     private KeyboardState previousKeyboard;
     private MouseState previousMouse;
+    private bool inputActive;
     private TimeSpan lineElapsed;
     private Guid? initialLineId;
     private Guid? afterNextLineId;
@@ -100,7 +102,9 @@ internal sealed partial class RuntimeGame : Game
 
     protected override void Update(GameTime gameTime)
     {
-        var paused = audioPaused || showMixer || (arguments.SmokeOutputPath is null && !IsActive);
+        var hostActive = arguments.SmokeOutputPath is not null || IsActive;
+        screens.Stack.SetActive(hostActive);
+        var paused = screens.Stack.PausesScenario || !hostActive;
         player.Execution.IsPaused = paused;
         SynchronizeAudio();
         var scenarioTime = player.Execution.State.Time;
@@ -127,37 +131,41 @@ internal sealed partial class RuntimeGame : Game
             }
             if (smokePlan is null) AdvanceSmokeSequence(); else AdvanceActionSmoke();
         }
-        else if (IsActive)
+        else if (IsActive && inputActive)
         {
             var keyboard = Keyboard.GetState();
             var mouse = Mouse.GetState();
             if (Pressed(keyboard, Keys.Escape))
             {
-                Exit();
+                if (!RouteScreen(new(ScreenInputKind.Back))) Exit();
             }
             else if (Pressed(keyboard, Keys.F9)) ToggleMixer();
-            else if (Pressed(keyboard, Keys.P)) { audioPaused = !audioPaused; audio!.Pause(ShouldPauseAudio); RefreshMixer(); }
-            else if (UsesGameState && Pressed(keyboard, Keys.F7)) SaveGame();
-            else if (UsesGameState && Pressed(keyboard, Keys.F8)) LoadGame();
-            else if (!audioPaused && !showMixer && (Pressed(keyboard, Keys.Right) || Pressed(keyboard, Keys.Enter) ||
-                     Pressed(keyboard, Keys.Space)))
+            else if (Pressed(keyboard, Keys.P)) { screens.TogglePause(); RefreshMixer(); }
+            else if (Pressed(keyboard, Keys.Tab)) RouteScreen(new(keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift)
+                ? ScreenInputKind.FocusPrevious : ScreenInputKind.FocusNext));
+            else if (UsesGameState && screens.Stack.Instances.IsEmpty && Pressed(keyboard, Keys.F7)) SaveGame();
+            else if (UsesGameState && screens.Stack.Instances.IsEmpty && Pressed(keyboard, Keys.F8)) LoadGame();
+            else if (Pressed(keyboard, Keys.Enter) || Pressed(keyboard, Keys.Space))
             {
-                ApplyAction(RuntimeAction.Next);
+                if (!RouteScreen(new(ScreenInputKind.Activate))) ApplyAction(RuntimeAction.Next);
             }
-            else if (!audioPaused && !showMixer && Pressed(keyboard, Keys.Left))
+            else if (screens.Stack.Instances.IsEmpty && Pressed(keyboard, Keys.Right)) ApplyAction(RuntimeAction.Next);
+            else if (screens.Stack.Instances.IsEmpty && Pressed(keyboard, Keys.Left))
             {
                 ApplyAction(RuntimeAction.Previous);
             }
-            else if (mouse.LeftButton == ButtonState.Pressed &&
-                     previousMouse.LeftButton == ButtonState.Released)
+            else if (mouse.LeftButton != previousMouse.LeftButton)
             {
                 var letterbox = RuntimeInputMapper.CalculateLetterbox(
                     GraphicsDevice.PresentationParameters.BackBufferWidth,
                     GraphicsDevice.PresentationParameters.BackBufferHeight);
-                if (RuntimeInputMapper.TryMapWindowToLogical(new Point(mouse.X, mouse.Y), letterbox, out var logical))
+                var mapped = RuntimeInputMapper.TryMapWindowToLogical(new Point(mouse.X, mouse.Y), letterbox, out var logical);
+                var down = mouse.LeftButton == ButtonState.Pressed;
+                var consumed = RouteScreen(new(down ? ScreenInputKind.PointerDown : ScreenInputKind.PointerUp,
+                    mapped ? logical.X : -1, mapped ? logical.Y : -1));
+                if (!consumed && down && mapped)
                 {
-                    if (showMixer) { ClickMixer(logical); }
-                    else if (!audioPaused && !ClickLogical(logical) && showNavigationControls && RuntimeInputMapper.HitTestNavigation(
+                    if (!ClickLogical(logical) && showNavigationControls && RuntimeInputMapper.HitTestNavigation(
                         logical,
                         player.Frame.CanPrevious,
                         player.Frame.CanNext) is { } action)
@@ -170,6 +178,8 @@ internal sealed partial class RuntimeGame : Game
         }
         else { previousKeyboard = Keyboard.GetState(); previousMouse = Mouse.GetState(); }
 
+        inputActive = IsActive;
+        player.Execution.IsPaused = screens.Stack.PausesScenario || !hostActive;
         SynchronizeAudio();
         base.Update(gameTime);
     }
@@ -196,6 +206,7 @@ internal sealed partial class RuntimeGame : Game
         DrawNavigationControls(spriteBatch);
         foreach (var button in interactionButtons) spriteBatch.Draw(button.Texture.Texture, button.Bounds, Color.White);
         if (actionHelp is not null) spriteBatch.Draw(actionHelp.Texture, new Vector2(16, 16), Color.White);
+        DrawPause(spriteBatch);
         DrawMixer(spriteBatch);
         spriteBatch.End();
 
@@ -228,6 +239,8 @@ internal sealed partial class RuntimeGame : Game
     protected override void UnloadContent()
     {
         player.Dispose();
+        screens.Stack.Clear();
+        foreach (var texture in pauseTextures) texture.Texture.Dispose();
         audio?.Dispose();
         foreach (var button in mixerButtons) button.Texture.Dispose();
         actionHelp?.Dispose();
@@ -280,7 +293,7 @@ internal sealed partial class RuntimeGame : Game
         if (player.Execution.HasPendingLua) return;
         if (pendingSmokeStep is { } finished)
         {
-            actionTrace.Add(new(finished.Kind, pendingSmokeSuccess, player.Execution.State, player.Frame.Text));
+            actionTrace.Add(CaptureTrace(finished.Kind, pendingSmokeSuccess));
             pendingSmokeStep = null;
             return;
         }
@@ -293,17 +306,39 @@ internal sealed partial class RuntimeGame : Game
         {
             case "tick": player.Tick(TimeSpan.FromSeconds(step.Seconds)); break;
             case "next": success = ApplyAction(RuntimeAction.Next); break;
-            case "click": success = showMixer ? ClickMixer(new Point(step.X, step.Y)) : ClickLogical(new Point(step.X, step.Y)); break;
+            case "click":
+                var consumed = RouteScreen(new(ScreenInputKind.PointerDown, step.X, step.Y));
+                success = RouteScreen(new(ScreenInputKind.PointerUp, step.X, step.Y)) || consumed;
+                if (!success) success = ClickLogical(new Point(step.X, step.Y));
+                break;
             case "mixer": ToggleMixer(); break;
+            case "pause": screens.TogglePause(); break;
+            case "back": success = RouteScreen(new(ScreenInputKind.Back)); break;
+            case "activate": success = RouteScreen(new(ScreenInputKind.Activate)); break;
+            case "tab": success = RouteScreen(new(ScreenInputKind.FocusNext)); break;
             case "save": GameSave.SaveAsync(path, player.Execution).GetAwaiter().GetResult(); break;
-            case "load": player.LoadSave(File.ReadAllText(path)); break;
+            case "load": player.LoadSave(File.ReadAllText(path)); screens.Stack.Clear(); RefreshMixer(); break;
             case "quicksave": success = SaveGame(); break;
             case "quickload": success = LoadGame(); break;
             default: throw new ArgumentException("Неизвестный шаг smoke-плана.");
         }
         RefreshFrameResources(); RefreshTextTextures(); RefreshInteractions();
         if (player.Execution.HasPendingLua) { pendingSmokeStep = step; pendingSmokeSuccess = success; }
-        else actionTrace.Add(new(step.Kind, success, player.Execution.State, player.Frame.Text));
+        else actionTrace.Add(CaptureTrace(step.Kind, success));
+    }
+
+    private RuntimeActionTrace CaptureTrace(string kind, bool success)
+    {
+        player.Execution.IsPaused = screens.Stack.PausesScenario;
+        SynchronizeAudio();
+        return new(kind, success, player.Execution.State, player.Frame.Text)
+        {
+            ScreenCount = screens.Stack.Instances.Length,
+            PausedAudioSources = audioBackend.PausedSources,
+            AudioSources = audio?.ActiveSources ?? 0,
+            AudioOpenedSources = audioBackend.OpenedSources,
+            AudioSubmittedBytes = audioBackend.SubmittedBytes,
+        };
     }
 
     private bool ApplyAction(RuntimeAction action)
@@ -349,6 +384,7 @@ internal sealed partial class RuntimeGame : Game
         try
         {
             player.LoadSave(File.ReadAllText(SavePath));
+            screens.Stack.Clear(); RefreshMixer();
             saveMessage = "Игра загружена · F7 — сохранить · Enter — продолжить";
             lineElapsed = TimeSpan.Zero;
             RefreshFrameResources(); RefreshTextTextures();
@@ -638,4 +674,11 @@ internal sealed record RuntimeSmokeReport(
     public Dictionary<NovellMaker.Core.Audio.AudioGroup, NovellMaker.Core.Audio.AudioBus> AudioMixer { get; init; } = [];
 }
 internal sealed record RuntimeSmokeStep(string Kind, double Seconds = 0, int X = 0, int Y = 0);
-internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState State, string Text);
+internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState State, string Text)
+{
+    public int ScreenCount { get; init; }
+    public int PausedAudioSources { get; init; }
+    public int AudioSources { get; init; }
+    public int AudioOpenedSources { get; init; }
+    public long AudioSubmittedBytes { get; init; }
+}

@@ -139,7 +139,13 @@ public sealed class WindowsExportTests
         var captures = Path.Combine(repo.FullName, "artifacts", "screenshots", "export"); Directory.CreateDirectory(captures);
         var report = Path.Combine(captures, "report.json");
         var plan = Path.Combine(root, "plan.json");
-        await File.WriteAllTextAsync(plan, "[{\"Kind\":\"tick\",\"Seconds\":2},{\"Kind\":\"quicksave\"},{\"Kind\":\"tick\",\"Seconds\":3},{\"Kind\":\"quickload\"},{\"Kind\":\"next\"},{\"Kind\":\"click\",\"X\":650,\"Y\":300},{\"Kind\":\"quicksave\"},{\"Kind\":\"click\",\"X\":500,\"Y\":300},{\"Kind\":\"quickload\"},{\"Kind\":\"click\",\"X\":500,\"Y\":300}]");
+        await File.WriteAllTextAsync(plan, """
+            [{"Kind":"tick","Seconds":2},{"Kind":"quicksave"},{"Kind":"tick","Seconds":3},
+             {"Kind":"quickload"},{"Kind":"next"},{"Kind":"click","X":650,"Y":300},
+             {"Kind":"quicksave"},{"Kind":"click","X":500,"Y":300},{"Kind":"quickload"},{"Kind":"click","X":500,"Y":300},
+             {"Kind":"pause"},{"Kind":"tick","Seconds":40},{"Kind":"click","X":450,"Y":400},
+             {"Kind":"tick","Seconds":40},{"Kind":"back"},{"Kind":"activate"}]
+            """);
         var start = new ProcessStartInfo(Path.Combine(moved, "NovellMaker.Runtime.exe"))
         { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, StandardErrorEncoding = System.Text.Encoding.UTF8, RedirectStandardOutput = true, WindowStyle = ProcessWindowStyle.Hidden };
         start.Environment["DOTNET_ROOT"] = Path.Combine(root, "no-dotnet");
@@ -155,11 +161,16 @@ public sealed class WindowsExportTests
         Assert.AreEqual(0, process.ExitCode, await stderr + await stdout);
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(report));
         var trace = json.RootElement.GetProperty("ActionTrace");
-        Assert.AreEqual(10, trace.GetArrayLength());
+        Assert.AreEqual(16, trace.GetArrayLength());
         Assert.IsTrue(trace.EnumerateArray().All(s => s.GetProperty("Success").GetBoolean()));
         Assert.AreEqual(trace[1].GetProperty("State").GetRawText(), trace[3].GetProperty("State").GetRawText());
         Assert.AreEqual(trace[6].GetProperty("State").GetRawText(), trace[8].GetProperty("State").GetRawText());
         StringAssert.Contains(trace[9].GetProperty("Text").GetString()!, "Ветка успеха");
+        for (var i = 10; i <= 15; i++)
+            Assert.AreEqual(trace[9].GetProperty("State").GetRawText(), trace[i].GetProperty("State").GetRawText(), $"Screen input reached the packaged story at {i}.");
+        Assert.AreEqual(2, trace[12].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(1, trace[14].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(0, trace[15].GetProperty("ScreenCount").GetInt32());
         Assert.AreEqual(0, json.RootElement.GetProperty("Diagnostics").GetArrayLength());
         Assert.IsTrue(json.RootElement.GetProperty("Packaged").GetBoolean());
         Assert.IsGreaterThan(0L, json.RootElement.GetProperty("AudioSubmittedBytes").GetInt64());
