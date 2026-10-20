@@ -3,7 +3,11 @@ using System.Collections.Immutable;
 namespace NovellMaker.Core.Screens;
 
 public sealed record ScreenPolicy(bool Modal = true, bool PauseScenario = true);
-public sealed record ScreenInstance(Guid Id, Guid SessionId, Guid OwnerId, ScreenDefinition Definition, ScreenPolicy Policy);
+public sealed record ScreenInstance(Guid Id, Guid SessionId, Guid OwnerId, ScreenDefinition Definition, ScreenPolicy Policy)
+{
+    public ScreenDefinition Definition { get; internal set; } = Definition;
+    public long Version { get; internal set; }
+}
 public enum ScreenInputKind { PointerDown, PointerUp, FocusNext, FocusPrevious, Activate, Back }
 public readonly record struct ScreenInput(ScreenInputKind Kind, double X = 0, double Y = 0);
 public sealed record ScreenActivation(Guid InstanceId, Guid NodeId);
@@ -61,6 +65,17 @@ public sealed class ScreenStack
 
     /// <summary>Load/new game invalidates every old instance and pressed control.</summary>
     public void Clear() { instances = []; ResetInput(); }
+
+    internal void Commit(ScreenInstance instance, long version, ScreenDefinition definition)
+    {
+        RequireOwned(instance);
+        if (instance.Version != version) throw new InvalidOperationException("Устаревшая версия экрана.");
+        // Text updates must not swallow a press or reset focus on another screen.
+        if (capture?.InstanceId == instance.Id && !definition.Buttons.Any(n => n.Id == capture.NodeId)) capture = null;
+        if (focus?.InstanceId == instance.Id && !definition.Buttons.Any(n => n.Id == focus.NodeId)) focus = null;
+        instance.Definition = definition;
+        instance.Version++;
+    }
 
     public void SetActive(bool value)
     {

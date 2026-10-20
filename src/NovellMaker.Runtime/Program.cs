@@ -13,6 +13,7 @@ internal static class Program
     public static int Main(string[] args)
     {
         if (args.Length == 1 && args[0] == "--lua-worker") return LuaWorkerEntry.Run();
+        if (args.Length == 1 && args[0] == "--screen-lua-worker") return NovellMaker.Core.Screens.Lua.ScreenLuaWorkerEntry.Run();
         return RunGame(args);
     }
 
@@ -37,7 +38,11 @@ internal static class Program
                 arguments.Package is null ? PlaybackMode.AuthorPreview : PlaybackMode.Game);
             using var game = new RuntimeGame(arguments, player, project.DialogueUi.ShowNavigationControls);
             try { game.Run(); }
-            finally { player.DisposeAsync().AsTask().GetAwaiter().GetResult(); } // Shutdown only, outside Update/Draw.
+            finally
+            {
+                game.DisposeScreenLuaAsync().AsTask().GetAwaiter().GetResult();
+                player.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            } // Shutdown only, outside Update/Draw.
             return 0;
         }
         catch (Exception exception)

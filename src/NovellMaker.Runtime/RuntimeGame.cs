@@ -43,6 +43,7 @@ internal sealed partial class RuntimeGame : Game
     private bool smokeWritten;
     private int drawFrames;
     private int pendingLuaDrawFrames;
+    private int pendingScreenLuaDrawFrames;
     private int initialVisibleCharacterCount;
     private bool initialFrameCaptured;
     private int afterNextVisibleCharacterCount;
@@ -102,6 +103,7 @@ internal sealed partial class RuntimeGame : Game
 
     protected override void Update(GameTime gameTime)
     {
+        screens.Poll();
         var hostActive = arguments.SmokeOutputPath is not null || IsActive;
         screens.Stack.SetActive(hostActive);
         var paused = screens.Stack.PausesScenario || !hostActive;
@@ -179,6 +181,8 @@ internal sealed partial class RuntimeGame : Game
         else { previousKeyboard = Keyboard.GetState(); previousMouse = Mouse.GetState(); }
 
         inputActive = IsActive;
+        screens.Poll();
+        if (screens.Scripts?.Diagnostics.IsEmpty == false) RefreshTextTextures();
         player.Execution.IsPaused = screens.Stack.PausesScenario || !hostActive;
         SynchronizeAudio();
         base.Update(gameTime);
@@ -225,8 +229,9 @@ internal sealed partial class RuntimeGame : Game
 
         drawFrames++;
         if (player.Execution.HasPendingLua) pendingLuaDrawFrames++;
+        if (screens.HasPending) pendingScreenLuaDrawFrames++;
         if (arguments.SmokeOutputPath is not null && drawFrames >= 4 &&
-            (smokePlan is null || actionTrace.Count == smokePlan.Length) && !player.Execution.HasPendingLua && !smokeWritten)
+            (smokePlan is null || actionTrace.Count == smokePlan.Length) && !player.Execution.HasPendingLua && !screens.HasPending && !smokeWritten)
         {
             WriteSmokeArtifacts(sceneTarget);
             smokeWritten = true;
@@ -239,7 +244,7 @@ internal sealed partial class RuntimeGame : Game
     protected override void UnloadContent()
     {
         player.Dispose();
-        screens.Stack.Clear();
+        screens.Dispose();
         foreach (var texture in pauseTextures) texture.Texture.Dispose();
         audio?.Dispose();
         foreach (var button in mixerButtons) button.Texture.Dispose();
@@ -262,7 +267,7 @@ internal sealed partial class RuntimeGame : Game
 
     private void AdvanceSmokeSequence()
     {
-        if (player.Execution.HasPendingLua) return;
+        if (player.Execution.HasPendingLua || screens.HasPending) return;
         if (drawFrames >= 1 && !smokeAdvanced)
         {
             smokeNextResult = ApplyAction(RuntimeAction.Next);
@@ -290,7 +295,7 @@ internal sealed partial class RuntimeGame : Game
 
     private void AdvanceActionSmoke()
     {
-        if (player.Execution.HasPendingLua) return;
+        if (player.Execution.HasPendingLua || screens.HasPending) return;
         if (pendingSmokeStep is { } finished)
         {
             actionTrace.Add(CaptureTrace(finished.Kind, pendingSmokeSuccess));
@@ -317,13 +322,13 @@ internal sealed partial class RuntimeGame : Game
             case "activate": success = RouteScreen(new(ScreenInputKind.Activate)); break;
             case "tab": success = RouteScreen(new(ScreenInputKind.FocusNext)); break;
             case "save": GameSave.SaveAsync(path, player.Execution).GetAwaiter().GetResult(); break;
-            case "load": player.LoadSave(File.ReadAllText(path)); screens.Stack.Clear(); RefreshMixer(); break;
+            case "load": player.LoadSave(File.ReadAllText(path)); screens.Reset(); RefreshMixer(); break;
             case "quicksave": success = SaveGame(); break;
             case "quickload": success = LoadGame(); break;
             default: throw new ArgumentException("Неизвестный шаг smoke-плана.");
         }
         RefreshFrameResources(); RefreshTextTextures(); RefreshInteractions();
-        if (player.Execution.HasPendingLua) { pendingSmokeStep = step; pendingSmokeSuccess = success; }
+        if (player.Execution.HasPendingLua || screens.HasPending) { pendingSmokeStep = step; pendingSmokeSuccess = success; }
         else actionTrace.Add(CaptureTrace(step.Kind, success));
     }
 
@@ -384,7 +389,7 @@ internal sealed partial class RuntimeGame : Game
         try
         {
             player.LoadSave(File.ReadAllText(SavePath));
-            screens.Stack.Clear(); RefreshMixer();
+            screens.Reset(); RefreshMixer();
             saveMessage = "Игра загружена · F7 — сохранить · Enter — продолжить";
             lineElapsed = TimeSpan.Zero;
             RefreshFrameResources(); RefreshTextTextures();
@@ -491,7 +496,8 @@ internal sealed partial class RuntimeGame : Game
     }
 
     private IReadOnlyList<string> CurrentDiagnostics() =>
-        player.Frame.Diagnostics.Concat(assetDiagnostics.Values.Order(StringComparer.Ordinal)).Concat(audio?.Diagnostics ?? []).ToArray();
+        player.Frame.Diagnostics.Concat(assetDiagnostics.Values.Order(StringComparer.Ordinal)).Concat(audio?.Diagnostics ?? [])
+            .Concat(screens.Scripts?.Diagnostics ?? []).ToArray();
 
     private void DrawBackground(SpriteBatch batch, ImageAsset? background)
     {
@@ -631,6 +637,9 @@ internal sealed partial class RuntimeGame : Game
             AfterPreviousVisibleCharacterCount: afterPreviousVisibleCharacterCount,
             Diagnostics: CurrentDiagnostics()) { ActionTrace = actionTrace, SavePath = SavePath,
                 PendingLuaDrawFrames = pendingLuaDrawFrames,
+                PendingScreenLuaDrawFrames = pendingScreenLuaDrawFrames,
+                ScreenLuaAppliedBatches = screens.Scripts?.AppliedBatches ?? 0,
+                ScreenLuaDiagnostics = screens.Scripts?.Diagnostics ?? [],
                 Packaged = arguments.Package is not null, WindowTitle = Window.Title,
                 RuntimeLibraryPath = typeof(object).Assembly.Location, AudioSources = audio?.ActiveSources ?? 0, AudioSubmittedBytes = audioBackend.SubmittedBytes, AudioOpenedSources = audioBackend.OpenedSources, AudioMixer = Enum.GetValues<NovellMaker.Core.Audio.AudioGroup>().ToDictionary(g => g, g => audio!.Bus(g)) };
         var options = new JsonSerializerOptions
@@ -664,6 +673,9 @@ internal sealed record RuntimeSmokeReport(
 {
     public IReadOnlyList<RuntimeActionTrace> ActionTrace { get; init; } = [];
     public int PendingLuaDrawFrames { get; init; }
+    public int PendingScreenLuaDrawFrames { get; init; }
+    public int ScreenLuaAppliedBatches { get; init; }
+    public IReadOnlyList<string> ScreenLuaDiagnostics { get; init; } = [];
     public string? SavePath { get; init; }
     public bool Packaged { get; init; }
     public string? WindowTitle { get; init; }

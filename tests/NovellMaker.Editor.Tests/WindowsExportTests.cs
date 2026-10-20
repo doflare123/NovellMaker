@@ -162,6 +162,9 @@ public sealed class WindowsExportTests
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(report));
         var trace = json.RootElement.GetProperty("ActionTrace");
         Assert.AreEqual(16, trace.GetArrayLength());
+        Assert.AreEqual(3, json.RootElement.GetProperty("ScreenLuaAppliedBatches").GetInt32());
+        Assert.IsGreaterThan(0, json.RootElement.GetProperty("PendingScreenLuaDrawFrames").GetInt32());
+        Assert.AreEqual(0, json.RootElement.GetProperty("ScreenLuaDiagnostics").GetArrayLength());
         Assert.IsTrue(trace.EnumerateArray().All(s => s.GetProperty("Success").GetBoolean()));
         Assert.AreEqual(trace[1].GetProperty("State").GetRawText(), trace[3].GetProperty("State").GetRawText());
         Assert.AreEqual(trace[6].GetProperty("State").GetRawText(), trace[8].GetProperty("State").GetRawText());

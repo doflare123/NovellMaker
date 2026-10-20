@@ -20,13 +20,14 @@ internal sealed class LuaWorkerTransport
     };
 
     internal LuaWorkerTransport(Func<ILuaWorkerProcess> start, TimeProvider? clock = null,
-        int maximumWorkers = LuaWorkerClient.MaximumWorkers, int maximumPending = LuaWorkerClient.MaximumPendingRequests)
+        int maximumWorkers = LuaWorkerClient.MaximumWorkers, int maximumPending = LuaWorkerClient.MaximumPendingRequests,
+        SemaphoreSlim? sharedWorkers = null, SemaphoreSlim? sharedCapacity = null)
     {
         this.start = start;
         this.clock = clock ?? TimeProvider.System;
         timeout = TimeSpan.FromMilliseconds(LuaWorkerClient.TimeoutMilliseconds);
-        workers = new(maximumWorkers);
-        capacity = new(checked(maximumWorkers + maximumPending));
+        workers = sharedWorkers ?? new(maximumWorkers);
+        capacity = sharedCapacity ?? new(checked(maximumWorkers + maximumPending));
     }
 
     internal async Task<LuaWorkerResponse> InvokeAsync(LuaWorkerRequest request, CancellationToken cancellationToken = default)

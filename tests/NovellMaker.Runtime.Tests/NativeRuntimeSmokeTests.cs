@@ -173,6 +173,9 @@ public sealed class NativeRuntimeSmokeTests
         using var json = JsonDocument.Parse(File.ReadAllText(report)); var root = json.RootElement;
         var trace = root.GetProperty("ActionTrace").EnumerateArray().ToArray();
         Assert.AreEqual(13, trace.Length);
+        Assert.AreEqual(6, root.GetProperty("ScreenLuaAppliedBatches").GetInt32());
+        Assert.IsGreaterThan(0, root.GetProperty("PendingScreenLuaDrawFrames").GetInt32());
+        Assert.AreEqual(0, root.GetProperty("ScreenLuaDiagnostics").GetArrayLength());
         Assert.IsTrue(trace.All(t => t.GetProperty("Success").GetBoolean()));
         for (var i = 1; i <= 7; i++)
             Assert.AreEqual(trace[0].GetProperty("State").GetRawText(), trace[i].GetProperty("State").GetRawText(), $"Story mutated at menu step {i}.");

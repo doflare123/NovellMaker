@@ -21,13 +21,13 @@ internal sealed class LuaWorkerProcess : ILuaWorkerProcess
     private readonly Process process;
     private LuaWorkerJob? job;
 
-    internal LuaWorkerProcess(string host)
+    internal LuaWorkerProcess(string host, string mode = "--lua-worker")
     {
         var start = new ProcessStartInfo(host) { UseShellExecute = false, RedirectStandardInput = true,
             RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
         if (OperatingSystem.IsWindows()) start.WindowStyle = ProcessWindowStyle.Hidden;
-        start.ArgumentList.Add("--lua-worker");
+        start.ArgumentList.Add(mode);
         start.Environment["DOTNET_GCHeapHardLimit"] = "0x4000000";
         start.Environment["COMPlus_GCHeapHardLimit"] = "0x4000000";
         start.Environment["DOTNET_EnableDiagnostics"] = "0";

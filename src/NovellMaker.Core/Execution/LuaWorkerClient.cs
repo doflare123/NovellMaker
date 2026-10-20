@@ -16,13 +16,14 @@ public static class LuaWorkerClient
     public const int TimeoutMilliseconds = 5000;
     public const int MaximumWorkers = 2;
     public const int MaximumPendingRequests = 32;
-    private static readonly LuaWorkerTransport Transport = new(() => new LuaWorkerProcess(Host()));
+    private static readonly LuaWorkerTransport Transport = new(() => new LuaWorkerProcess(Host()),
+        sharedWorkers: LuaWorkerSlots.Processes, sharedCapacity: LuaWorkerSlots.Requests);
 
     /// <summary>Bounded isolated RPC. Caller cancellation throws; timeout/protocol/process failures return an error and no commands.</summary>
     public static Task<LuaWorkerResponse> InvokeAsync(LuaWorkerRequest request, CancellationToken cancellationToken = default) =>
         Transport.InvokeAsync(request, cancellationToken);
 
-    private static string Host()
+    internal static string Host()
     {
         var executable = OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime";
         foreach (var folder in new[] { AppContext.BaseDirectory, Path.Combine(AppContext.BaseDirectory, "Runtime"), Path.Combine(AppContext.BaseDirectory, "LuaWorker") })
