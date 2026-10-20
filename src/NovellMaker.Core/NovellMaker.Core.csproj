@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="NovellMaker.Core.Tests" />
     <PackageReference Include="MoonSharp" Version="2.0.0" />
   </ItemGroup>
 </Project>

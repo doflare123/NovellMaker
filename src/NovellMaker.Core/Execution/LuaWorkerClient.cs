@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using NovellMaker.Core.Projects;
@@ -15,16 +14,16 @@ public static class LuaWorkerClient
     public const int MaximumRequestBytes = 16 * 1024 * 1024;
     public const int MaximumResponseBytes = 1024 * 1024;
     public const int TimeoutMilliseconds = 5000;
-    private static readonly SemaphoreSlim Slots = new(2);
+    public const int MaximumWorkers = 2;
+    public const int MaximumPendingRequests = 32;
+    private static readonly LuaWorkerTransport Transport = new(() => new LuaWorkerProcess(Host()));
 
-    internal static LuaWorkerResponse Invoke(LuaWorkerRequest request)
-    {
-        if (!Slots.Wait(TimeoutMilliseconds)) return new("Не удалось получить изолированный процесс Lua: таймаут.", []);
-        try { return InvokeAsync(request).GetAwaiter().GetResult(); }
-        catch (Exception error) when (error is IOException or InvalidOperationException or System.ComponentModel.Win32Exception or JsonException or OperationCanceledException)
-        { return new("Изолированный Lua остановлен (лимит памяти/времени или ошибка процесса): " + error.Message, []); }
-        finally { Slots.Release(); }
-    }
+    // Compatibility bridge; runtime integration will stop using this in stage 1.2.
+    internal static LuaWorkerResponse Invoke(LuaWorkerRequest request) => InvokeAsync(request).GetAwaiter().GetResult();
+
+    /// <summary>Bounded isolated RPC. Caller cancellation throws; timeout/protocol/process failures return an error and no commands.</summary>
+    public static Task<LuaWorkerResponse> InvokeAsync(LuaWorkerRequest request, CancellationToken cancellationToken = default) =>
+        Transport.InvokeAsync(request, cancellationToken);
 
     private static string Host()
     {
@@ -35,41 +34,6 @@ public static class LuaWorkerClient
             if (File.Exists(candidate) && File.Exists(Path.Combine(folder, "NovellMaker.Runtime.dll")) && File.Exists(Path.Combine(folder, "NovellMaker.Runtime.runtimeconfig.json"))) return candidate;
         }
         throw new IOException("Не найден поставляемый runtime для изолированного Lua. Пересоберите поставку.");
-    }
-
-    private static async Task<LuaWorkerResponse> InvokeAsync(LuaWorkerRequest request)
-    {
-        using var requestBuffer = new BoundedBuffer(MaximumRequestBytes);
-        JsonSerializer.Serialize(requestBuffer, request);
-        var input = requestBuffer.ToArray();
-        var start = new ProcessStartInfo(Host()) { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true,
-            RedirectStandardError = true, CreateNoWindow = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
-        if (OperatingSystem.IsWindows()) start.WindowStyle = ProcessWindowStyle.Hidden;
-        start.ArgumentList.Add("--lua-worker");
-        // Set before CLR startup; the worker cannot allocate an unbounded managed heap before producing a command.
-        start.Environment["DOTNET_GCHeapHardLimit"] = "0x4000000";
-        start.Environment["COMPlus_GCHeapHardLimit"] = "0x4000000";
-        start.Environment["DOTNET_EnableDiagnostics"] = "0";
-        using var process = Process.Start(start) ?? throw new IOException("Не удалось запустить Lua worker.");
-        using var timeout = new CancellationTokenSource(TimeoutMilliseconds);
-        try
-        {
-            // The child waits on stdin: OS memory limits are installed before any untrusted source is sent.
-            using var job = LuaWorkerJob.Attach(process);
-            var output = ReadBoundedAsync(process.StandardOutput.BaseStream, MaximumResponseBytes, timeout.Token);
-            var errors = ReadBoundedAsync(process.StandardError.BaseStream, 8192, timeout.Token);
-            await process.StandardInput.BaseStream.WriteAsync(input, timeout.Token).ConfigureAwait(false);
-            process.StandardInput.Close();
-            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            var bytes = await output.ConfigureAwait(false);
-            var errorBytes = await errors.ConfigureAwait(false);
-            if (process.ExitCode != 0) return new($"Изолированный Lua завершён аварийно (код {process.ExitCode}); превышение ресурсов или ошибка парсера. Команды отклонены. " + Encoding.UTF8.GetString(errorBytes), []);
-            return JsonSerializer.Deserialize<LuaWorkerResponse>(bytes) ?? new("Пустой ответ Lua worker.", []);
-        }
-        finally
-        {
-            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync().ConfigureAwait(false); }
-        }
     }
 
     internal static async Task<byte[]> ReadBoundedAsync(Stream stream, int maximum, CancellationToken token)
@@ -86,8 +50,12 @@ public static class LuaWorkerClient
         return result.ToArray();
     }
 
-    private sealed class BoundedBuffer(int maximum) : MemoryStream
+    internal sealed class BoundedBuffer(int maximum) : MemoryStream
     {
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        { cancellationToken.ThrowIfCancellationRequested(); Write(buffer.Span); return ValueTask.CompletedTask; }
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        { cancellationToken.ThrowIfCancellationRequested(); Write(buffer, offset, count); return Task.CompletedTask; }
         public override void Write(byte[] buffer, int offset, int count) { Check(count); base.Write(buffer, offset, count); }
         public override void Write(ReadOnlySpan<byte> buffer) { Check(buffer.Length); base.Write(buffer); }
         public override void WriteByte(byte value) { Check(1); base.WriteByte(value); }
