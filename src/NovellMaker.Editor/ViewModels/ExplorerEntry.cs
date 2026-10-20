@@ -7,6 +7,9 @@ public sealed record ExplorerEntry(string Label, string Detail, IReadOnlyList<Ex
     bool ExpandInitially = true, Func<IReadOnlyList<ExplorerEntry>>? ChildLoader = null, bool IsDirectory = false, string GitStatus = "", Guid? CharacterStateId = null,
     Guid? ScriptId = null, bool IsScriptLibrary = false) : INotifyPropertyChanged
 {
+    public bool IsLua => ScriptId is not null || FilePath is { } file && Path.GetExtension(file).Equals(".lua", StringComparison.OrdinalIgnoreCase);
+    public bool IsScene => SceneId is not null;
+    public string IconKind => IsLua ? "lua" : IsScene ? "scene" : IsFolder ? "folder" : "file";
     public string FolderName => Label.TrimEnd('/');
     public IEnumerable<ExplorerEntry> Folders => Items.Where(entry => entry.IsFolder);
     private bool isExpanded = ExpandInitially;

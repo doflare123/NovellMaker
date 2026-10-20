@@ -14,6 +14,8 @@ public sealed partial class EditorSession
     private readonly Dictionary<Guid, string> scriptDiagnostics = [];
     private readonly Dictionary<Guid, string> checkedScriptSources = [];
     public string CodeEditorLabel => codeEditor.Executable is { } executable ? Path.GetFileNameWithoutExtension(executable) : "Системное приложение для .lua";
+    public bool OpenCodeOnCreation => codeEditor.OpenOnCreation;
+    public Task SetOpenCodeOnCreationAsync(bool value) => RunAsync(() => { codeEditor.OpenOnCreation = value; Changed(nameof(OpenCodeOnCreation)); return Task.CompletedTask; });
     public string SelectedScriptPath => SelectedScript is { } script && ProjectDirectory is { } root ? Path.Combine(root, "Scripts", script.Id.ToString("N") + ".lua") : "Сохраните проект для работы с файлами Lua.";
     public string SelectedScriptDiagnostic => SelectedScriptId is { } id ? scriptDiagnostics.GetValueOrDefault(id, "Ещё не проверен") : "Выберите скрипт.";
 
@@ -29,7 +31,9 @@ public sealed partial class EditorSession
         codeEditor.Configure(null); Changed(nameof(CodeEditorLabel)); return Task.CompletedTask;
     });
 
-    public Task OpenScriptExternallyAsync(Guid? id = null) => RunAsync(async () =>
+    public Task OpenScriptExternallyAsync(Guid? id = null) => RunAsync(() => OpenScriptExternallyCoreAsync(id));
+
+    private async Task OpenScriptExternallyCoreAsync(Guid? id = null)
     {
         if (project is null) return;
         if (id is not null) OpenScriptLibrary(id);
@@ -40,13 +44,16 @@ public sealed partial class EditorSession
         RefreshExternalScriptsCore();
         codeEditor.Open(ScriptFiles.Resolve(ProjectDirectory!, script.Id));
         Log("Скрипт открыт в «" + CodeEditorLabel + "». Сохранения файла проверяются автоматически.");
-    });
-
-    public async Task CreateAndOpenScriptAsync()
-    {
-        AddScript();
-        await OpenScriptExternallyAsync();
     }
+
+    public Task CreateAndOpenScriptAsync() => RunAsync(async () =>
+    {
+        if (project is null) return;
+        var name = await dialogs.EditLuaNameAsync(NextScriptName());
+        if (string.IsNullOrWhiteSpace(name)) return;
+        AddScriptCore(name.Trim());
+        if (OpenCodeOnCreation) await OpenScriptExternallyCoreAsync();
+    });
 
     public Task OpenInlineScriptExternallyAsync(Guid sceneId, Guid actionId) => RunAsync(async () =>
     {

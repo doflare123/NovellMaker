@@ -14,6 +14,9 @@ public sealed partial class ProjectFolderView : UserControl, IDisposable
     public ProjectFolderView()
     {
         InitializeComponent();
+        var dragTiles = this.FindControl<ListBox>("FolderTiles")!;
+        ScriptDragDrop.Source(dragTiles, () => session);
+        ScriptDragDrop.Destination(dragTiles, () => session, e => ScriptDragDrop.Entry(e.Source)?.SceneId is { } id ? new(id, null, NovellMaker.Core.Scenes.ScriptPhase.SceneStart) : null);
         this.FindControl<GridSplitter>("FolderNavigationSplitter")!.PointerPressed += (_, _) => navigationResized = true;
         SizeChanged += (_, _) =>
         {
@@ -57,6 +60,8 @@ public sealed partial class ProjectFolderView : UserControl, IDisposable
     }
     private async void TileKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.Key == Key.F2 && Browser?.SelectedTile?.Entry.ScriptId is { } scriptId && session is not null)
+        { e.Handled = true; await session.RenameScriptAsync(scriptId); return; }
         if (e.Key == Key.Enter && Browser?.SelectedTile is { } tile) { Browser.Open(tile.Entry); e.Handled = true; }
         else if (e.Key == Key.Delete && Browser?.SelectedTile is { } selected)
         { e.Handled = true; var focus = e.Source as InputElement; if (session is not null) await session.DeleteExplorerEntryAsync(selected.Entry); focus?.Focus(); }

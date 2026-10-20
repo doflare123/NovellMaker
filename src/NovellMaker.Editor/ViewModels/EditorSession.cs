@@ -25,7 +25,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
     private string status = "Создайте или откройте проект.";
     private string gitSummary = "Git: проект не открыт";
 
-    public EditorSession(IProjectStore store, IEditorDialogs dialogs, IGitStatusService git, IImageAssetService? imageAssets = null, IPreviewService? previewService = null, IExternalCodeEditor? codeEditor = null)
+    public EditorSession(IProjectStore store, IEditorDialogs dialogs, IGitStatusService git, IImageAssetService? imageAssets = null, IPreviewService? previewService = null, IExternalCodeEditor? codeEditor = null, RecentProjectsStore? recentProjects = null)
     {
         this.store = store;
         this.dialogs = dialogs;
@@ -33,6 +33,8 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         this.imageAssets = imageAssets ?? new ImageAssetService();
         this.previewService = previewService ?? new PreviewService();
         this.codeEditor = codeEditor ?? new ExternalCodeEditor();
+        recentProjectsStore = recentProjects ?? new RecentProjectsStore(dialogs is EditorDialogs ? RecentProjectsStore.ProfilePath : null);
+        foreach (var recent in recentProjectsStore.Read()) RecentProjects.Add(recent);
         NewCommand = new(NewProjectAsync, () => !IsBusy);
         OpenCommand = new(OpenProjectAsync, () => !IsBusy);
         SaveCommand = new(() => SaveAsync(), () => !IsBusy && HasProject && IsNameValid && AreDocumentsValid);
@@ -99,6 +101,11 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
     {
         var path = await dialogs.PickOpenProjectAsync();
         if (path is null) return;
+        await OpenProjectCoreAsync(path);
+    });
+
+    private async Task OpenProjectCoreAsync(string path)
+    {
         // Validate the candidate before asking to discard a working project.
         await store.LoadAsync(path);
         if (!await MayLeaveProjectAsync()) return;
@@ -106,9 +113,10 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         var loaded = await store.LoadAsync(path);
         SetProject(loaded, Path.GetFullPath(path), saved: true);
         InitializeScriptFiles();
+        RememberProject();
         Log("Проект открыт.");
         await UpdateGitAsync();
-    });
+    }
 
     public Task SaveAsync(bool saveAs = false) => RunAsync(async () => { await SaveCoreAsync(saveAs); });
 
@@ -195,6 +203,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         EndEditGroup();
         NotifyProjectChanged();
         Log("Проект сохранён.");
+        RememberProject();
         await UpdateGitAsync();
         return true;
     }

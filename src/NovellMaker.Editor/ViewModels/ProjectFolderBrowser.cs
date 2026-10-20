@@ -63,6 +63,7 @@ public sealed class ProjectFolderBrowser : INotifyPropertyChanged, IDisposable
     }
 
     private static string Key(ExplorerEntry entry) => entry.FilePath is { } file ? "file:" + file :
+        entry.ScriptId is { } script ? $"script:{script}" :
         entry.SceneId is { } scene ? $"scene:{scene}:{entry.IsFolder}" :
         entry.CharacterId is { } character ? $"character:{character}:{entry.IsFolder}:{(entry.IsFolder ? "" : entry.Label)}" : entry.Label;
     private string[] Address() => path.Skip(1).Select(Key).ToArray();

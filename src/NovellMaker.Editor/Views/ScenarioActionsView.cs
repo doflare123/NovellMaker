@@ -41,6 +41,8 @@ public sealed class ScenarioActionsView : UserControl
     public ScenarioActionsView(bool propertiesOnly, bool actionOnly = false)
     {
         PropertiesOnly = propertiesOnly;
+        ToolTip.SetTip(this, "Перетащите Lua-скрипт из обозревателя, чтобы прикрепить его к выбранному событию.");
+        ScriptDragDrop.Destination(this, () => document?.Session, _ => Scene is { } s && anchors.SelectedItem is Anchor a && phases.SelectedItem is Phase phase ? new(s.Id, a.LineId, phase.Value) : null);
         var root = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
         var top = new StackPanel { Spacing = 6 };
         // Explanations belong in tooltips, not a permanent paragraph above every event.
@@ -51,24 +53,31 @@ public sealed class ScenarioActionsView : UserControl
         else Grid.SetColumn(phases, 2);
         scope.Children.Add(phases); top.Children.Add(scope);
         string[] kinds = ["Двигать персонажа", "Показать персонажа", "Скрыть персонажа", "Сменить состояние", "Разместить персонажа", "Ожидать", "Предложить выбор", "Перейти к фразе", "Записать переменную", "Проверить условие", "Добавить предмет"];
-        var menu = new ContextMenu();
-        var addMenu = new MenuItem { Header = "Добавить действие" };
-        for (var i = 0; i < kinds.Length; i++)
+        ContextMenu CreateMenu()
         {
-            var index = i; var item = new MenuItem { Header = kinds[i] };
-            item.Click += (_, _) => Add(index); addMenu.Items.Add(item);
+            var menu = new ContextMenu();
+            var addMenu = new MenuItem { Header = "Добавить действие" };
+            for (var i = 0; i < kinds.Length; i++)
+            {
+                var index = i; var item = new MenuItem { Header = kinds[i] };
+                item.Click += (_, _) => Add(index); addMenu.Items.Add(item);
+            }
+            menu.Items.Add(addMenu);
+            var lua = new MenuItem { Header = "Создать Lua-скрипт…", Name = "CreatePhraseLuaMenu" }; lua.Click += (_, _) => Add(11); menu.Items.Add(lua);
+            var call = new MenuItem { Header = "Вызвать существующий скрипт" }; call.Click += (_, _) => Add(12); menu.Items.Add(call);
+            var delete = new MenuItem { Header = "Удалить" }; delete.Click += async (_, _) =>
+            { if (Scene is { } s && document is not null && selectedId is { } id) await document.Session.DeleteActionAsync(s.Id, id); }; menu.Items.Add(delete);
+            var up = new MenuItem { Header = "Выше" }; up.Click += (_, _) => Move(-1); menu.Items.Add(up);
+            var down = new MenuItem { Header = "Ниже" }; down.Click += (_, _) => Move(1); menu.Items.Add(down);
+            var properties = new MenuItem { Header = "Свойства действия" };
+            properties.Click += (_, _) => { if (selectedId is { } id) document?.Session.InspectAction(id); }; menu.Items.Add(properties);
+            return menu;
         }
-        menu.Items.Add(addMenu);
-        var lua = new MenuItem { Header = "Создать Lua-скрипт…", Name = "CreatePhraseLuaMenu" }; lua.Click += (_, _) => Add(11); menu.Items.Add(lua);
-        var call = new MenuItem { Header = "Вызвать существующий скрипт" }; call.Click += (_, _) => Add(12); menu.Items.Add(call);
-        var delete = new MenuItem { Header = "Удалить" }; delete.Click += async (_, _) =>
-        { if (Scene is { } s && document is not null && selectedId is { } id) await document.Session.DeleteActionAsync(s.Id, id); }; menu.Items.Add(delete);
-        var up = new MenuItem { Header = "Выше" }; up.Click += (_, _) => Move(-1); menu.Items.Add(up);
-        var down = new MenuItem { Header = "Ниже" }; down.Click += (_, _) => Move(1); menu.Items.Add(down);
-        list.ContextMenu = menu;
-        ContextMenu = menu;
+        list.ContextMenu = CreateMenu();
+        ContextMenu = CreateMenu();
         var add = new Button { Name = "ScriptEventMenu", Content = "Добавить…", HorizontalAlignment = HorizontalAlignment.Left };
-        add.Click += (_, _) => menu.Open(add);
+        add.ContextMenu = CreateMenu();
+        add.Click += (_, _) => add.ContextMenu.Open(add);
         top.Children.Add(add);
         DockPanel.SetDock(top, Dock.Top); root.Children.Add(top);
         DockPanel.SetDock(error, Dock.Bottom); root.Children.Add(error);
@@ -98,6 +107,7 @@ public sealed class ScenarioActionsView : UserControl
             if (selectedId is { } id) document?.Session.InspectAction(id);
             BuildForm();
         };
+        list.PointerReleased += (_, _) => { if (selectedId is { } id) document?.Session.InspectAction(id); };
         DataContextChanged += (_, _) =>
         {
             if (document is not null) document.PropertyChanged -= Changed;
@@ -345,6 +355,12 @@ public sealed class ScenarioActionsView : UserControl
             return;
         }
         if (kind == 12 && project.Scripts.IsEmpty) { error.Text = "Сначала создайте скрипт через «Ресурсы → Lua-скрипты»."; return; }
+        if (kind == 12)
+        {
+            var chosenAnchor = (Anchor)anchors.SelectedItem!;
+            _ = document.Session.AttachExistingScriptAsync(scene.Id, chosenAnchor.LineId, ((Phase)phases.SelectedItem!).Value);
+            return;
+        }
         ScenarioAction action = kind switch
         {
             0 => new MoveAction(id, actor?.Id ?? Guid.Empty, new(0.75, 1, 1, 0), 1),

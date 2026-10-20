@@ -35,6 +35,7 @@ public sealed partial class MainWindow : Window
         WorkspaceLayout.Register("messages", "Сообщения", contents[3]);
         WorkspaceLayout.Register("scene", "Экран сцены", contents[4]);
         WorkspaceLayout.Reset();
+        Session.PropertyChanged += ShowInspectedProperties;
         var layoutPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovellMaker", "workspace.json");
         if (session is null && File.Exists(layoutPath))
         {
@@ -45,6 +46,8 @@ public sealed partial class MainWindow : Window
         AddHandler(LostFocusEvent, (_, _) => Session.EndEditGroup(), RoutingStrategies.Bubble);
         this.FindControl<TreeView>("ProjectExplorer")!.AddHandler(KeyDownEvent, ExplorerKeyDown, RoutingStrategies.Tunnel);
         var explorer = this.FindControl<TreeView>("ProjectExplorer")!;
+        ScriptDragDrop.Source(explorer, () => Session);
+        ScriptDragDrop.Destination(explorer, () => Session, e => ScriptDragDrop.Entry(e.Source)?.SceneId is { } id ? new(id, null, NovellMaker.Core.Scenes.ScriptPhase.SceneStart) : null);
         explorer.ContextMenu = ScriptExplorerMenu.Create(Session, () => explorer.SelectedItem as ExplorerEntry);
         explorer.DoubleTapped += async (_, _) =>
         {
@@ -60,6 +63,7 @@ public sealed partial class MainWindow : Window
         Closing += OnClosing;
         Closed += (_, _) =>
         {
+            Session.PropertyChanged -= ShowInspectedProperties;
             if (session is null)
             {
                 try
@@ -82,6 +86,12 @@ public sealed partial class MainWindow : Window
 
     private void ResetWorkspaceClicked(object? sender, RoutedEventArgs args) => WorkspaceLayout.Reset();
 
+    private void ShowInspectedProperties(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (Session.HasProject && e.PropertyName == nameof(EditorSession.InspectorTarget) && !WorkspaceLayout.IsVisible("information"))
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => { if (Session.HasProject) WorkspaceLayout.Show("information"); });
+    }
+
     private void ExitClicked(object? sender, RoutedEventArgs args) => Close();
 
     private void ExplorerSelectionChanged(object? sender, SelectionChangedEventArgs args)
@@ -99,6 +109,8 @@ public sealed partial class MainWindow : Window
 
     private async void ExplorerKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.Key == Key.F2 && sender is TreeView { SelectedItem: ExplorerEntry { ScriptId: { } scriptId } })
+        { e.Handled = true; await Session.RenameScriptAsync(scriptId); return; }
         if (e.Key != Key.Delete || e.Source is Control source && source.GetSelfAndVisualAncestors().OfType<TextBox>().Any()) return;
         if (sender is TreeView { SelectedItem: ExplorerEntry entry })
         {

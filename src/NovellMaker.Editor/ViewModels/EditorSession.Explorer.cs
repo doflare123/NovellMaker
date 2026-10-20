@@ -61,6 +61,7 @@ public sealed partial class EditorSession
         {
             var old = previous.Children.FirstOrDefault(entry =>
                 child.SceneId is { } sceneId ? entry.SceneId == sceneId && entry.IsDirectory == child.IsDirectory :
+                child.ScriptId is { } scriptId ? entry.ScriptId == scriptId :
                 child.CharacterId is { } characterId && child.IsDirectory ? entry.CharacterId == characterId && entry.IsDirectory :
                 entry.Label == child.Label);
             if (old is not null && !ReferenceEquals(child, old)) PreserveFolderExpansion(child, old);
@@ -90,7 +91,7 @@ public sealed partial class EditorSession
                 var badge = change is null ? "" : $"{change.IndexStatus}{change.WorkTreeStatus}  ";
                 var script = project?.Scripts.FirstOrDefault(s => string.Equals(Path.Combine(ProjectDirectory!, "Scripts", s.Id.ToString("N") + ".lua"), fullPath,
                     OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
-                result.Add(new ExplorerEntry(badge + info.Name + (isFolder ? "/" : ""),
+                result.Add(new ExplorerEntry(badge + (script?.Name ?? info.Name) + (isFolder ? "/" : ""),
                     fullPath + (isLink ? " (ссылка; обход отключён)" : ""), [], ImageAssetId: image?.Id,
                     FilePath: fullPath, IsProjectSettings: fullPath == projectPath, ExpandInitially: false, IsDirectory: isFolder,
                     ChildLoader: isFolder && !isLink ? () => ReadProjectDirectory(fullPath) : null, GitStatus: badge.Trim(), ScriptId: script?.Id));

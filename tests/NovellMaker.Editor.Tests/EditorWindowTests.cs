@@ -33,6 +33,169 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task StandardActionParametersAndExistingScriptReferenceCanBeChanged() => WithUi(async () =>
+    {
+        using var session = CreateSession(out var dialogs, out _); var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); session.AddScene(); var scene = session.ActiveScene!; scene.AddLine(); scene.SelectedSection = 4;
+        Dispatcher.UIThread.RunJobs();
+        var view = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => !v.PropertiesOnly);
+        var menu = Find<Button>(view, "ScriptEventMenu").ContextMenu!;
+        menu.Items.OfType<MenuItem>().First().Items.OfType<MenuItem>().Single(m => Equals(m.Header, "Ожидать"))
+            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        Dispatcher.UIThread.RunJobs();
+        var properties = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
+        properties.GetVisualDescendants().OfType<NumericUpDown>().Single().Value = 4;
+        Click(window, Find<Button>(properties, "ApplyScriptBlock"));
+        Assert.AreEqual(4d, ((NovellMaker.Core.Execution.WaitAction)session.Project!.Scenes[0].ScriptBlocks.Single().Action).Seconds);
+        window.WorkspaceLayout.Hide("information"); Dispatcher.UIThread.RunJobs();
+        view = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => !v.PropertiesOnly);
+        Click(window, Find<ListBox>(view, "ScriptBlocks").GetVisualDescendants().OfType<ListBoxItem>().Single());
+        Assert.IsTrue(window.WorkspaceLayout.IsVisible("information"));
+        session.AddScript(); var first = session.SelectedScript!.Id; session.AddScript(); var second = session.SelectedScript!.Id;
+        dialogs.ScriptChoice = second;
+        await session.AttachExistingScriptAsync(scene.Id, scene.SelectedLine!.Id, NovellMaker.Core.Scenes.ScriptPhase.AfterLine);
+        Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(second, ((NovellMaker.Core.Execution.RunScriptAction)session.Project.Scenes[0].ScriptBlocks.Last().Action).ScriptId);
+        properties = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
+        var resource = properties.GetVisualDescendants().OfType<ComboBox>().Last(); resource.SelectedIndex = 0;
+        Click(window, Find<Button>(properties, "ApplyScriptBlock"));
+        Assert.AreEqual(first, ((NovellMaker.Core.Execution.RunScriptAction)session.Project.Scenes[0].ScriptBlocks.Last().Action).ScriptId);
+        var before = session.Project; dialogs.CancelScriptChoice = true;
+        await session.AttachExistingScriptAsync(scene.Id, scene.SelectedLine.Id, NovellMaker.Core.Scenes.ScriptPhase.DuringLine);
+        Assert.AreSame(before, session.Project); Capture(window, "editor-action-properties.png"); window.Close();
+    });
+
+    [TestMethod]
+    public Task StartPageSurvivesHiddenDocumentsAndOpensPersistentRecentProject() => WithUi(async () =>
+    {
+        var root = Path.Combine(Path.GetTempPath(), "NovellMaker.StartPage", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            var dialogs = new UiDialogs { SavePath = Path.Combine(root, "story.novell"), Decision = UnsavedChangesDecision.Discard };
+            var recents = new RecentProjectsStore(Path.Combine(root, "recent.json"));
+            using var session = new EditorSession(new JsonProjectStore(), dialogs, new UiGit(), codeEditor: dialogs.CodeEditor, recentProjects: recents);
+            var window = CreateWindow(session); window.Show(); window.WorkspaceLayout.Hide("documents"); Dispatcher.UIThread.RunJobs();
+            Assert.IsTrue(Find<StartPage>(window, "StartPage").IsVisible);
+            Click(window, Find<Button>(window, "StartNewProjectButton"));
+            await session.SaveAsync(); await session.CloseProjectAsync(); Dispatcher.UIThread.RunJobs();
+            Assert.IsTrue(Find<StartPage>(window, "StartPage").IsVisible);
+            Assert.HasCount(1, recents.Read());
+            var recent = Find<ItemsControl>(window, "RecentProjectsList").GetVisualDescendants().OfType<Button>().Single();
+            Click(window, recent); await UntilAsync(() => session.HasProject && !session.IsBusy);
+            Assert.AreEqual(dialogs.SavePath, session.ProjectPath);
+            await session.CloseProjectAsync(); Dispatcher.UIThread.RunJobs(); Capture(window, "editor-start-page.png"); window.Close();
+        }
+        finally { Directory.Delete(root, true); }
+    });
+
+    [TestMethod]
+    public Task ExistingScriptPickerRequiresChoiceAndSupportsCancel() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
+        var scripts = new[] { NovellMaker.Core.Execution.LuaScriptAsset.Create("one.lua"), NovellMaker.Core.Execution.LuaScriptAsset.Create("two.lua") };
+        var result = new EditorDialogs(window).PickScriptAsync(scripts); Dispatcher.UIThread.RunJobs();
+        var dialog = window.OwnedWindows.Single(); var picker = Find<ListBox>(dialog, "ChooseLuaScript");
+        Assert.AreEqual(-1, picker.SelectedIndex); Assert.IsFalse(Find<Button>(dialog, "ConfirmLuaScript").IsEnabled);
+        picker.SelectedIndex = 1; Click(dialog, Find<Button>(dialog, "ConfirmLuaScript"));
+        Assert.AreEqual(scripts[1].Id, await result);
+        result = new EditorDialogs(window).PickScriptAsync(scripts); Dispatcher.UIThread.RunJobs(); dialog = window.OwnedWindows.Single();
+        dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null); Assert.IsNull(await result); window.Close();
+    });
+
+    [TestMethod]
+    public Task DroppingScriptAttachesToPhraseAndRejectsForeignProject() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); session.AddScene(); var scene = session.ActiveScene!; scene.AddLine(); session.AddScript(); var script = session.SelectedScript!;
+        session.InspectPhrase(); Dispatcher.UIThread.RunJobs();
+        var target = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
+        using var data = new DataTransfer(); data.Add(DataTransferItem.CreateText(ScriptDragDrop.Encode(session.Project!.Id, script.Id)));
+        target.RaiseEvent(new DragEventArgs(DragDrop.DropEvent, data, target, default, KeyModifiers.None));
+        Dispatcher.UIThread.RunJobs();
+        var block = session.Project.Scenes[0].ScriptBlocks.Single();
+        Assert.AreEqual(scene.SelectedLine!.Id, block.LineId); Assert.AreEqual(NovellMaker.Core.Scenes.ScriptPhase.DuringLine, block.Phase);
+        Assert.AreEqual(script.Id, ((NovellMaker.Core.Execution.RunScriptAction)block.Action).ScriptId);
+        Assert.IsNull(ScriptDragDrop.Decode(ScriptDragDrop.Encode(Guid.NewGuid(), script.Id), session));
+        session.Undo(); Assert.IsEmpty(session.Project.Scenes[0].ScriptBlocks); Dispatcher.UIThread.RunJobs();
+        var tree = Find<TreeView>(window, "ProjectExplorer");
+        var sceneItem = tree.GetVisualDescendants().OfType<TreeViewItem>().Single(t => t.DataContext is ExplorerEntry e && e.SceneId == scene.Id);
+        sceneItem.RaiseEvent(new DragEventArgs(DragDrop.DropEvent, data, sceneItem, default, KeyModifiers.None));
+        Assert.AreEqual(NovellMaker.Core.Scenes.ScriptPhase.SceneStart, session.Project.Scenes[0].ScriptBlocks.Single().Phase);
+        session.Undo(); scene.SelectedSection = 0; Dispatcher.UIThread.RunJobs();
+        var phraseItem = Find<ListBox>(window, "DialogueLines").GetVisualDescendants().OfType<ListBoxItem>().Single();
+        phraseItem.RaiseEvent(new DragEventArgs(DragDrop.DropEvent, data, phraseItem, default, KeyModifiers.None));
+        Assert.AreEqual(scene.SelectedLine.Id, session.Project.Scenes[0].ScriptBlocks.Single().LineId);
+        Capture(window, "editor-script-attachment.png"); window.Close();
+    });
+
+    [TestMethod]
+    public Task ScriptNameWithoutExtensionKeepsResourceIdentityAndIcon() => WithUi(async () =>
+    {
+        using var session = CreateSession(out var dialogs, out _); dialogs.CodeEditor.OpenOnCreation = false;
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        await session.CreateAndOpenScriptAsync(); Dispatcher.UIThread.RunJobs(); var script = session.SelectedScript!;
+        Find<TextBox>(window, "LuaScriptName").Text = "intro"; Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual("intro", session.SelectedScript!.Name);
+        var entry = session.Explorer[0].Items.SelectMany(e => e.Items).Single(e => e.ScriptId == script.Id);
+        Assert.AreEqual("lua", entry.IconKind); Assert.IsEmpty(dialogs.CodeEditor.Opened);
+        using var browser = new ProjectFolderBrowser(session);
+        browser.Navigate(browser.Roots[0].Items.Single(e => e.IsScriptLibrary));
+        browser.SelectedTile = browser.Tiles.Single(); session.UpdateScript(session.SelectedScript with { Name = "renamed" });
+        Assert.AreEqual(script.Id, browser.SelectedTile!.Entry.ScriptId);
+        Assert.AreEqual("scene", new ExplorerEntry("Сцена", "", [], SceneId: Guid.NewGuid()).IconKind);
+        Assert.AreEqual("file", new ExplorerEntry("readme.txt").IconKind); window.Close();
+    });
+
+    [TestMethod]
+    public Task LuaNameDialogShowsSuggestedNameAcceptsRenameAndCancels() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _);
+        var window = CreateWindow(session); window.Show();
+        var dialogs = new EditorDialogs(window);
+        var result = dialogs.EditLuaNameAsync("script_1.lua"); Dispatcher.UIThread.RunJobs();
+        var dialog = window.OwnedWindows.Single();
+        var input = Find<TextBox>(dialog, "LuaNameInput");
+        Assert.AreEqual("script_1.lua", input.Text); Assert.IsTrue(input.IsFocused);
+        Assert.AreEqual("script_1", input.SelectedText);
+        input.Text = "  "; Dispatcher.UIThread.RunJobs(); Assert.IsFalse(Find<Button>(dialog, "AcceptLuaName").IsEnabled);
+        input.Text = "opening.lua"; Click(dialog, Find<Button>(dialog, "AcceptLuaName"));
+        Assert.AreEqual("opening.lua", await result);
+        result = dialogs.EditLuaNameAsync("opening.lua"); Dispatcher.UIThread.RunJobs(); dialog = window.OwnedWindows.Single();
+        dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        Assert.IsNull(await result); window.Close();
+    });
+
+    [TestMethod]
+    public Task PhraseAddButtonOpensMenuAndAddsActionWithoutLosingDocument() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _);
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        var scene = session.ActiveScene!; scene.AddLine(); scene.LineText = "Текст"; Dispatcher.UIThread.RunJobs();
+        Click(window, Find<Button>(window, "OpenPhraseScriptButton"));
+        var view = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
+        var add = Find<Button>(view, "ScriptEventMenu");
+        Click(window, add);
+        var menu = add.ContextMenu!;
+        Assert.IsTrue(menu.IsOpen);
+        var submenu = menu.Items.OfType<MenuItem>().First();
+        submenu.Items.OfType<MenuItem>().Single(m => Equals(m.Header, "Ожидать"))
+            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        menu.Close(); Dispatcher.UIThread.RunJobs();
+        Assert.AreSame(scene, session.SelectedDocument);
+        Assert.AreEqual("Текст", scene.LineText);
+        Assert.IsInstanceOfType<NovellMaker.Core.Execution.WaitAction>(session.Project!.Scenes[0].ScriptBlocks.Single().Action);
+        scene.SelectedSection = 4; Dispatcher.UIThread.RunJobs();
+        view = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => !v.PropertiesOnly);
+        add = Find<Button>(view, "ScriptEventMenu"); Click(window, add);
+        menu = add.ContextMenu!; Assert.IsTrue(menu.IsOpen);
+        menu.Items.OfType<MenuItem>().First().Items.OfType<MenuItem>().Single(m => Equals(m.Header, "Ожидать"))
+            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        menu.Close(); Dispatcher.UIThread.RunJobs();
+        Assert.HasCount(2, session.Project!.Scenes[0].ScriptBlocks);
+        window.Close();
+    });
+
+    [TestMethod]
     public Task CreatingLuaFromPhrasePropertiesKeepsDocumentAndUnsavedText() => WithUi(async () =>
     {
         using var session = CreateSession(out var dialogs, out _);
@@ -1211,6 +1374,9 @@ public sealed class EditorWindowTests
 
     private sealed class UiDialogs : IEditorDialogs
     {
+        public Guid? ScriptChoice { get; set; }
+        public bool CancelScriptChoice { get; set; }
+        public Task<Guid?> PickScriptAsync(IReadOnlyList<NovellMaker.Core.Execution.LuaScriptAsset> scripts) => Task.FromResult(CancelScriptChoice ? null : ScriptChoice ?? scripts.FirstOrDefault()?.Id);
         public UiCodeEditor CodeEditor { get; } = new();
         public Task<string?> PickCodeEditorAsync() => Task.FromResult<string?>("C:/Fixture/FixtureEditor.exe");
         public int SavePickerCalls { get; private set; }
@@ -1241,6 +1407,7 @@ public sealed class EditorWindowTests
 
     private sealed class UiCodeEditor : IExternalCodeEditor
     {
+        public bool OpenOnCreation { get; set; } = true;
         public string? Executable { get; private set; }
         public List<string> Opened { get; } = [];
         public void Configure(string? executable) => Executable = executable;

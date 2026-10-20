@@ -12,6 +12,71 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ExternalScriptTests
 {
     [TestMethod]
+    public void OpenOnCreationIsOffByDefaultAndPersistsIndependentlyOfApplication()
+    {
+        using var root = new TestRoot(); var path = Path.Combine(root.Path, "preferences.json");
+        var editor = new ExternalCodeEditor(path); Assert.IsFalse(editor.OpenOnCreation);
+        editor.OpenOnCreation = true; editor.Configure(null);
+        Assert.IsTrue(new ExternalCodeEditor(path).OpenOnCreation);
+        editor.OpenOnCreation = false; Assert.IsFalse(new ExternalCodeEditor(path).OpenOnCreation);
+    }
+
+    [TestMethod]
+    public async Task CreationWithoutAutoOpenDoesNotSaveOrLaunchAndPhraseCallStillExists()
+    {
+        using var root = new TestRoot(); var dialogs = new Dialogs(root.Path);
+        var code = new CodeEditor { OpenOnCreation = false };
+        using var session = new EditorSession(new JsonProjectStore(), dialogs, new Git(), codeEditor: code);
+        await session.NewProjectAsync(); session.AddScene(); var scene = session.ActiveScene!; scene.AddLine();
+        await session.CreateAndOpenScriptAsync();
+        Assert.IsNull(session.ProjectPath); Assert.HasCount(1, session.Project!.Scripts); Assert.IsEmpty(code.Opened);
+        await session.CreatePhraseScriptAsync(scene.Id, scene.SelectedLine!.Id, NovellMaker.Core.Scenes.ScriptPhase.AfterLine);
+        Assert.IsNull(session.ProjectPath); Assert.HasCount(2, session.Project.Scripts); Assert.HasCount(1, session.Project.Scenes[0].ScriptBlocks);
+        Assert.IsEmpty(code.Opened);
+        await session.OpenScriptExternallyAsync(session.Project.Scripts[1].Id);
+        Assert.HasCount(1, code.Opened); Assert.IsNotNull(session.ProjectPath);
+        await session.CreatePhraseScriptAsync(scene.Id, scene.SelectedLine.Id, NovellMaker.Core.Scenes.ScriptPhase.BeforeLine);
+        Assert.IsTrue(File.Exists(ScriptFiles.Resolve(root.Path, session.Project.Scripts.Last().Id)));
+        Assert.HasCount(1, code.Opened);
+        session.ExplorerModeIndex = 1;
+        using var browser = new ProjectFolderBrowser(session);
+        browser.Navigate(browser.Roots[0].Items.Single(e => e.FilePath == Path.Combine(root.Path, "Scripts")));
+        session.InspectScript(session.Project.Scripts.Last().Id);
+        session.UpdateScript(session.SelectedScript! with { Name = "renamed_without_extension" });
+        browser.Search = "renamed_without_extension";
+        Assert.HasCount(1, browser.Tiles); Assert.AreEqual("lua", browser.Tiles[0].Entry.IconKind);
+    }
+
+    [TestMethod]
+    public async Task NamingCreationRenameAndCancelPreserveFileIdentityCallsAndUndo()
+    {
+        using var root = new TestRoot(); var dialogs = new Dialogs(root.Path);
+        var editor = new CodeEditor();
+        using var session = new EditorSession(new JsonProjectStore(), dialogs, new Git(), codeEditor: editor);
+        await session.NewProjectAsync();
+        dialogs.ScriptNames.Enqueue("intro.lua");
+        await session.CreateAndOpenScriptAsync();
+        var script = session.SelectedScript!; var path = session.SelectedScriptPath;
+        Assert.AreEqual("intro.lua", script.Name); Assert.AreEqual(path, editor.Opened.Single());
+        session.AddScene(); session.AttachScriptToSceneStart(session.ActiveScene!.Id, script.Id);
+        dialogs.ScriptNames.Enqueue("opening.lua"); await session.RenameScriptAsync(script.Id);
+        Assert.AreEqual("opening.lua", session.SelectedScript!.Name);
+        Assert.AreEqual(script.Id, session.SelectedScript.Id); Assert.AreEqual(path, session.SelectedScriptPath);
+        Assert.AreEqual(script.Source, ScriptFiles.Read(path));
+        Assert.AreEqual(script.Id, ((RunScriptAction)session.Project!.Scenes[0].ScriptBlocks.Single().Action).ScriptId);
+        session.Undo(); Assert.AreEqual("intro.lua", session.SelectedScript!.Name);
+        session.Redo(); Assert.AreEqual("opening.lua", session.SelectedScript!.Name);
+        var before = session.Project;
+        dialogs.ScriptNames.Enqueue(null); await session.CreateAndOpenScriptAsync();
+        dialogs.ScriptNames.Enqueue(null); await session.RenameScriptAsync(script.Id);
+        Assert.AreSame(before, session.Project); Assert.HasCount(1, editor.Opened);
+        var scene = session.ActiveScene!; scene.AddLine(); before = session.Project;
+        dialogs.ScriptNames.Enqueue(null);
+        await session.CreatePhraseScriptAsync(scene.Id, scene.SelectedLine!.Id, NovellMaker.Core.Scenes.ScriptPhase.DuringLine);
+        Assert.AreSame(before, session.Project); Assert.IsEmpty(dialogs.Errors);
+    }
+
+    [TestMethod]
     public void EditorPreferencePersistsAndFileArgumentIsNeverAShellCommand()
     {
         using var root = new TestRoot();
@@ -139,6 +204,8 @@ public sealed class ExternalScriptTests
     }
     private sealed class Dialogs(string root) : IEditorDialogs
     {
+        public Queue<string?> ScriptNames { get; } = new();
+        public Task<string?> EditLuaNameAsync(string suggestedName) => Task.FromResult(ScriptNames.TryDequeue(out var name) ? name : suggestedName);
         public string ProjectPath { get; } = Path.Combine(root, "project.novell");
         public string? SavePath { get; set; }
         public List<string> Errors { get; } = [];
@@ -152,6 +219,7 @@ public sealed class ExternalScriptTests
     }
     private sealed class CodeEditor : IExternalCodeEditor
     {
+        public bool OpenOnCreation { get; set; } = true;
         public bool Fail { get; init; }
         public string? Executable { get; private set; }
         public List<string> Opened { get; } = [];

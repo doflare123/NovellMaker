@@ -32,17 +32,39 @@ public sealed partial class EditorSession
         Changed(nameof(SelectedScriptPath)); Changed(nameof(SelectedScriptDiagnostic));
     }
 
-    public void AddScript()
+    private string NextScriptName(string prefix = "script")
+    {
+        var number = 1;
+        while (project?.Scripts.Any(s => s.Name == $"{prefix}_{number}.lua") == true) number++;
+        return $"{prefix}_{number}.lua";
+    }
+
+    public void AddScript(string? name = null)
     {
         if (!CanEdit || project is null) return;
-        var number = 1;
-        while (project.Scripts.Any(s => s.Name == $"script_{number}.lua")) number++;
-        var script = LuaScriptAsset.Create($"script_{number}.lua");
+        AddScriptCore(name ?? NextScriptName());
+    }
+
+    private void AddScriptCore(string name)
+    {
+        if (project is null) return;
+        var script = LuaScriptAsset.Create(name);
         SelectedScriptId = script.Id;
         EditProject(project with { Scripts = project.Scripts.Add(script) });
         OpenScriptLibrary(script.Id);
         if (ProjectDirectory is { } root) { ScriptFiles.Ensure(root, script); StartScriptWatcher(); RefreshExternalScriptsCore(); }
     }
+
+    public Task RenameScriptAsync(Guid id) => RunAsync(async () =>
+    {
+        var script = project?.Scripts.FirstOrDefault(s => s.Id == id);
+        if (script is null) return;
+        var name = await dialogs.EditLuaNameAsync(script.Name);
+        if (string.IsNullOrWhiteSpace(name)) return;
+        fileExplorerRoot = null;
+        EditProject(project! with { Scripts = project!.Scripts.Replace(script, script with { Name = name.Trim() }) });
+        InspectScript(id);
+    });
 
     public void UpdateScript(LuaScriptAsset script, string? group = null)
     {
@@ -50,6 +72,7 @@ public sealed partial class EditorSession
         var old = project.Scripts.FirstOrDefault(s => s.Id == script.Id);
         var index = old is null ? -1 : project.Scripts.IndexOf(old);
         if (index < 0) return;
+        if (old!.Name != script.Name) fileExplorerRoot = null;
         if (script.Source.Length > LuaActionScript.MaximumSourceLength) throw new ArgumentException("Превышен размер Lua-скрипта.");
         if (ProjectDirectory is { } root && old!.Source != script.Source)
         {

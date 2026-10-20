@@ -8,6 +8,48 @@ namespace NovellMaker.Editor.Services;
 
 public sealed class EditorDialogs(Window owner) : IEditorDialogs
 {
+    public async Task<Guid?> PickScriptAsync(IReadOnlyList<NovellMaker.Core.Execution.LuaScriptAsset> scripts)
+    {
+        var dialog = CreateDialog("Прикрепить Lua-скрипт");
+        var list = new ListBox { Name = "ChooseLuaScript", ItemsSource = scripts, Height = 240,
+            ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<NovellMaker.Core.Execution.LuaScriptAsset>((s, _) => new TextBlock { Text = s?.Name }) };
+        var add = new Button { Name = "ConfirmLuaScript", Content = "Прикрепить", IsEnabled = false, IsDefault = true };
+        list.SelectionChanged += (_, _) => add.IsEnabled = list.SelectedItem is not null;
+        add.Click += (_, _) => dialog.Close((list.SelectedItem as NovellMaker.Core.Execution.LuaScriptAsset)?.Id);
+        var cancel = new Button { Content = "Отмена", IsCancel = true }; cancel.Click += (_, _) => dialog.Close(null);
+        dialog.Content = new StackPanel { Margin = new Thickness(24), Spacing = 12, Children =
+        {
+            new TextBlock { Text = "Какой скрипт прикрепить?" }, list,
+            new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Children = { cancel, add } }
+        } };
+        dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(null); };
+        return await dialog.ShowDialog<Guid?>(owner);
+    }
+
+    public async Task<string?> EditLuaNameAsync(string suggestedName)
+    {
+        var dialog = CreateDialog("Имя Lua-скрипта");
+        var input = new TextBox { Name = "LuaNameInput", Text = suggestedName };
+        var accept = new Button { Name = "AcceptLuaName", Content = "Сохранить", IsDefault = true };
+        var cancel = new Button { Content = "Отмена", IsCancel = true };
+        void Submit() { if (!string.IsNullOrWhiteSpace(input.Text)) dialog.Close(input.Text.Trim()); }
+        input.TextChanged += (_, _) => accept.IsEnabled = !string.IsNullOrWhiteSpace(input.Text);
+        accept.Click += (_, _) => Submit(); cancel.Click += (_, _) => dialog.Close(null);
+        dialog.Content = new StackPanel { Margin = new Thickness(24), Spacing = 12, Children =
+        {
+            new TextBlock { Text = "Имя скрипта в проекте" }, input,
+            new TextBlock { Text = "Имя можно изменить позже: правая кнопка мыши → Переименовать или панель Свойства.", TextWrapping = Avalonia.Media.TextWrapping.Wrap },
+            new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8, Children = { cancel, accept } }
+        } };
+        dialog.Opened += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            input.Focus(); input.SelectionStart = 0;
+            input.SelectionEnd = suggestedName.EndsWith(".lua", StringComparison.OrdinalIgnoreCase) ? suggestedName.Length - 4 : suggestedName.Length;
+        }, Avalonia.Threading.DispatcherPriority.Background);
+        dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(null); };
+        return await dialog.ShowDialog<string?>(owner);
+    }
+
     private static readonly FilePickerFileType ProjectType = new("Проект NovellMaker") { Patterns = ["*.novell"] };
     private static readonly FilePickerFileType ImageType = new("Изображение PNG или JPEG") { Patterns = ["*.png", "*.jpg", "*.jpeg"] };
 

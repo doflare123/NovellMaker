@@ -24,6 +24,7 @@ public sealed class ScriptLibraryView : UserControl
     private readonly TextBox alias = new() { Name = "LuaAssetReferenceAlias", Text = "actor", PlaceholderText = "Имя ссылки" };
     private readonly TextBlock references = new() { Name = "LuaAssetReferences", TextWrapping = TextWrapping.Wrap };
     private readonly StackPanel inspector = new() { Spacing = 8 };
+    private readonly CheckBox autoOpen = new() { Name = "OpenCodeOnCreation", Content = "Открывать код после создания" };
     private readonly List<Button> editButtons = [];
     private EditorSession? session;
     private bool refreshing;
@@ -50,7 +51,7 @@ public sealed class ScriptLibraryView : UserControl
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("160,10,*") };
         scripts.ItemTemplate = new FuncDataTemplate<LuaScriptAsset>((item, _) => new TextBlock { Text = item?.Name, TextTrimming = TextTrimming.CharacterEllipsis });
         if (!propertiesOnly) grid.Children.Add(scripts);
-        inspector.Children.Add(new TextBlock { Text = "Имя ресурса" }); inspector.Children.Add(name);
+        inspector.Children.Add(new TextBlock { Text = "Имя скрипта (можно изменить)" }); inspector.Children.Add(name);
         inspector.Children.Add(path);
         inspector.Children.Add(status);
         var editorSettings = new StackPanel { Spacing = 6 };
@@ -60,6 +61,9 @@ public sealed class ScriptLibraryView : UserControl
         var system = new Button { Name = "UseSystemCodeEditor", Content = "Системное приложение" };
         system.Click += async (_, _) => { if (session is not null) await session.UseSystemCodeEditorAsync(); };
         editorSettings.Children.Add(choose); editorSettings.Children.Add(system);
+        autoOpen.IsCheckedChanged += async (_, _) => { if (!refreshing && session is not null) await session.SetOpenCodeOnCreationAsync(autoOpen.IsChecked == true); };
+        autoOpen.DataContextChanged += (_, _) => autoOpen.IsChecked = (autoOpen.DataContext as EditorSession)?.OpenCodeOnCreation == true;
+        editorSettings.Children.Add(autoOpen);
         inspector.Children.Add(new Expander { Name = "CodeEditorSettings", Header = "Открывать по умолчанию", Content = editorSettings });
         inspector.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap,
             FontSize = 11, Text = "Код открывается во внешнем редакторе. Сохранения файлов проверяются автоматически. F5 — обновить вручную." });
@@ -127,7 +131,7 @@ public sealed class ScriptLibraryView : UserControl
     private void Changed(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(EditorSession.SelectedScript) or nameof(EditorSession.CanEdit) or nameof(EditorSession.CodeEditorLabel)
-            or nameof(EditorSession.SelectedScriptDiagnostic) or nameof(EditorSession.SelectedScriptPath)) Refresh();
+            or nameof(EditorSession.SelectedScriptDiagnostic) or nameof(EditorSession.SelectedScriptPath) or nameof(EditorSession.OpenCodeOnCreation)) Refresh();
     }
 
     private void Refresh()
@@ -137,6 +141,7 @@ public sealed class ScriptLibraryView : UserControl
         try
         {
             var script = session?.SelectedScript;
+            autoOpen.IsChecked = session?.OpenCodeOnCreation == true;
             if (shownId != script?.Id) { status.Text = ""; shownId = script?.Id; }
             scripts.ItemsSource = session?.Project?.Scripts.ToArray() ?? [];
             scripts.SelectedItem = script;

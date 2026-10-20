@@ -90,7 +90,8 @@
         <TextBlock Grid.Column="1" Text="{Binding GitSummary}" Classes="muted" Margin="20,0,0,0" MaxWidth="460" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding GitSummary}" />
       </Grid>
     </Border>
-    <Grid Name="Workspace">
+    <Grid>
+    <Grid Name="Workspace" IsVisible="{Binding HasProject}">
         <Border Name="ExplorerPane" Background="#24262B">
           <DockPanel>
 
@@ -103,8 +104,7 @@
               <TreeView.ItemTemplate>
                 <TreeDataTemplate DataType="vm:ExplorerEntry" ItemsSource="{Binding Items}">
                   <Grid ColumnDefinitions="18,*" ToolTip.Tip="{Binding Detail}">
-                    <Path Data="M1,4 L6,4 L8,6 L15,6 L15,14 L1,14 Z" Stroke="#B9AC85" StrokeThickness="1" Width="16" Height="16" IsVisible="{Binding IsFolder}" />
-                    <Path Data="M3,2 L10,2 L14,6 L14,15 L3,15 Z M10,2 L10,6 L14,6" Stroke="#9BA7B7" StrokeThickness="1" Width="16" Height="16" IsVisible="{Binding !IsFolder}" />
+                    <views:ResourceIcon Entry="{Binding}" Width="16" Height="16" />
                     <TextBlock Grid.Column="1" Text="{Binding Label}" TextTrimming="CharacterEllipsis" />
                   </Grid>
                 </TreeDataTemplate>
@@ -120,15 +120,6 @@
         </Border>
 
         <Grid Name="DocumentsPane" Background="#202226">
-          <StackPanel IsVisible="{Binding !HasProject}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" MaxWidth="430" Margin="32">
-            <TextBlock Text="NovellMaker" FontSize="28" FontWeight="Light" />
-            <TextBlock Text="Создайте проект новеллы или откройте существующий файл проекта." Classes="muted" TextWrapping="Wrap" />
-            <Button Name="OpenExampleButton" Content="Открыть проверочный фрагмент" Command="{Binding OpenExampleCommand}" />
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button Content="Создать проект" Command="{Binding NewCommand}" />
-              <Button Content="Открыть…" Command="{Binding OpenCommand}" />
-            </StackPanel>
-          </StackPanel>
           <TabControl Name="Documents" IsVisible="{Binding HasProject}" ItemsSource="{Binding Documents}" SelectedItem="{Binding SelectedDocument, Mode=TwoWay}">
             <TabControl.ItemTemplate>
               <DataTemplate DataType="vm:DocumentViewModel">
@@ -163,6 +154,8 @@
 
         <ListBox Name="DiagnosticsList" ItemsSource="{Binding Diagnostics}" Background="Transparent" FontSize="12" />
       </DockPanel>
+    </Grid>
+    <views:StartPage Name="StartPage" IsVisible="{Binding !HasProject}" />
     </Grid>
   </DockPanel>
 </Window>
