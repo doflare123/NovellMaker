@@ -23,4 +23,7 @@ artifacts/
 !/docs/verification-export-2026-10-18.md
 !/docs/windows-installer.md
 !/docs/verification-installer-2026-10-19.md
+!/docs/game-screens-and-lua-roadmap.md
+!/docs/lua-execution-contract.md
+!/docs/verification-lua-foundation-2026-10-20.md
 /novell_test

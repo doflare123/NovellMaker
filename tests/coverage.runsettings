@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="Code Coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <IncludeTestAssembly>False</IncludeTestAssembly>
+          <CodeCoverage>
+            <ModulePaths>
+              <Include><ModulePath>.*NovellMaker\.(Core|Runtime|Editor)\.dll$</ModulePath></Include>
+            </ModulePaths>
+            <Sources><Exclude><Source>.*[\\/]obj[\\/].*</Source></Exclude></Sources>
+            <CollectFromChildProcesses>True</CollectFromChildProcesses>
+            <EnableStaticNativeInstrumentation>False</EnableStaticNativeInstrumentation>
+            <EnableDynamicNativeInstrumentation>False</EnableDynamicNativeInstrumentation>
+          </CodeCoverage>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>
