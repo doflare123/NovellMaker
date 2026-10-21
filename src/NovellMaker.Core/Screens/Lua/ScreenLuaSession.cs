@@ -137,10 +137,18 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                     entry.Loaded = true; entry.RemoteVersion = ready.Stamp.Version + 1;
                     if (Current(entry.Instance) && !entry.Closing && entry.Instance.Version == ready.Stamp.Version)
                     {
-                        stack.Commit(entry.Instance, ready.Stamp.Version, result.Batch!.Definition);
-                        AppliedBatches++;
-                        if (result.Batch.Close) stack.Close(entry.Instance);
-                        changed = true;
+                        try
+                        {
+                            stack.Commit(entry.Instance, ready.Stamp.Version, result.Batch!.Definition);
+                            AppliedBatches++;
+                            if (result.Batch.Close) stack.Close(entry.Instance);
+                            changed = true;
+                        }
+                        catch (InvalidOperationException commitError)
+                        {
+                            entry.Error = commitError.Message; RemoveQueued(entry); ScheduleClose(entry);
+                            Report(commitError.Message, ScreenLuaIssueKind.Handler, entry.Instance.Id);
+                        }
                     }
                     else Detach(entry);
                     if (entry.Closing) ScheduleClose(entry);

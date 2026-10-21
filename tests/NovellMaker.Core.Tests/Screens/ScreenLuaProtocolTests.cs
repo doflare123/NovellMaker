@@ -95,7 +95,7 @@ public sealed class ScreenLuaProtocolTests
         var request = Request(); var response = Reply(request);
         response = mutation switch
         {
-            "version" => response with { Protocol = 2 }, "request" => response with { Stamp = response.Stamp with { RequestId = Guid.NewGuid() } },
+            "version" => response with { Protocol = 1 }, "request" => response with { Stamp = response.Stamp with { RequestId = Guid.NewGuid() } },
             "session" => response with { Stamp = response.Stamp with { SessionId = Guid.NewGuid() } },
             "generation" => response with { Stamp = response.Stamp with { Generation = 2 } },
             "owner" => response with { Stamp = response.Stamp with { OwnerId = Guid.NewGuid() } },

@@ -141,7 +141,7 @@ public sealed class ScreenLuaWorkerTests
         var (service, load) = Worker();
         var request = mutation switch
         {
-            "protocol" => load with { Protocol = 2 }, "request" => load with { Stamp = load.Stamp with { RequestId = Guid.Empty } },
+            "protocol" => load with { Protocol = 1 }, "request" => load with { Stamp = load.Stamp with { RequestId = Guid.Empty } },
             "session" => load with { Stamp = load.Stamp with { SessionId = Guid.NewGuid() } },
             "generation" => load with { Stamp = load.Stamp with { Generation = 2 } },
             "negative-version" => load with { Stamp = load.Stamp with { Version = -1 } },

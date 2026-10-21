@@ -87,42 +87,55 @@ public sealed class ScreenDesignSurface : UserControl
         scenePreview.ShowVoiceControls = session?.ShowVoiceControls == true;
         scenePreview.ShowNavigationControls = session?.ShowNavigationControls == true;
         var definition = Definition();
-        var wanted = definition?.VisibleRegions(new(0, 0, 1280, 720)).ToArray() ?? [];
+        var wanted = definition?.Visuals(new(0, 0, 1280, 720)).ToArray() ?? [];
         foreach (var stale in visuals.Keys.Where(id => !wanted.Any(r => r.Node.Id == id)).ToArray()) { artboard.Children.Remove(visuals[stale].Clip); visuals.Remove(stale); }
         artboard.Children.Remove(selection);
         var z = 0;
-        foreach (var (node, clip) in wanted)
+        foreach (var visual in wanted)
         {
-            var absolute = definition!.AbsoluteBounds(node.Id);
-            if (!visuals.TryGetValue(node.Id, out var item) || item.Node.Text != node.Text || item.Node.Kind != node.Kind || item.Node.ImageId != node.ImageId)
+            var node = visual.Node;
+            var tinted = node with { Color = $"#{(byte)(visual.Tint.R * 255):X2}{(byte)(visual.Tint.G * 255):X2}{(byte)(visual.Tint.B * 255):X2}" };
+            if (!visuals.TryGetValue(node.Id, out var item) || item.Node.Text != node.Text || item.Node.Kind != node.Kind || item.Node.ImageId != node.ImageId || item.Node.Color != tinted.Color)
             {
                 if (item.Clip is not null) artboard.Children.Remove(item.Clip);
-                var inner = CreateNode(node);
-                var clipping = new Border { ClipToBounds = true, IsHitTestVisible = false, Child = new Canvas { Children = { inner } } };
-                item = (clipping, inner, node); visuals[node.Id] = item; artboard.Children.Add(clipping);
+                var inner = CreateNode(tinted);
+                var clipping = new Border { IsHitTestVisible = false, Child = new Canvas { Children = { inner } } };
+                item = (clipping, inner, tinted); visuals[node.Id] = item; artboard.Children.Add(clipping);
             }
-            item.Clip.Width = clip.Width; item.Clip.Height = clip.Height;
-            Canvas.SetLeft(item.Clip, clip.X); Canvas.SetTop(item.Clip, clip.Y); item.Clip.ZIndex = z++;
-            item.Visual.Width = absolute.Width; item.Visual.Height = absolute.Height;
-            Canvas.SetLeft(item.Visual, absolute.X - clip.X); Canvas.SetTop(item.Visual, absolute.Y - clip.Y);
+            item.Clip.Width = 1280; item.Clip.Height = 720; item.Clip.ZIndex = z++;
+            item.Clip.Clip = Polygon(visual.Polygon); item.Clip.Opacity = visual.Opacity;
+            item.Visual.Width = node.Bounds.Width; item.Visual.Height = node.Bounds.Height;
+            var m = visual.World;
+            item.Visual.RenderTransformOrigin = new RelativePoint(0, 0, RelativeUnit.Absolute);
+            item.Visual.RenderTransform = new MatrixTransform(new Matrix(m.A, m.B, m.C, m.D, m.X, m.Y));
         }
-        selection.BoundsInScene = session?.SelectedScreenNode is { } selected && definition?.Nodes.Any(n => n.Id == selected.Id) == true ? definition.AbsoluteBounds(selected.Id) : null;
+        selection.Selected = session?.SelectedScreenNode is { } selected && definition?.Nodes.Any(n => n.Id == selected.Id) == true ? definition.Visual(selected.Id) : null;
         selection.Resizable = session?.SelectedScreenNode?.ParentId is not null; selection.ZIndex = z;
         artboard.Children.Add(selection); selection.InvalidateVisual();
     }
+    private static StreamGeometry Polygon(System.Collections.Immutable.ImmutableArray<ScreenPoint> points)
+    {
+        var geometry = new StreamGeometry();
+        using var context = geometry.Open();
+        if (!points.IsEmpty)
+        { context.BeginFigure(new Point(points[0].X, points[0].Y), true); foreach (var p in points.Skip(1)) context.LineTo(new Point(p.X, p.Y)); context.EndFigure(true); }
+        return geometry;
+    }
     private Control CreateNode(ScreenNode node)
     {
-        var grid = new Grid { Background = node.Kind is ScreenNodeKind.Panel or ScreenNodeKind.Button ? Brush.Parse(node.Kind == ScreenNodeKind.Button ? "#353B45" : "#242830") : Brushes.Transparent };
+        ScreenTint.TryParse(node.Color, out var tint);
+        var baseColor = node.Kind == ScreenNodeKind.Button ? Color.Parse("#282D34") : Color.Parse("#14161A");
+        var grid = new Grid { Background = node.Kind is ScreenNodeKind.Panel or ScreenNodeKind.Button ? new SolidColorBrush(Color.FromRgb((byte)(baseColor.R * tint.R), (byte)(baseColor.G * tint.G), (byte)(baseColor.B * tint.B))) : Brushes.Transparent };
         if (node.ImageId is { } id && session?.Project?.Images.FirstOrDefault(i => i.Id == id) is { } image)
             grid.Children.Add(new ProjectImageView { Asset = image, ProjectDirectory = session.ProjectDirectory, Revision = session.AssetRevision,
-                ImageStretch = Stretch.Fill, TransparentBackground = true, IsHitTestVisible = false });
+                ImageStretch = Stretch.Fill, TransparentBackground = true, Tint = node.Color, IsHitTestVisible = false });
         else if (node.Kind == ScreenNodeKind.Image)
         {
             grid.Background = Brush.Parse("#293441");
             grid.Children.Add(new TextBlock { Text = "Изображение", Foreground = Brush.Parse("#91A4BB"), FontSize = 22, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
         }
         if (node.Kind is ScreenNodeKind.Text or ScreenNodeKind.Button)
-            grid.Children.Add(new TextBlock { Text = node.Text, Foreground = Brushes.White, FontSize = 18, TextWrapping = TextWrapping.NoWrap,
+            grid.Children.Add(new TextBlock { Text = node.Text, Foreground = Brush.Parse(node.Color), FontSize = 18, TextWrapping = TextWrapping.NoWrap,
                 Margin = new Thickness(12, 0), VerticalAlignment = VerticalAlignment.Center });
         return grid;
     }
@@ -130,7 +143,7 @@ public sealed class ScreenDesignSurface : UserControl
     {
         if (!e.GetCurrentPoint(artboard).Properties.IsLeftButtonPressed || session?.CanEdit != true || session.SelectedScreen is not { } screen) return;
         artboard.Focus(); var point = e.GetPosition(artboard); var definition = screen.Definition();
-        var resize = session.SelectedScreenNode is { ParentId: not null } current && NearCorner(point, definition.AbsoluteBounds(current.Id));
+        var resize = session.SelectedScreenNode is { ParentId: not null } current && NearCorner(point, definition.Visual(current.Id));
         var id = resize ? session.SelectedScreenNodeId : definition.PickNode(point.X, point.Y);
         session.SelectScreenNode(id);
         if (session.SelectedScreenNode is { ParentId: not null } node)
@@ -139,13 +152,19 @@ public sealed class ScreenDesignSurface : UserControl
         }
         e.Handled = true;
     }
-    private static bool NearCorner(Point point, ScreenRect bounds) => Math.Abs(point.X - bounds.X - bounds.Width) <= 14 && Math.Abs(point.Y - bounds.Y - bounds.Height) <= 14;
+    private static bool NearCorner(Point point, ScreenVisual visual)
+    { var corner = visual.World.Apply(visual.Node.Bounds.Width, visual.Node.Bounds.Height); return Math.Abs(point.X - corner.X) <= 14 && Math.Abs(point.Y - corner.Y) <= 14; }
     private void Move(object? sender, PointerEventArgs e)
     {
         if (gesture is not { } g) return;
-        var delta = e.GetPosition(artboard) - g.Start; var before = g.Before.Bounds;
-        temporary = g.Resize ? before with { Width = Math.Clamp(Math.Round(before.Width + delta.X), 1, 100000), Height = Math.Clamp(Math.Round(before.Height + delta.Y), 1, 100000) }
-            : before with { X = Math.Clamp(Math.Round(before.X + delta.X), -100000, 100000), Y = Math.Clamp(Math.Round(before.Y + delta.Y), -100000, 100000) };
+        var point = e.GetPosition(artboard); var definition = session!.SelectedScreen!.Definition();
+        var inverse = definition.Visual(g.Resize ? g.Before.Id : g.Before.ParentId!.Value).Inverse;
+        var start = inverse.Apply(g.Start.X, g.Start.Y); var end = inverse.Apply(point.X, point.Y);
+        var before = g.Before.Bounds;
+        var candidate = g.Resize ? ScreenTree.Resize(g.Before, end.X - start.X, end.Y - start.Y)
+            : before with { X = Math.Clamp(Math.Round(before.X + end.X - start.X), -100000, 100000), Y = Math.Clamp(Math.Round(before.Y + end.Y - start.Y), -100000, 100000) };
+        try { _ = new ScreenDefinition(definition.Id, definition.Nodes.Replace(g.Before, g.Before with { Bounds = candidate })); temporary = candidate; }
+        catch (ArgumentException) { } // Keep the last valid gesture preview; no partially applied edit.
         Refresh(); e.Handled = true;
     }
     private void Release(object? sender, PointerReleasedEventArgs e)
@@ -173,14 +192,14 @@ public sealed class ScreenDesignSurface : UserControl
     }
     private sealed class SelectionOverlay : Control
     {
-        public ScreenRect? BoundsInScene { get; set; }
+        public ScreenVisual? Selected { get; set; }
         public bool Resizable { get; set; }
         public override void Render(DrawingContext context)
         {
-            if (BoundsInScene is not { } bounds) return;
-            var rect = new Rect(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-            context.DrawRectangle(null, new Pen(Brush.Parse("#79B5F3"), 2), rect);
-            if (Resizable) context.DrawRectangle(Brushes.White, new Pen(Brush.Parse("#438EDC"), 2), new Rect(rect.Right - 7, rect.Bottom - 7, 14, 14));
+            if (Selected is not { } visual) return;
+            var polygon = ScreenPolygon.Transform(ScreenPolygon.Rectangle(new(0, 0, visual.Node.Bounds.Width, visual.Node.Bounds.Height)), visual.World);
+            context.DrawGeometry(null, new Pen(Brush.Parse("#79B5F3"), 2), Polygon(polygon));
+            if (Resizable) context.DrawRectangle(Brushes.White, new Pen(Brush.Parse("#438EDC"), 2), new Rect(polygon[2].X - 7, polygon[2].Y - 7, 14, 14));
         }
     }
 }

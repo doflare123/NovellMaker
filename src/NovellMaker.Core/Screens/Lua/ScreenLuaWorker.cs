@@ -9,30 +9,47 @@ internal sealed class ScreenLuaVm
 {
     private readonly Script script = new(CoreModules.None);
     private readonly DynValue handlers;
+    private readonly Guid instanceId;
     private ImmutableArray<ScreenChange>.Builder changes = ImmutableArray.CreateBuilder<ScreenChange>();
     private ImmutableDictionary<string, string> snapshot = ImmutableDictionary<string, string>.Empty;
     internal ScreenDefinition Definition { get; private set; }
 
-    internal ScreenLuaVm(ScreenDefinition definition, string source, ImmutableDictionary<string, Guid> references)
+    internal ScreenLuaVm(ScreenDefinition definition, Guid instanceId, string source, ImmutableDictionary<string, Guid> references)
     {
         Definition = definition;
+        this.instanceId = instanceId;
         LuaLimits.CheckSource(source);
         var ui = new Table(script);
         var refs = new Table(script);
-        foreach (var pair in references) refs.Set(pair.Key, DynValue.NewString(pair.Value.ToString()));
+        string Handle(Guid id) => new ScreenNodeHandle(definition.Id, instanceId, id).ToString();
+        foreach (var pair in references) refs.Set(pair.Key, DynValue.NewString(Handle(pair.Value)));
         script.Globals.Set("refs", DynValue.NewTable(refs));
         void Bind(string name, Func<CallbackArguments, DynValue> callback) => ui.Set(name, DynValue.NewCallback((_, args) => callback(args)));
         string Str(CallbackArguments args, int index) => args.AsType(index, "ui", DataType.String, false).String;
-        Guid Node(CallbackArguments args) => Guid.TryParse(Str(args, 0), out var id) && definition.Nodes.Any(n => n.Id == id)
-            ? id : throw new ScriptRuntimeException("Чужой узел экрана.");
+        Guid Node(CallbackArguments args, int index = 0) => ScreenNodeHandle.TryParse(Str(args, index), out var handle) && handle.ResourceId == definition.Id && handle.InstanceId == instanceId &&
+            Definition.Nodes.Any(n => n.Id == handle.NodeId) ? handle.NodeId : throw new ScriptRuntimeException("Чужой или удалённый узел экрана.");
         DynValue Add(ScreenChange change)
         {
             if (changes.Count >= LuaActionScript.MaximumCommands) throw new ScriptRuntimeException("Превышен лимит изменений экрана.");
+            Definition = ScreenLuaProtocol.Prepare(Definition, [change]).Definition;
             changes.Add(change); return DynValue.Nil;
         }
         Bind("set_text", a => Add(new("text", Node(a), Str(a, 1), null)));
         Bind("set_visible", a => Add(new("visible", Node(a), null, a.AsType(1, "ui", DataType.Boolean, false).Boolean)));
         Bind("set_enabled", a => Add(new("enabled", Node(a), null, a.AsType(1, "ui", DataType.Boolean, false).Boolean)));
+        Bind("set_geometry", a => Add(new("geometry", Node(a), null, null) { Patch = ReadPatch(a.AsType(1, "ui", DataType.Table, false).Table) }));
+        Bind("set_parent", a => Add(new("parent", Node(a), null, null) { ParentId = Node(a, 1) }));
+        Bind("remove", a => Add(new("remove", Node(a), null, null)));
+        Bind("find", a => references.TryGetValue(Str(a, 0), out var id) && Definition.Nodes.Any(n => n.Id == id) ? DynValue.NewString(Handle(id)) : DynValue.Nil);
+        Bind("create", a =>
+        {
+            var sourceId = Node(a); var parentId = Node(a, 1);
+            var copy = ScreenTree.Copy(Definition, sourceId, parentId);
+            Add(new("copy", sourceId, null, null) { ParentId = parentId, Ids = copy.Ids });
+            var mapped = new Table(script);
+            foreach (var pair in copy.Ids) mapped.Set(Handle(pair.Key), DynValue.NewString(Handle(pair.Value)));
+            return DynValue.NewTuple(DynValue.NewString(Handle(copy.Ids[sourceId])), DynValue.NewTable(mapped));
+        });
         Bind("close", _ => Add(new("close", null, null, null)));
         Bind("get", a => snapshot.TryGetValue(Str(a, 0), out var value) ? DynValue.NewString(value) : DynValue.Nil);
         script.Globals.Set("ui", DynValue.NewTable(ui));
@@ -52,14 +69,35 @@ internal sealed class ScreenLuaVm
         if (value is not null)
         {
             argument.Set("kind", DynValue.NewString(value.Kind));
-            argument.Set("node", value.NodeId is { } node ? DynValue.NewString(node.ToString()) : DynValue.Nil);
+            argument.Set("node", value.NodeId is { } node ? DynValue.NewString(new ScreenNodeHandle(Definition.Id, instanceId, node).ToString()) : DynValue.Nil);
             argument.Set("x", DynValue.NewNumber(value.X)); argument.Set("y", DynValue.NewNumber(value.Y));
             argument.Set("seconds", DynValue.NewNumber(value.Seconds));
         }
         if (function.Type != DataType.Nil) Execute(function, DynValue.NewTable(argument));
         var batch = changes.ToImmutable();
-        Definition = ScreenLuaProtocol.Prepare(Definition, batch).Definition;
+        // Revalidate aggregate text/command budgets as one atomic batch on the host too.
         return batch;
+    }
+
+    private static ScreenNodePatch ReadPatch(Table table)
+    {
+        string[] names = ["x", "y", "width", "height", "anchor_x", "anchor_y", "pivot_x", "pivot_y", "scale_x", "scale_y", "rotation", "opacity", "color", "order", "clip_children"];
+        foreach (var pair in table.Pairs)
+            if (pair.Key.Type != DataType.String || !names.Contains(pair.Key.String)) throw new ScriptRuntimeException("Неизвестное свойство геометрии.");
+        double? Number(string key)
+        {
+            var value = table.Get(key);
+            if (value.IsNil()) return null;
+            if (value.Type != DataType.Number || !double.IsFinite(value.Number)) throw new ScriptRuntimeException("Свойство должно быть конечным числом.");
+            return value.Number;
+        }
+        var color = table.Get("color"); var clip = table.Get("clip_children"); var order = Number("order");
+        if (color.Type is not (DataType.Nil or DataType.Void or DataType.String) || clip.Type is not (DataType.Nil or DataType.Void or DataType.Boolean) ||
+            order is { } n && (Math.Abs(n) > 100000 || n != Math.Truncate(n))) throw new ScriptRuntimeException("Неверное свойство геометрии.");
+        return new() { X = Number("x"), Y = Number("y"), Width = Number("width"), Height = Number("height"),
+            AnchorX = Number("anchor_x"), AnchorY = Number("anchor_y"), PivotX = Number("pivot_x"), PivotY = Number("pivot_y"),
+            ScaleX = Number("scale_x"), ScaleY = Number("scale_y"), Rotation = Number("rotation"), Opacity = Number("opacity"),
+            Color = color.IsNil() ? null : color.String, Order = order is null ? null : (int)order.Value, ClipChildren = clip.IsNil() ? null : clip.Boolean };
     }
 
     private DynValue Execute(DynValue function, params DynValue[] arguments)
@@ -113,8 +151,11 @@ internal sealed class ScreenLuaWorkerService
                 throw new ArgumentException("Недопустимая загрузка или бюджет экранного worker.");
             var definition = new ScreenDefinition(request.ResourceId, request.Nodes);
             if (request.References.Any(r => !definition.Nodes.Any(n => n.Id == r.Value))) throw new ArgumentException("Чужая именованная ссылка экрана.");
-            var vm = new ScreenLuaVm(definition, request.Source, request.References);
+            var vm = new ScreenLuaVm(definition, stamp.InstanceId, request.Source, request.References);
             var changes = vm.Handle(null, request.Snapshot);
+            _ = ScreenLuaProtocol.Prepare(definition, changes);
+            if (entries.Values.Sum(e => e.Vm.Definition.Nodes.Length) + vm.Definition.Nodes.Length > ScreenStack.MaxSessionNodes)
+                throw new InvalidOperationException("Превышен бюджет узлов сеанса.");
             entries.Add(stamp.InstanceId, new(stamp, request.ResourceId, vm));
             return Reply("batch", changes);
         }
@@ -128,7 +169,11 @@ internal sealed class ScreenLuaWorkerService
         ScreenLuaProtocol.ValidateEvent(entry.Vm.Definition, request.Event);
         try
         {
+            var before = entry.Vm.Definition;
             var changes = entry.Vm.Handle(request.Event, request.Snapshot);
+            _ = ScreenLuaProtocol.Prepare(before, changes);
+            if (entries.Values.Sum(e => e.Vm.Definition.Nodes.Length) > ScreenStack.MaxSessionNodes)
+                throw new InvalidOperationException("Превышен бюджет узлов сеанса.");
             entry.Version++;
             return Reply("batch", changes);
         }

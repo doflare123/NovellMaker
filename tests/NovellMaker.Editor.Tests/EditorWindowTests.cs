@@ -33,6 +33,45 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task TransformedDesignerUsesLocalGesturesAndInspectorHierarchyAtTwoWindowSizes() => WithUi(async () =>
+    {
+        using var session = CreateSession(out var dialogs, out _); dialogs.AcceptDeletion = true;
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        session.AddScreenNodeAt(NovellMaker.Core.Screens.ScreenNodeKind.Panel, 150, 120); var panel = session.SelectedScreenNode!;
+        session.UpdateScreenNode(panel with { Bounds = new(150, 120, 400, 300), Geometry = new() { Rotation = 25, ScaleX = 1.1, ScaleY = .8 }, Color = "#80DDFF", ClipChildren = false });
+        var definition = session.SelectedScreen!.Definition(); var point = definition.Visual(panel.Id).World.Apply(40, 60);
+        session.AddScreenNodeAt(NovellMaker.Core.Screens.ScreenNodeKind.Button, point.X, point.Y); var node = session.SelectedScreenNode!;
+        Assert.AreEqual(panel.Id, node.ParentId); Assert.AreEqual(40, node.Bounds.X, 1e-7); Assert.AreEqual(60, node.Bounds.Y, 1e-7);
+        session.UpdateScreenNode(node with { Text = "Кириллица · поворот", Bounds = node.Bounds with { Height = 65 }, Geometry = new() { Rotation = -10, PivotX = .5, PivotY = .5 } });
+        Dispatcher.UIThread.RunJobs(); var surface = window.GetVisualDescendants().OfType<ScreenDesignSurface>().Single(); var canvas = surface.Artboard;
+        Point At(NovellMaker.Core.Screens.ScreenPoint p) => canvas.TranslatePoint(new(p.X, p.Y), window)!.Value;
+        definition = session.SelectedScreen.Definition(); var center = definition.Visual(node.Id).World.Apply(80, 30);
+        var parent = definition.Visual(panel.Id).World; var start = parent.Apply(0, 0); var end = parent.Apply(30, 20);
+        window.MouseDown(At(center), MouseButton.Left); window.MouseMove(At(new(center.X + end.X - start.X, center.Y + end.Y - start.Y)));
+        window.MouseUp(At(new(center.X + end.X - start.X, center.Y + end.Y - start.Y)), MouseButton.Left); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(70, session.SelectedScreenNode!.Bounds.X, 1); Assert.AreEqual(80, session.SelectedScreenNode.Bounds.Y, 1);
+        session.Undo(); Dispatcher.UIThread.RunJobs(); Assert.AreEqual(node.Bounds.X, session.SelectedScreenNode!.Bounds.X, 1e-7);
+        definition = session.SelectedScreen.Definition(); var currentNode = session.SelectedScreenNode!;
+        var corner = definition.Visual(node.Id).World.Apply(currentNode.Bounds.Width, currentNode.Bounds.Height);
+        var enlarged = definition.Visual(node.Id).World.Apply(currentNode.Bounds.Width + 40, currentNode.Bounds.Height + 20);
+        window.MouseDown(At(corner), MouseButton.Left); window.MouseMove(At(enlarged)); window.MouseUp(At(enlarged), MouseButton.Left); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(currentNode.Bounds.Width + 40, session.SelectedScreenNode!.Bounds.Width, 1); Assert.AreEqual(currentNode.Bounds.Height + 20, session.SelectedScreenNode.Bounds.Height, 1);
+        session.Undo(); Dispatcher.UIThread.RunJobs();
+        var properties = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single();
+        Find<Expander>(properties, "ScreenGeometryExpander").IsExpanded = true; Dispatcher.UIThread.RunJobs();
+        Find<NumericUpDown>(properties, "ScreenRotation").Value = 35; Find<NumericUpDown>(properties, "ScreenOpacity").Value = .6m;
+        Find<TextBox>(properties, "ScreenNodeColor").Text = "#FF80C0"; Assert.AreEqual(35, session.SelectedScreenNode.Geometry.Rotation); Assert.AreEqual(.6, session.SelectedScreenNode.Geometry.Opacity);
+        Find<Button>(properties, "CopyScreenNode").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent)); Assert.HasCount(4, session.SelectedScreen.Nodes);
+        var copied = session.SelectedScreenNode!; var parentCombo = Find<ComboBox>(properties, "ScreenNodeParent"); parentCombo.SelectedIndex = 0;
+        Assert.AreEqual(session.SelectedScreen.Nodes[0].Id, session.SelectedScreenNode!.ParentId);
+        session.Undo(); Assert.AreEqual(panel.Id, session.SelectedScreen!.Nodes.Single(n => n.Id == copied.Id).ParentId);
+        Find<Expander>(properties, "ScreenGeometryExpander").IsExpanded = false;
+        foreach (var scroll in properties.GetVisualDescendants().OfType<ScrollViewer>()) scroll.Offset = default;
+        foreach (var size in new[] { new Size(1360, 850), new Size(1040, 720) })
+        { window.Width = size.Width; window.Height = size.Height; Dispatcher.UIThread.RunJobs(); Capture(window, $"editor-geometry-{size.Width}.png"); }
+        window.Close();
+    });
+    [TestMethod]
     public Task ProjectShortcutsAndAudioCommandsAreAuthoredThroughInspectorWithUndo() => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
@@ -156,6 +195,7 @@ public sealed class EditorWindowTests
             using var data = new DataTransfer(); data.Add(DataTransferItem.CreateText(new ComponentDrop(NovellMaker.Core.Screens.ScreenNodeKind.Image, asset.Id).Encode(session.Project.Id)));
             canvas.RaiseEvent(new DragEventArgs(DragDrop.DropEvent, data, canvas, new Point(100, 100), KeyModifiers.None)); Dispatcher.UIThread.RunJobs();
             Assert.AreEqual(asset.Id, session.SelectedScreenNode!.ImageId);
+            session.UpdateScreenNode(session.SelectedScreenNode with { Color = "#80FF80", Geometry = new() { Rotation = 15, Opacity = .8 } });
             foreach (var preview in window.GetVisualDescendants().OfType<ProjectImageView>()) await preview.PreviewLoad;
             Dispatcher.UIThread.RunJobs(); var properties = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single();
             Assert.IsTrue(Find<ProjectImageView>(properties, "ScreenSpritePreview").HasImage);

@@ -61,6 +61,7 @@ public sealed class ProjectInputTests
         {
             var store = new JsonProjectStore(); await store.SaveAsync(path, project);
             var doc = JsonNode.Parse(File.ReadAllText(path))!; doc["formatVersion"] = 13; doc.AsObject().Remove("inputBindings"); doc["pauseScreenId"] = scene.Id;
+            ScreenFixture.RemoveGeometry(doc);
             foreach (var binding in doc["scenes"]![0]!["canvas"]!["buttons"]!.AsArray()) { binding!.AsObject().Remove("group"); binding.AsObject().Remove("amount"); }
             doc["scenes"]![0]!["canvas"]!["buttons"]![1]!["action"] = 5;
             File.WriteAllText(path, doc.ToJsonString()); var original = File.ReadAllBytes(path);
@@ -72,6 +73,8 @@ public sealed class ProjectInputTests
             File.WriteAllText(path, doc.ToJsonString()); await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
             doc["scenes"]![0]!["canvas"]!["buttons"]![1]!["action"] = 5; doc["pauseScreenId"] = null;
             File.WriteAllText(path, doc.ToJsonString()); Assert.IsEmpty((await store.LoadAsync(path)).InputBindings);
+            doc["scenes"]![0]!["canvas"]!["nodes"]![1]!["kind"] = 5;
+            File.WriteAllText(path, doc.ToJsonString()); await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
         }
         finally { File.Delete(path); }
     }

@@ -7,6 +7,8 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using NovellMaker.Core.Assets;
 using NovellMaker.Editor.Services.Assets;
+using NovellMaker.Core.Screens;
+using SkiaSharp;
 
 namespace NovellMaker.Editor.Views;
 
@@ -27,6 +29,8 @@ public sealed class ProjectImageView : UserControl
         AvaloniaProperty.Register<ProjectImageView, bool>(nameof(TransparentBackground));
     public static readonly StyledProperty<Stretch> ImageStretchProperty =
         AvaloniaProperty.Register<ProjectImageView, Stretch>(nameof(ImageStretch), Stretch.Uniform);
+    public static readonly StyledProperty<string> TintProperty = AvaloniaProperty.Register<ProjectImageView, string>(nameof(Tint), "#FFFFFF");
+    public string Tint { get => GetValue(TintProperty); set => SetValue(TintProperty, value); }
 
     public static readonly DirectProperty<ProjectImageView, string> PreviewStatusProperty =
         AvaloniaProperty.RegisterDirect<ProjectImageView, string>(
@@ -131,6 +135,7 @@ public sealed class ProjectImageView : UserControl
         if (change.Property == ProjectDirectoryProperty ||
             change.Property == AssetProperty ||
             change.Property == RevisionProperty ||
+            change.Property == TintProperty ||
             change.Property == MaximumWidthProperty)
         {
             BeginLoad();
@@ -175,13 +180,14 @@ public sealed class ProjectImageView : UserControl
         var cancellation = new CancellationTokenSource();
         loadCancellation = cancellation;
         SetState("Загрузка изображения…", false);
-        PreviewLoad = LoadPreviewAsync(directory, asset, MaximumWidth, version, cancellation);
+        PreviewLoad = LoadPreviewAsync(directory, asset, MaximumWidth, Tint, version, cancellation);
     }
 
     private async Task LoadPreviewAsync(
         string directory,
         ImageAsset asset,
         int maximumWidth,
+        string tint,
         long version,
         CancellationTokenSource cancellation)
     {
@@ -194,6 +200,17 @@ public sealed class ProjectImageView : UserControl
             loadedBitmap = await Task.Run(
                     () =>
                     {
+                        if (tint != "#FFFFFF" && ScreenTint.TryParse(tint, out var color))
+                        {
+                            using var source = SKBitmap.Decode(bytes);
+                            using var target = new SKBitmap(source.Width, source.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+                            using var canvas = new SKCanvas(target);
+                            using var filter = SKColorFilter.CreateColorMatrix([(float)color.R, 0, 0, 0, 0, 0, (float)color.G, 0, 0, 0, 0, 0, (float)color.B, 0, 0, 0, 0, 0, 1, 0]);
+                            using var paint = new SKPaint { ColorFilter = filter };
+                            canvas.DrawBitmap(source, 0, 0, paint);
+                            using var encoded = target.Encode(SKEncodedImageFormat.Png, 100);
+                            using var tinted = encoded.AsStream(); return new Bitmap(tinted);
+                        }
                         using var stream = new MemoryStream(bytes, writable: false);
                         return new Bitmap(stream);
                     },

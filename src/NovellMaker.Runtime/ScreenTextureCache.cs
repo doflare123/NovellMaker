@@ -82,28 +82,18 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
     internal static List<ScreenRasterNode> Plan(ScreenDefinition definition, ScreenRect viewport, Action? reject = null)
     {
         var result = new List<ScreenRasterNode>();
-        var map = definition.Nodes.ToDictionary(n => n.Id);
-        foreach (var node in definition.Nodes.Where(n => n.Kind is ScreenNodeKind.Text or ScreenNodeKind.Button))
+        foreach (var visual in definition.Visuals(viewport).Where(v => v.Node.Kind is ScreenNodeKind.Text or ScreenNodeKind.Button))
         {
-            var path = new Stack<ScreenNode>();
-            for (var current = node; ; current = map[current.ParentId!.Value])
-            { path.Push(current); if (current.ParentId is null) break; }
-            var x = 0d; var y = 0d;
-            var left = viewport.X; var top = viewport.Y;
-            var right = left + viewport.Width; var bottom = top + viewport.Height;
-            foreach (var ancestor in path)
-            {
-                if (!ancestor.Visible) { right = left; break; }
-                x += ancestor.Bounds.X; y += ancestor.Bounds.Y;
-                left = Math.Max(left, x); top = Math.Max(top, y);
-                right = Math.Min(right, x + ancestor.Bounds.Width); bottom = Math.Min(bottom, y + ancestor.Bounds.Height);
-            }
-            var ix = (int)Math.Ceiling(left); var iy = (int)Math.Ceiling(top);
-            var width = (int)Math.Floor(right) - ix; var height = (int)Math.Floor(bottom) - iy;
+            var node = visual.Node;
+            var local = ScreenPolygon.Bounds(ScreenPolygon.Transform(visual.Polygon, visual.Inverse));
+            var left = Math.Max(0, (int)Math.Floor(local.X + 1e-8)); var top = Math.Max(0, (int)Math.Floor(local.Y + 1e-8));
+            var width = (int)Math.Ceiling(Math.Min(node.Bounds.Width, local.X + local.Width) - 1e-8) - left;
+            var height = (int)Math.Ceiling(Math.Min(node.Bounds.Height, local.Y + local.Height) - 1e-8) - top;
             if (width <= 0 || height <= 0) continue;
             if (width > MaximumTextureSide || height > MaximumTextureSide || (long)width * height > MaximumTexturePixels)
             { reject?.Invoke(); continue; }
-            result.Add(new(node, new(node.Text, width, height, (int)(ix - x), (int)(iy - y), node.Bounds.Height, node.ImageId is not null || node.Kind == ScreenNodeKind.Text), ix, iy));
+            var origin = visual.World.Apply(left, top);
+            result.Add(new(node, new(node.Text, width, height, left, top, node.Bounds.Height, node.ImageId is not null || node.Kind == ScreenNodeKind.Text), (int)origin.X, (int)origin.Y));
         }
         return result;
     }

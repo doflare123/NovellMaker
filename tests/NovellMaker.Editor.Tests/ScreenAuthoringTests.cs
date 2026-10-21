@@ -12,6 +12,34 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ScreenAuthoringTests
 {
     [TestMethod]
+    public async Task SubtreeCopyParentOrderAndDeleteKeepRefsAndHistoryAcrossSaveAsAndF6()
+    {
+        using var folder = new Folder(); var dialogs = new Dialogs { SavePath = Path.Combine(folder.Path, "tree.novell") }; var preview = new Preview();
+        using var session = await Session(dialogs, preview: preview); session.AddScene();
+        session.AddScreenNodeAt(ScreenNodeKind.Panel, 100, 100); var panel = session.SelectedScreenNode!;
+        session.UpdateScreenNode(panel with { Geometry = new() { Rotation = 20, ScaleX = .8, ScaleY = 1.2 }, Color = "#80CCFF", ClipChildren = false }); panel = session.SelectedScreenNode!;
+        session.AddScreenNodeAt(ScreenNodeKind.Area, 120, 130); var child = session.SelectedScreenNode!;
+        session.UpdateScreen(session.SelectedScreen! with { References = session.SelectedScreen.References.Add("hit", child.Id).Add("panel", panel.Id), Buttons = [new(child.Id, ScreenButtonAction.Close, null)] });
+        session.SelectScreenNode(panel.Id); var before = session.SelectedScreen!; session.DuplicateScreenNode(); var copy = session.SelectedScreenNode!;
+        Assert.AreNotEqual(panel.Id, copy.Id); Assert.AreEqual(panel.Geometry, copy.Geometry);
+        var copiedChild = session.SelectedScreen!.Nodes.Single(n => n.ParentId == copy.Id);
+        Assert.AreEqual(copiedChild.Id, session.SelectedScreen.References["hit_copy"]); Assert.AreEqual(copy.Id, session.SelectedScreen.References["panel_copy"]);
+        Assert.AreEqual(copiedChild.Id, session.SelectedScreen.Buttons.Last().NodeId);
+        session.Undo(); Assert.IsTrue(before.ContentEquals(session.SelectedScreen!)); session.Redo();
+        session.SelectScreenNode(copiedChild.Id); session.ReparentScreenNode(panel.Id); Assert.AreEqual(panel.Id, session.SelectedScreenNode!.ParentId);
+        Assert.AreEqual(copiedChild.Bounds, session.SelectedScreenNode.Bounds); Assert.AreEqual(copiedChild.Id, session.SelectedScreen.References["hit_copy"]);
+        var unchanged = session.Project; var dirty = session.IsDirty;
+        session.SelectScreenNode(panel.Id); Assert.Throws<ArgumentException>(() => session.ReparentScreenNode(panel.Id)); Assert.AreSame(unchanged, session.Project); Assert.AreEqual(dirty, session.IsDirty);
+        session.SelectScreenNode(child.Id); session.UpdateScreenNode(child with { Order = 5 }); session.MoveScreenNode(-1);
+        Assert.AreEqual(child.Id, session.SelectedScreen!.Definition().Buttons[0].Id);
+        await session.DeleteScreenNodeAsync(panel.Id); Assert.IsFalse(session.SelectedScreen!.References.ContainsKey("hit")); Assert.IsFalse(session.SelectedScreen.References.ContainsKey("hit_copy"));
+        session.Undo(); Assert.AreEqual(child.Id, session.SelectedScreen!.References["hit"]); Assert.AreEqual(copiedChild.Id, session.SelectedScreen.References["hit_copy"]);
+        await session.SaveAsync(); var directory = Path.Combine(folder.Path, "copy"); Directory.CreateDirectory(directory); dialogs.SavePath = Path.Combine(directory, "copy.novell");
+        await session.SaveAsync(true); Assert.IsTrue(session.Project!.ContentEquals(await new JsonProjectStore().LoadAsync(dialogs.SavePath)));
+        await session.PreviewSceneAsync(); Assert.IsNotNull(preview.Request); Assert.IsTrue(session.Project.ContentEquals(preview.Request.Project)); Assert.IsEmpty(dialogs.Errors);
+    }
+
+    [TestMethod]
     public async Task ComponentNodeLimitAndLegacyRootExpansionAreAlsoAtomic()
     {
         using var session = await Session(); session.AddScene(); var screen = session.SelectedScreen!;

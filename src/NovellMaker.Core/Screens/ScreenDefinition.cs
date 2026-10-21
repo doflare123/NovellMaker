@@ -2,9 +2,9 @@ using System.Collections.Immutable;
 
 namespace NovellMaker.Core.Screens;
 
-public enum ScreenNodeKind { Container, Panel, Text, Button, Image }
+public enum ScreenNodeKind { Container, Panel, Text, Button, Image, Area }
 
-/// <summary>Logical pixels; child rectangles are relative to their parent. All parents clip.</summary>
+/// <summary>Logical pixels; child rectangles are relative to their parent anchor.</summary>
 public readonly record struct ScreenRect(double X, double Y, double Width, double Height)
 {
     public bool Contains(double x, double y) => x >= X && y >= Y && x < X + Width && y < Y + Height;
@@ -18,6 +18,10 @@ public sealed record ScreenNode(Guid Id, Guid? ParentId, ScreenNodeKind Kind, Sc
 {
     public Guid? ImageId { get; init; }
     public string Name { get; init; } = "";
+    [System.Text.Json.Serialization.JsonRequired] public ScreenGeometry Geometry { get; init; } = new();
+    [System.Text.Json.Serialization.JsonRequired] public bool ClipChildren { get; init; } = true;
+    [System.Text.Json.Serialization.JsonRequired] public int Order { get; init; }
+    [System.Text.Json.Serialization.JsonRequired] public string Color { get; init; } = "#FFFFFF";
 }
 
 /// <summary>Immutable, validated screen resource, independent of graphics and script execution.</summary>
@@ -26,20 +30,25 @@ public sealed class ScreenDefinition
     public const int MaxNodes = 1024;
     public const int MaxDepth = 32;
     public const int MaxTextCharacters = 131072;
-    private readonly ImmutableDictionary<Guid, ScreenNode> byId;
+    public const int MaxNodeIdentities = 4096;
     private readonly ImmutableDictionary<Guid, ImmutableArray<ScreenNode>> children;
     private readonly ScreenNode root;
+    private readonly ImmutableArray<ScreenVisual> visuals;
+    private readonly ImmutableDictionary<Guid, ScreenVisual> layout;
 
-    public ScreenDefinition(Guid id, ImmutableArray<ScreenNode> nodes)
+    public ScreenDefinition(Guid id, ImmutableArray<ScreenNode> nodes) : this(id, nodes, []) { }
+
+    internal ScreenDefinition(Guid id, ImmutableArray<ScreenNode> nodes, ImmutableHashSet<Guid> retired)
     {
-        if (id == Guid.Empty || nodes.IsDefaultOrEmpty || nodes.Length > MaxNodes)
+        if (id == Guid.Empty || nodes.IsDefaultOrEmpty || nodes.Length > MaxNodes || nodes.Length + retired.Count > MaxNodeIdentities || nodes.Any(n => n is not null && retired.Contains(n.Id)))
             throw new ArgumentException("Экран должен иметь ID и от 1 до 1024 узлов.");
         var map = new Dictionary<Guid, ScreenNode>();
         var characters = 0;
         foreach (var node in nodes)
         {
             if (node is null || node.Id == Guid.Empty || !map.TryAdd(node.Id, node) ||
-                !Enum.IsDefined(node.Kind) || node.ImageId == Guid.Empty || node.Name is null || node.Name.Length > 128 || !node.Bounds.IsValid || node.Text is null || node.Text.Length > 8192)
+                !Enum.IsDefined(node.Kind) || node.ImageId == Guid.Empty || node.Name is null || node.Name.Length > 128 || !node.Bounds.IsValid || node.Text is null || node.Text.Length > 8192 ||
+                node.Geometry is null || !node.Geometry.IsValid || !ScreenTint.TryParse(node.Color, out _) || Math.Abs((long)node.Order) > 100000)
                 throw new ArgumentException("Недопустимый узел экрана.");
             characters += node.Text.Length;
         }
@@ -58,85 +67,83 @@ public sealed class ScreenDefinition
             }
         }
         Id = id;
+        RetiredNodeIds = retired;
         Nodes = nodes;
-        byId = map.ToImmutableDictionary();
         root = nodes.Single(n => n.ParentId is null);
         children = nodes.Where(n => n.ParentId is not null).GroupBy(n => n.ParentId!.Value)
-            .ToImmutableDictionary(g => g.Key, g => g.Reverse().ToImmutableArray());
-        Buttons = [.. Nodes.Where(n => n.Kind == ScreenNodeKind.Button && IsInteractive(n))];
+            .ToImmutableDictionary(g => g.Key, g => g.OrderBy(n => n.Order).ToImmutableArray());
+        var prepared = ImmutableArray.CreateBuilder<ScreenVisual>();
+        Build(root, ScreenMatrix.Identity, 1280, 720, null, true, true, 1, ScreenTint.White);
+        visuals = prepared.ToImmutable();
+        layout = visuals.ToImmutableDictionary(v => v.Node.Id);
+        Buttons = [.. visuals.Where(v => v.Node.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area && v.Enabled && !v.Polygon.IsEmpty).Select(v => v.Node)];
+
+        void Build(ScreenNode node, ScreenMatrix parent, double width, double height,
+            ImmutableArray<ScreenPoint>? clip, bool visible, bool enabled, double opacity, ScreenTint tint)
+        {
+            var world = node.Geometry.Matrix(node.Bounds, width, height).Then(parent);
+            var inverse = world.Inverse();
+            var rectangle = ScreenPolygon.Transform(ScreenPolygon.Rectangle(new(0, 0, node.Bounds.Width, node.Bounds.Height)), world);
+            if (rectangle.Any(p => !double.IsFinite(p.X) || !double.IsFinite(p.Y) || Math.Abs(p.X) > 1e8 || Math.Abs(p.Y) > 1e8))
+                throw new ArgumentException("Превышен диапазон мировой геометрии узла.");
+            visible &= node.Visible; enabled &= node.Enabled; opacity *= node.Geometry.Opacity;
+            ScreenTint.TryParse(node.Color, out var color); tint = tint.Multiply(color);
+            var polygon = clip is { } boundary ? ScreenPolygon.Clip(rectangle, boundary) : rectangle;
+            prepared.Add(new(node, world, inverse, visible && opacity > 0 ? polygon : [], opacity, tint, enabled));
+            var childClip = node.ClipChildren ? polygon : clip;
+            foreach (var child in children.GetValueOrDefault(node.Id, []))
+                Build(child, world, node.Bounds.Width, node.Bounds.Height, childClip, visible, enabled, opacity, tint);
+        }
     }
 
     public Guid Id { get; }
+    internal ImmutableHashSet<Guid> RetiredNodeIds { get; }
     /// <summary>Sibling order is paint order; later sibling subtrees are above earlier ones.</summary>
     public ImmutableArray<ScreenNode> Nodes { get; }
 
     public ImmutableArray<ScreenNode> Buttons { get; }
 
-    /// <summary>Clipped logical rectangles in subtree paint order, shared by menu previews.</summary>
-    public IEnumerable<(ScreenNode Node, ScreenRect Bounds)> VisibleRegions(ScreenRect viewport)
-    {
-        return Visit(root, 0, 0, viewport);
-        IEnumerable<(ScreenNode, ScreenRect)> Visit(ScreenNode node, double x, double y, ScreenRect clip)
-        {
-            if (!node.Visible) yield break;
-            x += node.Bounds.X; y += node.Bounds.Y;
-            var left = Math.Max(x, clip.X); var top = Math.Max(y, clip.Y);
-            var right = Math.Min(x + node.Bounds.Width, clip.X + clip.Width);
-            var bottom = Math.Min(y + node.Bounds.Height, clip.Y + clip.Height);
-            if (left >= right || top >= bottom) yield break;
-            var bounds = new ScreenRect(left, top, right - left, bottom - top);
-            yield return (node, bounds);
-            foreach (var child in children.GetValueOrDefault(node.Id, []).Reverse())
-                foreach (var region in Visit(child, x, y, bounds)) yield return region;
-        }
-    }
+    public IEnumerable<ScreenVisual> Visuals(ScreenRect viewport) => visuals
+        .Select(v => v with { Polygon = ScreenPolygon.Clip(v.Polygon, ScreenPolygon.Rectangle(viewport)) })
+        .Where(v => !v.Polygon.IsEmpty);
+
+    public IEnumerable<(ScreenNode Node, ScreenRect Bounds)> VisibleRegions(ScreenRect viewport) =>
+        Visuals(viewport).Select(v => (v.Node, v.Bounds));
+
+    public ScreenVisual Visual(Guid id) => layout[id];
+    public bool ContainsNode(Guid id, double x, double y) => Contains(layout[id], x, y);
 
     public ScreenRect AbsoluteBounds(Guid id)
     {
-        var node = byId[id]; var bounds = node.Bounds;
-        while (node.ParentId is { } parent)
-        { node = byId[parent]; bounds = bounds with { X = bounds.X + node.Bounds.X, Y = bounds.Y + node.Bounds.Y }; }
-        return bounds;
+        var visual = layout[id];
+        return ScreenPolygon.Bounds(ScreenPolygon.Transform(ScreenPolygon.Rectangle(new(0, 0, visual.Node.Bounds.Width, visual.Node.Bounds.Height)), visual.World));
     }
 
-    public Guid? PickNode(double x, double y) => VisibleRegions(new(-100000, -100000, 200000, 200000))
-        .Reverse().FirstOrDefault(r => r.Bounds.Contains(x, y)).Node?.Id;
+    public Guid? PickNode(double x, double y) => visuals.Reverse().FirstOrDefault(v => Contains(v, x, y))?.Node.Id;
 
     public Guid? HitTest(double x, double y)
     {
-        // Compare paths, rather than flat positions: a later sibling covers an entire earlier subtree.
-        var hit = Hit(root, x, y);
-        return hit?.Kind == ScreenNodeKind.Button ? hit.Id : null;
+        var hit = PointerTarget(x, y);
+        return hit?.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area ? hit.Id : null;
     }
 
-    private ScreenNode? Hit(ScreenNode node, double x, double y)
-    {
-        if (!node.Visible || !node.Enabled || !node.Bounds.Contains(x, y)) return null;
-        foreach (var child in children.GetValueOrDefault(node.Id, []))
-        {
-            var hit = Hit(child, x - node.Bounds.X, y - node.Bounds.Y);
-            if (hit is not null) return hit;
-        }
-        // Panels and controls occlude earlier siblings; a container itself is transparent.
-        return node.Kind == ScreenNodeKind.Container ? null : node;
-    }
+    public ScreenNode? PointerTarget(double x, double y) => visuals.Reverse()
+        .FirstOrDefault(v => v.Enabled && v.Node.Kind != ScreenNodeKind.Container && Contains(v, x, y))?.Node;
 
-    private bool IsInteractive(ScreenNode node)
+    private bool Contains(ScreenVisual visual, double x, double y)
     {
-        var left = node.Bounds.X;
-        var top = node.Bounds.Y;
-        var right = left + node.Bounds.Width;
-        var bottom = top + node.Bounds.Height;
+        if (!double.IsFinite(x) || !double.IsFinite(y) || visual.Polygon.IsEmpty) return false;
+        var current = visual;
+        var own = true;
         while (true)
         {
-            if (!node.Visible || !node.Enabled) return false;
-            if (node.ParentId is not { } parent) return true;
-            node = byId[parent];
-            left = Math.Max(0, left); top = Math.Max(0, top);
-            right = Math.Min(node.Bounds.Width, right); bottom = Math.Min(node.Bounds.Height, bottom);
-            if (left >= right || top >= bottom) return false;
-            left += node.Bounds.X; right += node.Bounds.X;
-            top += node.Bounds.Y; bottom += node.Bounds.Y;
+            if (own || current.Node.ClipChildren)
+            {
+                var local = current.ToLocal(x, y);
+                if (!new ScreenRect(0, 0, current.Node.Bounds.Width, current.Node.Bounds.Height).Contains(local.X, local.Y)) return false;
+            }
+            if (current.Node.ParentId is not { } parent) return true;
+            current = layout[parent]; own = false;
         }
     }
 }

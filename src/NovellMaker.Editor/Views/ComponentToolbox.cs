@@ -39,7 +39,7 @@ public sealed class ComponentToolbox : UserControl
         layers.SelectionChanged += (_, _) => { if (!refreshing) session?.SelectScreenNode(((layers.SelectedItem as TreeViewItem)?.DataContext as ScreenNode)?.Id); };
         foreach (var (kind, label, glyph) in new[] {
             (ScreenNodeKind.Text, "Текст", "T"), (ScreenNodeKind.Button, "Кнопка", "▭"), (ScreenNodeKind.Image, "Изображение", "▧"),
-            (ScreenNodeKind.Panel, "Панель", "□"), (ScreenNodeKind.Container, "Контейнер", "⊞") })
+            (ScreenNodeKind.Panel, "Панель", "□"), (ScreenNodeKind.Container, "Контейнер", "⊞"), (ScreenNodeKind.Area, "Интерактивная область", "◌") })
             body.Children.Add(Item(label, glyph, new(kind)));
         body.Children.Add(new Border { Height = 1, Background = Brush.Parse("#3A3E45"), Margin = new Thickness(0, 8) });
         body.Children.Add(new TextBlock { Text = "Изображения проекта", FontWeight = FontWeight.SemiBold, FontSize = 12 }); body.Children.Add(images);
@@ -87,7 +87,21 @@ public sealed class ComponentToolbox : UserControl
             TreeViewItem Branch(ScreenNode node)
             {
                 var item = new TreeViewItem { DataContext = node, Header = node.Name.Length > 0 ? node.Name : ComponentName(node), IsExpanded = true,
-                    ItemsSource = nodes.Where(n => n.ParentId == node.Id).Select(Branch).ToArray() };
+                    ItemsSource = nodes.Where(n => n.ParentId == node.Id).OrderBy(n => n.Order).Select(Branch).ToArray() };
+                if (node.ParentId is not null)
+                {
+                    var copy = new MenuItem { Header = "Копировать поддерево" }; var remove = new MenuItem { Header = "Удалить поддерево…" };
+                    var lower = new MenuItem { Header = "Ниже" }; var upper = new MenuItem { Header = "Выше" };
+                    void Edit(Action action)
+                    {
+                        session?.SelectScreenNode(node.Id);
+                        try { action(); } catch (ArgumentException error) { session?.ReportScreenError(error.Message); }
+                    }
+                    copy.Click += (_, _) => Edit(() => session?.DuplicateScreenNode());
+                    lower.Click += (_, _) => Edit(() => session?.MoveScreenNode(-1)); upper.Click += (_, _) => Edit(() => session?.MoveScreenNode(1));
+                    remove.Click += async (_, _) => { if (session is { } current) { current.SelectScreenNode(node.Id); await current.DeleteScreenNodeAsync(node.Id); } };
+                    item.ContextMenu = new ContextMenu { ItemsSource = new[] { copy, lower, upper, remove } };
+                }
                 if (node.Id == session?.SelectedScreenNodeId) selected = item;
                 return item;
             }

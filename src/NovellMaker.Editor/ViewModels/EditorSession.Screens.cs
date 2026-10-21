@@ -15,6 +15,7 @@ public sealed partial class EditorSession
     public ScreenAsset? SelectedScreen => project?.Screens.FirstOrDefault(s => s.Id == SelectedScreenId);
     public ScreenNode? SelectedScreenNode => SelectedScreen?.Nodes.FirstOrDefault(n => n.Id == SelectedScreenNodeId);
     public string ScreenAuthoringError { get; private set; } = "";
+    internal void ReportScreenError(string message) { ScreenAuthoringError = message; Changed(nameof(ScreenAuthoringError)); }
 
     private void CommitAddedNode(ScreenAsset screen, ScreenNode node)
     {
@@ -69,6 +70,7 @@ public sealed partial class EditorSession
         var candidate = project.WithCanvas(value);
         ScreenAsset.ValidateProject(candidate);
         EditProject(candidate, group);
+        ReportScreenError("");
     }
 
     public void SetInputBinding(ProjectInputBinding binding)
@@ -133,17 +135,17 @@ public sealed partial class EditorSession
         if (!CanEdit || SelectedScreen is not { } screen || !Enum.IsDefined(kind) || !double.IsFinite(x) || !double.IsFinite(y)) return;
         if (imageId is { } image && project?.Images.Any(i => i.Id == image) != true) return;
         var root = screen.Nodes.Single(n => n.ParentId is null);
-        if (!root.Bounds.Contains(x, y))
+        if (!screen.Definition().ContainsNode(root.Id, x, y))
         {
             var newRoot = new ScreenNode(Guid.NewGuid(), null, ScreenNodeKind.Container, new(0, 0, 1280, 720));
             screen = screen with { Nodes = screen.Nodes.Replace(root, root with { ParentId = newRoot.Id }).Add(newRoot) };
         }
         var definition = screen.Definition();
         var parent = definition.VisibleRegions(new(0, 0, 1280, 720)).Reverse()
-            .FirstOrDefault(r => r.Node.Kind is ScreenNodeKind.Container or ScreenNodeKind.Panel && r.Bounds.Contains(x, y)).Node ?? screen.Nodes.Single(n => n.ParentId is null);
-        var origin = definition.AbsoluteBounds(parent.Id);
+            .FirstOrDefault(r => r.Node.Kind is ScreenNodeKind.Container or ScreenNodeKind.Panel && definition.ContainsNode(r.Node.Id, x, y)).Node ?? screen.Nodes.Single(n => n.ParentId is null);
+        var origin = definition.Visual(parent.Id).ToLocal(x, y);
         var node = new ScreenNode(Guid.NewGuid(), parent.Id, kind,
-            new(x - origin.X, y - origin.Y, kind is ScreenNodeKind.Image or ScreenNodeKind.Panel ? 240 : 200, kind is ScreenNodeKind.Image or ScreenNodeKind.Panel ? 160 : 48),
+            new(origin.X, origin.Y, kind is ScreenNodeKind.Image or ScreenNodeKind.Panel ? 240 : 200, kind is ScreenNodeKind.Image or ScreenNodeKind.Panel ? 160 : 48),
             kind == ScreenNodeKind.Button ? "Кнопка" : kind == ScreenNodeKind.Text ? "Текст" : "") { ImageId = imageId };
         CommitAddedNode(screen, node);
     }
@@ -161,7 +163,7 @@ public sealed partial class EditorSession
     public void UpdateScreenNode(ScreenNode node, string? group = null)
     {
         if (SelectedScreen is not { } screen || !screen.Nodes.Any(n => n.Id == node.Id)) return;
-        var buttons = node.Kind == ScreenNodeKind.Button ? screen.Buttons : screen.Buttons.Where(b => b.NodeId != node.Id).ToImmutableArray();
+        var buttons = node.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area ? screen.Buttons : screen.Buttons.Where(b => b.NodeId != node.Id).ToImmutableArray();
         UpdateScreen(screen with { Nodes = screen.Nodes.SetItem(screen.Nodes.IndexOf(screen.Nodes.Single(n => n.Id == node.Id)), node), Buttons = buttons }, group);
     }
 
@@ -186,11 +188,34 @@ public sealed partial class EditorSession
     public void MoveScreenNode(int direction)
     {
         if (SelectedScreen is not { } screen || SelectedScreenNode is not { ParentId: { } parent } node) return;
-        var siblings = screen.Nodes.Where(n => n.ParentId == parent).ToArray();
+        var siblings = screen.Nodes.Where(n => n.ParentId == parent).OrderBy(n => n.Order).ToArray();
         var index = Array.IndexOf(siblings, node); var next = index + direction;
         if (next < 0 || next >= siblings.Length) return;
         var a = screen.Nodes.IndexOf(node); var b = screen.Nodes.IndexOf(siblings[next]);
-        UpdateScreen(screen with { Nodes = screen.Nodes.SetItem(a, siblings[next]).SetItem(b, node) });
+        UpdateScreen(screen with { Nodes = screen.Nodes.SetItem(a, siblings[next] with { Order = node.Order }).SetItem(b, node with { Order = siblings[next].Order }) });
+    }
+
+    public void ReparentScreenNode(Guid parent)
+    {
+        if (SelectedScreen is not { } screen || SelectedScreenNode is not { } node) return;
+        UpdateScreen(screen with { Nodes = ScreenTree.Reparent(screen.Definition(), node.Id, parent).Nodes });
+    }
+
+    public void DuplicateScreenNode()
+    {
+        if (SelectedScreen is not { } screen || SelectedScreenNode is not { ParentId: { } parent } node) return;
+        var (definition, ids) = ScreenTree.Copy(screen.Definition(), node.Id, parent);
+        var references = screen.References;
+        foreach (var pair in screen.References.Where(r => ids.ContainsKey(r.Value)))
+        {
+            var suffix = 1; var stem = pair.Key.Length > 110 ? pair.Key[..110] : pair.Key;
+            var name = stem + "_copy";
+            while (references.ContainsKey(name)) name = stem + "_copy" + ++suffix;
+            references = references.Add(name, ids[pair.Value]);
+        }
+        UpdateScreen(screen with { Nodes = definition.Nodes, References = references,
+            Buttons = screen.Buttons.AddRange(screen.Buttons.Where(b => ids.ContainsKey(b.NodeId)).Select(b => b with { NodeId = ids[b.NodeId] })) });
+        SelectScreenNode(ids[node.Id]);
     }
 
     public Task CreateScreenHandlerAsync() => RunAsync(async () =>

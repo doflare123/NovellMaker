@@ -70,6 +70,8 @@ public sealed class ScreenStack
     {
         RequireOwned(instance);
         if (instance.Version != version) throw new InvalidOperationException("Устаревшая версия экрана.");
+        if (definition.Id != instance.Definition.Id || instances.Sum(i => i.Definition.Nodes.Length) - instance.Definition.Nodes.Length + definition.Nodes.Length > MaxSessionNodes)
+            throw new InvalidOperationException("Чужой ресурс или превышен бюджет узлов сеанса.");
         // Text updates must not swallow a press or reset focus on another screen.
         if (capture?.InstanceId == instance.Id && !definition.Buttons.Any(n => n.Id == capture.NodeId)) capture = null;
         if (focus?.InstanceId == instance.Id && !definition.Buttons.Any(n => n.Id == focus.NodeId)) focus = null;
@@ -112,6 +114,7 @@ public sealed class ScreenStack
                     if (input.Kind == ScreenInputKind.PointerDown) capture = focus;
                     return new(true);
                 }
+                if (instance.Definition.PointerTarget(input.X, input.Y) is not null) return new(true);
             }
             else
             {

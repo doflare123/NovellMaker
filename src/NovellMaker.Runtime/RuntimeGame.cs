@@ -251,6 +251,7 @@ internal sealed partial class RuntimeGame : Game
         player.Dispose();
         screens.Dispose();
         componentTextures?.Dispose();
+        componentEffect?.Dispose();
         audio?.Dispose();
         actionHelp?.Dispose();
         foreach (var button in interactionButtons) button.Texture.Dispose();
@@ -319,6 +320,15 @@ internal sealed partial class RuntimeGame : Game
                 var consumed = RouteScreen(new(ScreenInputKind.PointerDown, step.X, step.Y));
                 success = RouteScreen(new(ScreenInputKind.PointerUp, step.X, step.Y)) || consumed;
                 if (!success) success = ClickLogical(new Point(step.X, step.Y));
+                break;
+            case "resize":
+                if (step.X is < 320 or > 3840 || step.Y is < 240 or > 2160) throw new ArgumentException("Недопустимый smoke-размер окна.");
+                graphics.PreferredBackBufferWidth = step.X; graphics.PreferredBackBufferHeight = step.Y; graphics.ApplyChanges(); break;
+            case "window_click":
+                var letterbox = RuntimeInputMapper.CalculateLetterbox(GraphicsDevice.PresentationParameters.BackBufferWidth, GraphicsDevice.PresentationParameters.BackBufferHeight);
+                if (RuntimeInputMapper.TryMapWindowToLogical(new(step.X, step.Y), letterbox, out var mapped))
+                { RouteScreen(new(ScreenInputKind.PointerDown, mapped.X, mapped.Y)); success = RouteScreen(new(ScreenInputKind.PointerUp, mapped.X, mapped.Y)); }
+                else success = false;
                 break;
             case "key": success = RouteProjectKey(step.Key ?? ""); break;
             case "back": success = RouteScreen(new(ScreenInputKind.Back)); break;
@@ -646,6 +656,15 @@ internal sealed partial class RuntimeGame : Game
         {
             target.SaveAsPng(stream, LogicalWidth, LogicalHeight);
         }
+        var windowWidth = GraphicsDevice.PresentationParameters.BackBufferWidth;
+        var windowHeight = GraphicsDevice.PresentationParameters.BackBufferHeight;
+        var windowPixels = new Color[checked(windowWidth * windowHeight)]; GraphicsDevice.GetBackBufferData(windowPixels);
+        using (var windowTexture = new Texture2D(GraphicsDevice, windowWidth, windowHeight))
+        {
+            windowTexture.SetData(windowPixels);
+            using var stream = File.Create(Path.ChangeExtension(arguments.SmokeOutputPath!, ".window.png"));
+            windowTexture.SaveAsPng(stream, windowWidth, windowHeight);
+        }
 
         var report = new RuntimeSmokeReport(
             Loaded: true,
@@ -665,6 +684,7 @@ internal sealed partial class RuntimeGame : Game
                 ScreenLuaAppliedBatches = screens.Scripts?.AppliedBatches ?? 0,
                 ScreenLuaDiagnostics = screens.Scripts?.Diagnostics ?? [],
                 Packaged = arguments.Package is not null, WindowTitle = Window.Title,
+                WindowWidth = GraphicsDevice.PresentationParameters.BackBufferWidth, WindowHeight = GraphicsDevice.PresentationParameters.BackBufferHeight,
                 RuntimeLibraryPath = typeof(object).Assembly.Location, AudioSources = audio?.ActiveSources ?? 0, AudioSubmittedBytes = audioBackend.SubmittedBytes, AudioOpenedSources = audioBackend.OpenedSources, AudioMixer = Enum.GetValues<NovellMaker.Core.Audio.AudioGroup>().ToDictionary(g => g, g => audio!.Bus(g)) };
         var options = new JsonSerializerOptions
         {
@@ -703,6 +723,8 @@ internal sealed record RuntimeSmokeReport(
     public string? SavePath { get; init; }
     public bool Packaged { get; init; }
     public string? WindowTitle { get; init; }
+    public int WindowWidth { get; init; }
+    public int WindowHeight { get; init; }
     public string? RuntimeLibraryPath { get; init; }
     public int AudioSources { get; init; }
     public long AudioSubmittedBytes { get; init; }

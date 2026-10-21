@@ -33,6 +33,7 @@ public sealed class JsonProjectStore : IProjectStore
     }
     private static void RemoveScenePolicies(JsonTypeInfo info)
     {
+        RemoveGeometryFields(info);
         RemoveLegacyBindingFields(info);
         if (info.Type == typeof(NovellMaker.Core.Screens.ScreenAsset))
             foreach (var property in info.Properties.Where(p => p.Name is "pauseOnOverlay" or "blockInputOnOverlay").ToArray()) info.Properties.Remove(property);
@@ -44,6 +45,24 @@ public sealed class JsonProjectStore : IProjectStore
         if (info.Type == typeof(NovellMaker.Core.Screens.ScreenButtonBinding))
             foreach (var property in info.Properties.Where(p => p.Name is "group" or "amount").ToArray()) info.Properties.Remove(property);
     }
+    private static void RemoveGeometryFields(JsonTypeInfo info)
+    {
+        if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode))
+            foreach (var property in info.Properties.Where(p => p.Name is "geometry" or "clipChildren" or "order" or "color").ToArray()) info.Properties.Remove(property);
+    }
+    private static readonly JsonSerializerOptions Version14SerializerOptions = CreateVersion14Options();
+    private static JsonSerializerOptions CreateVersion14Options()
+    {
+        var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
+        var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(info =>
+        {
+            RemoveGeometryFields(info);
+            if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode) || info.Type == typeof(NovellMaker.Core.Screens.ScreenButtonBinding))
+                foreach (var property in info.Properties) property.IsRequired = true;
+        });
+        options.TypeInfoResolver = resolver; return options;
+    }
     private static readonly JsonSerializerOptions Version13SerializerOptions = CreateVersion13Options();
     private static JsonSerializerOptions CreateVersion13Options()
     {
@@ -51,6 +70,7 @@ public sealed class JsonProjectStore : IProjectStore
         var resolver = new DefaultJsonTypeInfoResolver();
         resolver.Modifiers.Add(info =>
         {
+            RemoveGeometryFields(info);
             if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode)) foreach (var property in info.Properties) property.IsRequired = true;
             RemoveLegacyBindingFields(info);
         });
@@ -158,7 +178,8 @@ public sealed class JsonProjectStore : IProjectStore
                 11 => MapLegacyVersion11(await DeserializeRequiredAsync<Version11ProjectDocument>(stream, cancellationToken, Version11SerializerOptions).ConfigureAwait(false)),
                 12 => MapVersion11(await DeserializeRequiredAsync<Version11ProjectDocument>(stream, cancellationToken, Version12SerializerOptions).ConfigureAwait(false)),
                 13 => MapVersion13(await DeserializeRequiredAsync<Version13ProjectDocument>(stream, cancellationToken, Version13SerializerOptions).ConfigureAwait(false)),
-                14 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
+                14 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken, Version14SerializerOptions).ConfigureAwait(false)),
+                15 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken).ConfigureAwait(false), false),
                 10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
                 _ => throw new ProjectFormatException(
@@ -256,7 +277,7 @@ public sealed class JsonProjectStore : IProjectStore
         var resolver = new DefaultJsonTypeInfoResolver();
         resolver.Modifiers.Add(info =>
         {
-            if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode) || info.Type == typeof(NovellMaker.Core.Screens.ScreenButtonBinding))
+            if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode) || info.Type == typeof(NovellMaker.Core.Screens.ScreenButtonBinding) || info.Type == typeof(NovellMaker.Core.Screens.ScreenGeometry))
                 foreach (var property in info.Properties) property.IsRequired = true;
         });
         return new()
@@ -419,6 +440,8 @@ public sealed class JsonProjectStore : IProjectStore
         foreach (var screen in screens)
         {
             if (screen is null || !ids.Add(screen.Id)) throw new ArgumentException("Повторный ID сцены или экрана.");
+            if (!screen.Nodes.IsDefault && screen.Nodes.Any(n => n is not null && (int)n.Kind > 4))
+                throw new ArgumentException("Старый формат не поддерживает интерактивные области.");
             if (!screen.Buttons.IsDefault && screen.Buttons.Any(b => b is not null && (int)b.Action > 5))
                 throw new ArgumentException("Старый формат не поддерживает переходы кнопок к сцене.");
         }
@@ -431,6 +454,8 @@ public sealed class JsonProjectStore : IProjectStore
 
     private static NovelProject MapVersion13(Version13ProjectDocument document, bool legacy = true)
     {
+        if (legacy && document.Scenes?.Any(s => s?.Canvas is { } canvas && !canvas.Nodes.IsDefault && canvas.Nodes.Any(n => n is not null && (int)n.Kind > 4)) == true)
+            throw new ArgumentException("Формат 13 не поддерживает этот вид компонента.");
         if (legacy && document.Scenes is { } scenes && scenes.Any(s => s?.Canvas is { } canvas && !canvas.Buttons.IsDefault && canvas.Buttons.Any(b => b is not null && (int)b.Action > 6)))
             throw new ArgumentException("Формат 13 не поддерживает эту команду компонента.");
         return CreateProject(document.Id, document.Name,
@@ -454,12 +479,17 @@ public sealed class JsonProjectStore : IProjectStore
     private static ImmutableArray<NovellMaker.Core.Screens.ProjectInputBinding> LegacyInputBindings(Guid? pause) => pause is { } id
         ? [new("P", NovellMaker.Core.Screens.ScreenButtonAction.Toggle, id)] : [];
 
-    private static NovelProject MapVersion14(Version14ProjectDocument document) => MapVersion13(new Version13ProjectDocument
+    private static NovelProject MapVersion14(Version14ProjectDocument document, bool legacyGeometry = true)
+    {
+        if (legacyGeometry && document.Scenes?.Any(s => s?.Canvas is { } canvas && !canvas.Nodes.IsDefault && canvas.Nodes.Any(n => n is not null && (int)n.Kind > 4)) == true)
+            throw new ArgumentException("Формат 14 не поддерживает этот вид компонента.");
+        return MapVersion13(new Version13ProjectDocument
     {
         Id = document.Id, Name = document.Name, Scenes = document.Scenes, Images = document.Images, Characters = document.Characters,
         Audio = document.Audio, Scripts = document.Scripts, DefaultLanguage = document.DefaultLanguage, DialogueUi = document.DialogueUi,
         ExplorerShowsFiles = document.ExplorerShowsFiles
     }, legacy: false) with { InputBindings = document.InputBindings ?? throw new ArgumentException("Нет назначений клавиш.") };
+    }
 
     private static ImmutableArray<ImageAsset> MapImages(List<ImageDocument?>? imageDocuments)
     {

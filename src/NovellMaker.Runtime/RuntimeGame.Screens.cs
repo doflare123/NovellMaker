@@ -8,6 +8,7 @@ internal sealed partial class RuntimeGame
 {
     private readonly RuntimeScreens screens;
     private ScreenTextureCache<RenderedTexture>? componentTextures;
+    private BasicEffect? componentEffect;
     private string lastMenuDiagnostics = "";
     internal ValueTask DisposeScreenLuaAsync() => screens.DisposeAsync();
 
@@ -44,29 +45,45 @@ internal sealed partial class RuntimeGame
         var textures = componentTextures.UpdateLayers(instances, new(0, 0, sceneTarget!.Width, sceneTarget.Height));
         if (pixel is null) return;
         var rendered = textures.ToDictionary(t => (t.Region.InstanceId, t.Region.Node.Id));
+        batch.End();
+        componentEffect ??= new BasicEffect(GraphicsDevice) { TextureEnabled = true, VertexColorEnabled = true,
+            Projection = Matrix.CreateOrthographicOffCenter(0, sceneTarget.Width, sceneTarget.Height, 0, 0, 1) };
+        static Color Mix(Color a, Color b) => new(a.ToVector4() * b.ToVector4());
+        void DrawMesh(Texture2D texture, ScreenVisual visual, ScreenRect textureRect, Color color)
+        {
+            var vertices = ScreenMesh.Build(visual, textureRect, color);
+            if (vertices.Length == 0) return;
+            GraphicsDevice.BlendState = BlendState.AlphaBlend; GraphicsDevice.DepthStencilState = DepthStencilState.None;
+            GraphicsDevice.RasterizerState = RasterizerState.CullNone; GraphicsDevice.SamplerStates[0] = SamplerState.LinearClamp;
+            componentEffect.Texture = texture;
+            foreach (var pass in componentEffect.CurrentTechnique.Passes)
+            { pass.Apply(); GraphicsDevice.DrawUserPrimitives(PrimitiveType.TriangleList, vertices, 0, vertices.Length / 3); }
+        }
         foreach (var instance in instances)
         {
             if (!screens.IsSceneInstance(instance) && player.Execution.Project.Scenes.FirstOrDefault(s => s.Id == instance.Definition.Id)?.BackgroundImageId is { } background)
-                DrawBackground(batch, player.Execution.Project.Images.FirstOrDefault(i => i.Id == background));
-            foreach (var (node, bounds) in instance.Definition.VisibleRegions(new(0, 0, sceneTarget.Width, sceneTarget.Height)))
             {
+                batch.Begin(); DrawBackground(batch, player.Execution.Project.Images.FirstOrDefault(i => i.Id == background)); batch.End();
+            }
+            foreach (var visual in instance.Definition.Visuals(new(0, 0, sceneTarget.Width, sceneTarget.Height)))
+            {
+                var node = visual.Node;
+                var local = new ScreenRect(0, 0, node.Bounds.Width, node.Bounds.Height);
+                var tint = new Color((float)(visual.Tint.R * visual.Opacity), (float)(visual.Tint.G * visual.Opacity), (float)(visual.Tint.B * visual.Opacity), (float)visual.Opacity);
                 if (node.Kind == ScreenNodeKind.Panel)
-                    batch.Draw(pixel, new Rectangle((int)bounds.X, (int)bounds.Y, (int)bounds.Width, (int)bounds.Height), new Color(20, 22, 26));
+                    DrawMesh(pixel, visual, local, Mix(new Color(20, 22, 26), tint));
                 if (node.ImageId is { } imageId && assetTextures.TryGetValue(imageId, out var sprite))
                 {
-                    var absolute = instance.Definition.AbsoluteBounds(node.Id);
-                    var source = new Rectangle((int)((bounds.X - absolute.X) / absolute.Width * sprite.Width),
-                        (int)((bounds.Y - absolute.Y) / absolute.Height * sprite.Height),
-                        Math.Max(1, (int)(bounds.Width / absolute.Width * sprite.Width)), Math.Max(1, (int)(bounds.Height / absolute.Height * sprite.Height)));
-                    batch.Draw(sprite, new Rectangle((int)bounds.X, (int)bounds.Y, Math.Max(1, (int)bounds.Width), Math.Max(1, (int)bounds.Height)), source, Color.White);
+                    DrawMesh(sprite, visual, local, tint);
                 }
                 if (!rendered.TryGetValue((instance.Id, node.Id), out var item)) continue;
                 var (region, texture) = item;
                 var focused = screens.Stack.Focus is { } focus && focus.NodeId == node.Id && focus.InstanceId == instance.Id;
                 var disabled = node.Kind == ScreenNodeKind.Button && !instance.Definition.Buttons.Any(n => n.Id == node.Id);
-                batch.Draw(texture.Texture, new Vector2(region.X, region.Y),
-                    disabled ? new Color(110, 115, 120) : focused ? new Color(160, 215, 255) : Color.White);
+                var stateColor = disabled ? new Color(110, 115, 120) : focused ? new Color(160, 215, 255) : Color.White;
+                DrawMesh(texture.Texture, visual, new(region.Raster.OffsetX, region.Raster.OffsetY, region.Raster.Width, region.Raster.Height), Mix(stateColor, tint));
             }
         }
+        batch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.LinearClamp, DepthStencilState.None, RasterizerState.CullNone);
     }
 }

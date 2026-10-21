@@ -8,7 +8,12 @@ namespace NovellMaker.Core.Screens.Lua;
 
 public sealed record ScreenLuaStamp(Guid RequestId, Guid SessionId, long Generation, Guid OwnerId, Guid InstanceId, long Version);
 public sealed record ScreenLuaEvent(string Kind, Guid? NodeId = null, double X = 0, double Y = 0, double Seconds = 0);
-public sealed record ScreenChange(string Kind, Guid? NodeId, string? Text, bool? Value);
+public sealed record ScreenChange(string Kind, Guid? NodeId, string? Text, bool? Value)
+{
+    public ScreenNodePatch? Patch { get; init; }
+    public Guid? ParentId { get; init; }
+    public ImmutableDictionary<Guid, Guid>? Ids { get; init; }
+}
 internal sealed record ScreenLuaRequest(int Protocol, string Kind, ScreenLuaStamp Stamp, Guid ResourceId,
     ImmutableArray<ScreenNode> Nodes, string? Source, ImmutableDictionary<string, Guid> References,
     ScreenLuaEvent? Event, ImmutableDictionary<string, string> Snapshot);
@@ -17,7 +22,7 @@ internal sealed record ScreenPreparedBatch(ScreenDefinition Definition, bool Clo
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 1;
+    internal const int Version = 2;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {
@@ -63,28 +68,38 @@ internal static class ScreenLuaProtocol
         if (changes.IsDefault || changes.Length > LuaActionScript.MaximumCommands)
             throw new InvalidOperationException("Превышен бюджет изменений экрана.");
         if (changes.IsEmpty) return new(definition, false);
-        var nodes = definition.Nodes.ToDictionary(n => n.Id);
+        var current = definition;
         var close = false;
         var characters = 0;
         foreach (var change in changes)
         {
             if (change is null || close) throw new InvalidOperationException("Некорректный пакет экрана.");
-            if (change.Kind == "close" && change.NodeId is null && change.Text is null && change.Value is null)
+            var extra = change.Patch is not null || change.ParentId is not null || change.Ids is not null;
+            if (change.Kind == "close" && change.NodeId is null && change.Text is null && change.Value is null && !extra)
             { close = true; continue; }
-            if (change.NodeId is not { } id || !nodes.TryGetValue(id, out var node))
+            if (change.NodeId is not { } id || current.Nodes.FirstOrDefault(n => n.Id == id) is not { } node)
                 throw new InvalidOperationException("Чужой узел экрана.");
-            if (change.Kind == "text" && change.Value is null && change.Text is { Length: <= 8192 } text)
+            if (change.Kind == "copy" && change.Text is null && change.Value is null && change.Patch is null && change.ParentId is { } parent && change.Ids is { } ids)
+            { current = ScreenTree.Copy(current, id, parent, ids).Definition; continue; }
+            if (change.Kind == "remove" && change.Text is null && change.Value is null && !extra)
+            { current = ScreenTree.Remove(current, id); continue; }
+            if (change.Kind == "parent" && change.Text is null && change.Value is null && change.Patch is null && change.Ids is null && change.ParentId is { } target)
+            { current = ScreenTree.Reparent(current, id, target); continue; }
+            ScreenNode updated;
+            if (change.Kind == "geometry" && change.Text is null && change.Value is null && change.ParentId is null && change.Ids is null && change.Patch is { } patch)
+                updated = patch.Apply(node);
+            else if (change.Kind == "text" && !extra && change.Value is null && change.Text is { Length: <= 8192 } text)
             {
                 characters += text.Length;
                 if (characters > ScreenDefinition.MaxTextCharacters) throw new InvalidOperationException("Превышен бюджет текста изменений.");
-                nodes[id] = node with { Text = text };
+                updated = node with { Text = text };
             }
-            else if (change.Text is null && change.Value is { } value && change.Kind is "visible" or "enabled")
-                nodes[id] = change.Kind == "visible" ? node with { Visible = value } : node with { Enabled = value };
+            else if (!extra && change.Text is null && change.Value is { } value && change.Kind is "visible" or "enabled")
+                updated = change.Kind == "visible" ? node with { Visible = value } : node with { Enabled = value };
             else throw new InvalidOperationException("Недопустимая команда экрана.");
+            if (updated != node) current = new(current.Id, current.Nodes.Replace(node, updated), current.RetiredNodeIds);
         }
         // Still advance protocol versions for successful no-ops, but preserve view identity.
-        return new(definition.Nodes.All(n => n == nodes[n.Id]) ? definition :
-            new(definition.Id, [.. definition.Nodes.Select(n => nodes[n.Id])]), close);
+        return new(current.Nodes.SequenceEqual(definition.Nodes) && current.RetiredNodeIds.SetEquals(definition.RetiredNodeIds) ? definition : current, close);
     }
 }

@@ -22,6 +22,7 @@ public sealed class VisualScreenTests
             foreach (var binding in legacy["buttons"]!.AsArray()) { binding!.AsObject().Remove("group"); binding.AsObject().Remove("amount"); }
             legacy.AsObject().Remove("pauseOnOverlay"); legacy.AsObject().Remove("blockInputOnOverlay");
             doc["screens"] = new JsonArray(legacy); doc["scenes"] = new JsonArray();
+            ScreenFixture.RemoveGeometry(doc);
             foreach (var node in doc["screens"]![0]!["nodes"]!.AsArray()) { node!.AsObject().Remove("imageId"); node.AsObject().Remove("name"); }
             File.WriteAllText(file, doc.ToJsonString()); var bytes = File.ReadAllBytes(file);
             var migrated = await store.LoadAsync(file); Assert.IsTrue(project.ContentEquals(migrated));

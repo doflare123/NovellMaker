@@ -65,7 +65,7 @@ public sealed record ScreenAsset(Guid Id, string Name, ImmutableArray<ScreenNode
                 screen.References.Any(r => !screen.Nodes.Any(n => n.Id == r.Value)))
                 throw new ArgumentException($"Экран «{screen.Name}»: refs должны ссылаться на собственные узлы.");
             if (screen.Buttons.IsDefault || screen.Buttons.Any(b => b is null || !Enum.IsDefined(b.Action) ||
-                !screen.Nodes.Any(n => n.Id == b.NodeId && n.Kind == ScreenNodeKind.Button) ||
+                !screen.Nodes.Any(n => n.Id == b.NodeId && n.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area) ||
                 !Enum.IsDefined(b.Group) || !double.IsFinite(b.Amount) || Math.Abs(b.Amount) > 1 || b.Action != ScreenButtonAction.Volume && b.Amount != 0 ||
                 (b.Action is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle
                     ? !project.Screens.Any(s => s is not null && s.Id == b.TargetScreenId)

@@ -34,12 +34,19 @@ public static class ExampleInterfaceModule
         buttons.Add(new(back, ScreenButtonAction.Close, null));
         sound = sound with { Canvas = sound.Canvas with { Nodes = nodes.ToImmutable(), Buttons = buttons.ToImmutable() } };
         var menu = NovelScene.Create("Пример · меню");
-        var panel = Guid.NewGuid(); var title = Guid.NewGuid(); var resume = Guid.NewGuid(); var settings = Guid.NewGuid();
+        var panel = Guid.NewGuid(); var title = Guid.NewGuid(); var resume = Guid.NewGuid(); var settings = Guid.NewGuid(); var badge = Guid.NewGuid();
         var script = new LuaScriptAsset(Guid.NewGuid(), "example-menu.lua", """
+            local live_badge
             return {
-              on_load = function() ui.set_text(refs.title, "Меню проекта-примера") end,
+              on_load = function()
+                ui.set_text(refs.title, "Меню проекта-примера")
+                live_badge = ui.create(refs.badge, refs.panel)
+                ui.set_visible(live_badge, true)
+                ui.set_geometry(live_badge, {rotation=-5, opacity=0.8, color='#80CCFF'})
+                ui.set_text(live_badge, "Живой экземпляр · ui.create")
+              end,
               on_event = function(event)
-                if event.node == refs.resume then ui.close() end
+                if event.node == refs.resume then ui.remove(live_badge); ui.close() end
               end
             }
             """);
@@ -48,9 +55,10 @@ public static class ExampleInterfaceModule
             Nodes = [new(panel, null, ScreenNodeKind.Panel, new(360, 200, 560, 300)),
                 new(title, panel, ScreenNodeKind.Text, new(40, 24, 480, 50), "Меню"),
                 new(resume, panel, ScreenNodeKind.Button, new(40, 100, 480, 52), "Продолжить"),
-                new(settings, panel, ScreenNodeKind.Button, new(40, 170, 480, 52), "Звук")],
+                new(settings, panel, ScreenNodeKind.Button, new(40, 170, 480, 52), "Звук"),
+                new(badge, panel, ScreenNodeKind.Text, new(40, 240, 450, 35), "Шаблон подписи", Visible: false) { Name = "Шаблон живого объекта" }],
             HandlerScriptId = script.Id,
-            References = ImmutableDictionary<string, Guid>.Empty.Add("title", title).Add("resume", resume),
+            References = ImmutableDictionary<string, Guid>.Empty.Add("title", title).Add("resume", resume).Add("panel", panel).Add("badge", badge),
             Buttons = [new(resume, ScreenButtonAction.Lua, null), new(settings, ScreenButtonAction.Open, sound.Id)]
         } };
         return project with

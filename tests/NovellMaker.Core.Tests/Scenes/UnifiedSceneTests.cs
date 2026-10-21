@@ -31,6 +31,7 @@ public sealed class UnifiedSceneTests
             json["formatVersion"] = version; json.AsObject().Remove("inputBindings"); json["pauseScreenId"] = menu.Id;
             foreach (var binding in oldMenu["buttons"]!.AsArray()) { binding!.AsObject().Remove("group"); binding.AsObject().Remove("amount"); } json["screens"] = new JsonArray(oldMenu);
             json["scenes"]!.AsArray().RemoveAt(1); json["scenes"]![0]!.AsObject().Remove("canvas");
+            ScreenFixture.RemoveGeometry(json);
             File.WriteAllText(path, json.ToJsonString()); var original = File.ReadAllBytes(path);
             var migrated = await store.LoadAsync(path);
             Assert.HasCount(2, migrated.Scenes); Assert.IsTrue(story.ContentEquals(migrated.Scenes[0]));
@@ -38,6 +39,8 @@ public sealed class UnifiedSceneTests
             Assert.AreEqual(menu.Id, migrated.InputBindings.FirstOrDefault(b => b.Key == "P")?.TargetSceneId);
             Assert.AreEqual(ScenarioProgram.Fingerprint(migrated), ScenarioProgram.Fingerprint(await store.LoadAsync(path)));
             CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+            json["screens"]![0]!["nodes"]![1]!["kind"] = 5; File.WriteAllText(path, json.ToJsonString());
+            await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
             await store.SaveAsync(path, migrated);
             var current = JsonNode.Parse(File.ReadAllText(path))!;
             Assert.IsFalse(current.AsObject().ContainsKey("screens")); Assert.IsNotNull(current["scenes"]![0]!["canvas"]);

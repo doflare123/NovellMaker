@@ -6,6 +6,17 @@ namespace NovellMaker;
 /// <summary>Test-owned geometry. This is not an engine screen or a production factory.</summary>
 public static class ScreenFixture
 {
+    public static void RemoveGeometry(System.Text.Json.Nodes.JsonNode node)
+    {
+        if (node is System.Text.Json.Nodes.JsonObject obj)
+        {
+            if (obj.ContainsKey("bounds") && obj.ContainsKey("parentId"))
+                foreach (var key in new[] { "geometry", "clipChildren", "order", "color" }) obj.Remove(key);
+            foreach (var value in obj.ToArray()) if (value.Value is { } child) RemoveGeometry(child);
+        }
+        else if (node is System.Text.Json.Nodes.JsonArray array)
+            foreach (var value in array) if (value is { } child) RemoveGeometry(child);
+    }
     public static ScreenAsset Create(string name)
     {
         var root = Guid.NewGuid(); var title = Guid.NewGuid(); var resume = Guid.NewGuid(); var other = Guid.NewGuid();

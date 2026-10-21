@@ -20,6 +20,11 @@ public sealed class ScreenPropertiesView : UserControl
     private readonly NumericUpDown[] geometry = [Number("ScreenNodeX", -100000, 100000), Number("ScreenNodeY", -100000, 100000), Number("ScreenNodeWidth", 1, 100000), Number("ScreenNodeHeight", 1, 100000)];
     private readonly CheckBox visible = new() { Name = "ScreenNodeVisible", Content = "Видим" };
     private readonly CheckBox enabled = new() { Name = "ScreenNodeEnabled", Content = "Доступен" };
+    private readonly ComboBox parent = new() { Name = "ScreenNodeParent", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly NumericUpDown[] transform = [Number("ScreenAnchorX", 0, 1), Number("ScreenAnchorY", 0, 1), Number("ScreenPivotX", 0, 1), Number("ScreenPivotY", 0, 1), Number("ScreenScaleX", -1000, 1000), Number("ScreenScaleY", -1000, 1000), Number("ScreenRotation", -360000, 360000), Number("ScreenOpacity", 0, 1)];
+    private readonly NumericUpDown orderValue = Number("ScreenNodeOrder", -100000, 100000);
+    private readonly TextBox color = new() { Name = "ScreenNodeColor", IsUndoEnabled = false };
+    private readonly CheckBox clipping = new() { Name = "ScreenNodeClip", Content = "Обрезать потомков" };
     private readonly ComboBox sprite = new() { Name = "ScreenNodeSprite", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ProjectImageView spritePreview = new() { Name = "ScreenSpritePreview", Height = 80, MaximumWidth = 400, TransparentBackground = true };
     private readonly ComboBox action = new() { Name = "ScreenButtonAction", HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = new[] { "Lua-обработчик", "Закрыть", "Открыть поверх", "Заменить слой", "Назад", "Не назначено", "Перейти к сцене", "Громкость группы", "Mute группы", "Продолжить", "Сохранить состояние", "Загрузить состояние", "Переключить слой" } };
@@ -50,6 +55,12 @@ public sealed class ScreenPropertiesView : UserControl
         var labels = new[] { "X", "Y", "Ширина", "Высота" };
         for (var i = 0; i < 4; i++) { var cell = new StackPanel { Spacing = 3 }; Field(cell, labels[i], geometry[i]); Grid.SetRow(cell, i / 2); Grid.SetColumn(cell, i % 2 * 2); grid.Children.Add(cell); }
         body.Children.Add(grid);
+        Field(body, "Родитель", parent, "Локальные координаты сохраняются. Потомки и корень не могут стать родителями выбранного узла.");
+        var transforms = new StackPanel { Spacing = 5 };
+        var transformLabels = new[] { "Anchor X", "Anchor Y", "Pivot X", "Pivot Y", "Масштаб X", "Масштаб Y", "Угол, °", "Непрозрачность" };
+        for (var i = 0; i < transform.Length; i++) { transform[i].Increment = i == 6 ? 1 : .05m; Field(transforms, transformLabels[i], transform[i]); }
+        Field(transforms, "Цвет #RRGGBB", color); Field(transforms, "Порядок среди соседей", orderValue); transforms.Children.Add(clipping);
+        body.Children.Add(new Expander { Name = "ScreenGeometryExpander", Header = "Преобразование и clipping", Content = transforms, HorizontalAlignment = HorizontalAlignment.Stretch });
         var flags = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 }; flags.Children.Add(visible); flags.Children.Add(enabled); body.Children.Add(flags);
         Field(body, "Спрайт", sprite, "Изображение из файлов проекта. Его можно выбрать, импортировать или перетащить сюда. Ссылка сохраняется при переименовании файла.");
         var spriteArea = new Border { Name = "ScreenSpriteDrop", MinHeight = 64, Background = Brush.Parse("#20252D"), BorderBrush = Brush.Parse("#465567"), BorderThickness = new Thickness(1), Child = spritePreview };
@@ -63,6 +74,7 @@ public sealed class ScreenPropertiesView : UserControl
         Field(buttonFields, "Нажатие", action); targetField = Field(buttonFields, "Цель", target); body.Children.Add(buttonFields);
         var order = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
         Button(order, "MoveScreenNodeUp", "Ниже", () => session?.MoveScreenNode(-1)); Button(order, "MoveScreenNodeDown", "Выше", () => session?.MoveScreenNode(1));
+        Button(order, "CopyScreenNode", "Копия", () => Try(() => session?.DuplicateScreenNode()));
         Async(order, "DeleteScreenNode", "Удалить", () => session?.SelectedScreenNode is { } n ? session.DeleteScreenNodeAsync(n.Id) : Task.CompletedTask); body.Children.Add(order);
         var links = new StackPanel { Spacing = 6 }; Field(links, "Имя в Lua", alias, "Ссылка на выбранный элемент. В коде используется refs.имя; название элемента меняется независимо.");
         Button(links, "AddScreenReference", "Привязать", () => { if (session?.SelectedScreen is { } s && session.SelectedScreenNode is { } n) Try(() => session.UpdateScreen(s with { References = s.References.SetItem(alias.Text ?? "", n.Id) })); });
@@ -92,6 +104,17 @@ public sealed class ScreenPropertiesView : UserControl
         foreach (var number in geometry) number.PropertyChanged += (_, e) => { if (e.Property == NumericUpDown.ValueProperty && !refreshing && geometry.All(n => n.Value is not null)) Edit(n => n with { Bounds = new((double)geometry[0].Value!.Value, (double)geometry[1].Value!.Value, (double)geometry[2].Value!.Value, (double)geometry[3].Value!.Value) }, number.Name); };
         visible.IsCheckedChanged += (_, _) => Edit(n => n with { Visible = visible.IsChecked == true });
         enabled.IsCheckedChanged += (_, _) => Edit(n => n with { Enabled = enabled.IsChecked == true });
+        clipping.IsCheckedChanged += (_, _) => Edit(n => n with { ClipChildren = clipping.IsChecked == true });
+        parent.SelectionChanged += (_, _) => { if (!refreshing && parent.SelectedItem is Option { Id: { } id }) Try(() => session?.ReparentScreenNode(id)); };
+        foreach (var number in transform) number.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == NumericUpDown.ValueProperty && !refreshing && transform.All(n => n.Value is not null))
+                Edit(n => n with { Geometry = new() { AnchorX = (double)transform[0].Value!.Value, AnchorY = (double)transform[1].Value!.Value,
+                    PivotX = (double)transform[2].Value!.Value, PivotY = (double)transform[3].Value!.Value, ScaleX = (double)transform[4].Value!.Value,
+                    ScaleY = (double)transform[5].Value!.Value, Rotation = (double)transform[6].Value!.Value, Opacity = (double)transform[7].Value!.Value } }, number.Name);
+        };
+        orderValue.PropertyChanged += (_, e) => { if (e.Property == NumericUpDown.ValueProperty) Edit(n => n with { Order = (int)(orderValue.Value ?? 0) }, "order"); };
+        color.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty && ScreenTint.TryParse(color.Text, out var ignoredTint)) Edit(n => n with { Color = color.Text! }, "color"); };
         sprite.SelectionChanged += (_, _) => { if (!refreshing) Edit(n => n with { ImageId = (sprite.SelectedItem as Option)?.Id }); };
         action.SelectionChanged += (_, _) => { if (!refreshing) ApplyButton(); };
         target.SelectionChanged += (_, _) => { if (!refreshing && action.SelectedIndex is 2 or 3 or 6 or 12) ApplyButton(); };
@@ -123,7 +146,7 @@ public sealed class ScreenPropertiesView : UserControl
     }
     private void ApplyButton()
     {
-        if (session?.SelectedScreen is not { } screen || session.SelectedScreenNode is not { Kind: ScreenNodeKind.Button } node) return;
+        if (session?.SelectedScreen is not { } screen || session.SelectedScreenNode is not { Kind: ScreenNodeKind.Button or ScreenNodeKind.Area } node) return;
         var kind = (ScreenButtonAction)Math.Max(0, action.SelectedIndex);
         var id = kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle ? (target.SelectedItem as Option)?.Id : null;
         if (kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle && id is null) { status.Text = "Выберите целевую сцену."; return; }
@@ -141,9 +164,17 @@ public sealed class ScreenPropertiesView : UserControl
             var node = session?.SelectedScreenNode; var screen = session?.SelectedScreen;
             body.IsEnabled = session?.CanEdit == true && screen is not null;
             title.Text = node is null ? "Экран" : ComponentName(node.Kind); name.Text = node?.Name ?? ""; text.Text = node?.Text ?? "";
-            textField.IsVisible = node?.Kind is ScreenNodeKind.Text or ScreenNodeKind.Button; buttonFields.IsVisible = node?.Kind == ScreenNodeKind.Button;
+            textField.IsVisible = node?.Kind is ScreenNodeKind.Text or ScreenNodeKind.Button; buttonFields.IsVisible = node?.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area;
             var values = new[] { node?.Bounds.X ?? 0, node?.Bounds.Y ?? 0, node?.Bounds.Width ?? 1, node?.Bounds.Height ?? 1 }; for (var i = 0; i < 4; i++) geometry[i].Value = (decimal)values[i];
             visible.IsChecked = node?.Visible == true; enabled.IsChecked = node?.Enabled == true;
+            clipping.IsChecked = node?.ClipChildren == true; color.Text = node?.Color ?? "#FFFFFF"; orderValue.Value = node?.Order ?? 0;
+            var g = node?.Geometry ?? new();
+            var transformValues = new[] { g.AnchorX, g.AnchorY, g.PivotX, g.PivotY, g.ScaleX, g.ScaleY, g.Rotation, g.Opacity };
+            for (var i = 0; i < transform.Length; i++) transform[i].Value = (decimal)transformValues[i];
+            var descendants = node is not null && screen is not null ? ScreenTree.Subtree(screen.Definition(), node.Id) : System.Collections.Immutable.ImmutableHashSet<Guid>.Empty;
+            var parents = screen?.Nodes.Where(n => !descendants.Contains(n.Id) && n.Kind is ScreenNodeKind.Container or ScreenNodeKind.Panel)
+                .Select(n => new Option(n.Id, string.IsNullOrEmpty(n.Name) ? ComponentName(n.Kind) + " · " + n.Id.ToString("N")[..6] : n.Name)).ToArray() ?? [];
+            parent.ItemsSource = parents; parent.SelectedItem = parents.FirstOrDefault(p => p.Id == node?.ParentId); parent.IsEnabled = node?.ParentId is not null;
             var images = new[] { new Option(null, "Без изображения") }.Concat(session?.Project?.Images.Select(i => new Option(i.Id, i.Name)) ?? []).ToArray();
             sprite.ItemsSource = images; sprite.SelectedItem = images.FirstOrDefault(i => i.Id == node?.ImageId);
             spritePreview.Asset = session?.Project?.Images.FirstOrDefault(i => i.Id == node?.ImageId); spritePreview.IsVisible = spritePreview.Asset is not null; spritePreview.ProjectDirectory = session?.ProjectDirectory; spritePreview.Revision = session?.AssetRevision ?? 0;
@@ -163,5 +194,5 @@ public sealed class ScreenPropertiesView : UserControl
         }
         finally { refreshing = false; }
     }
-    internal static string ComponentName(ScreenNodeKind kind) => kind switch { ScreenNodeKind.Panel => "Панель", ScreenNodeKind.Button => "Кнопка", ScreenNodeKind.Text => "Текст", ScreenNodeKind.Image => "Изображение", _ => "Контейнер" };
+    internal static string ComponentName(ScreenNodeKind kind) => kind switch { ScreenNodeKind.Panel => "Панель", ScreenNodeKind.Button => "Кнопка", ScreenNodeKind.Text => "Текст", ScreenNodeKind.Image => "Изображение", ScreenNodeKind.Area => "Интерактивная область", _ => "Контейнер" };
 }
