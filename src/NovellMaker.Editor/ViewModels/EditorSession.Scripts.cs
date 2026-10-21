@@ -99,6 +99,7 @@ public sealed partial class EditorSession
             { References = s.References.Where(r => !ids.Contains(r.Value)).ToImmutableDictionary() }).ToImmutableArray(),
             Scenes = source.Scenes.Select(scene => scene with
             {
+                Canvas = scene.Canvas with { HandlerScriptId = ids.Contains(scene.Canvas.HandlerScriptId ?? Guid.Empty) ? null : scene.Canvas.HandlerScriptId },
                 Actions = scene.Actions.Select(a => ClearScriptReference(a, ids)).ToImmutableArray(),
                 ScriptBlocks = scene.ScriptBlocks.Select(b => b with { Action = ClearScriptReference(b.Action, ids) }).ToImmutableArray()
             }).ToImmutableArray()

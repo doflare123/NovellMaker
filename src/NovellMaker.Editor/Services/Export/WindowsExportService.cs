@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Styling;
 using NovellMaker.Editor.Services.Assets;
@@ -17,7 +17,8 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
             throw new IOException("Каталог сборки уже существует. Выберите новое имя; готовые сборки не перезаписываются.");
         var startScene = project.Scenes.FirstOrDefault(s => s.Id == startSceneId)
             ?? throw new ArgumentException("Выберите стартовую сцену игры.");
-        if (startScene.Lines.IsEmpty && !startScene.HasActionScript) throw new ArgumentException("В стартовой сцене нет фраз или скрипта.");
+        if (startScene.Lines.IsEmpty && !startScene.HasActionScript && !startScene.HasPresentation)
+            throw new ArgumentException("В стартовой сцене нет компонентов, задника, фраз или скрипта.");
         ValidateTemplate(templateDirectory);
         _ = DialogueCssParser.Parse(project.DialogueUi.Css);
         foreach (var scene in project.Scenes)
@@ -50,7 +51,7 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
                 $"{project.Name}\n\nЗапустите NovellMaker.Runtime.exe. Переносите всю папку целиком.\n" +
                 "Windows x64; редактор, SDK и отдельная установка .NET не нужны.\n" +
                 "Enter/Space/→ — продолжить, мышь — выбор/предмет, Escape — выход.\n" +
-                "F7/F8 — быстрый слот. Сохранения: %LOCALAPPDATA%/NovellMaker/Games/" + project.Id +
+                "Клавиши и интерфейс задаются проектом. Сохранения: %LOCALAPPDATA%/NovellMaker/Games/" + project.Id +
                 "/quicksave.json\nДиагностика запуска: там же startup-error.log.\nСохранения требуют точной редакции проекта.\n");
             Directory.Move(staging, destination);
         }

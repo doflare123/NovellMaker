@@ -1,3 +1,4 @@
+﻿using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Text.Json;
 using NovellMaker.Core.Execution;
@@ -122,7 +123,9 @@ public sealed class WindowsExportTests
 
     [TestMethod]
     [TestCategory("NativeSmoke")]
-    public async Task ExportedGameRunsFromAnotherDirectoryWithNoDotnetAndRestoresQueuedState()
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task ExportedGameRunsFromAnotherDirectoryWithNoDotnetAndRestoresQueuedState(bool authorMenu)
     {
         if (Environment.GetEnvironmentVariable("NOVELLMAKER_EXPORT_SMOKE") != "1" || !OperatingSystem.IsWindows())
             Assert.Inconclusive("Set NOVELLMAKER_EXPORT_SMOKE=1 after scripts/prepare-windows-export.ps1 on Windows.");
@@ -130,6 +133,33 @@ public sealed class WindowsExportTests
         while (repo is not null && !File.Exists(Path.Combine(repo.FullName, "NovellMaker.slnx"))) repo = repo.Parent;
         Assert.IsNotNull(repo);
         var realTemplate = Path.Combine(repo.FullName, "artifacts", "export-templates", "win-x64");
+        if (authorMenu)
+        {
+            var screen = ScreenFixture.Create("Пауза автора");
+            var script = new LuaScriptAsset(Guid.NewGuid(), "author-menu.lua", """
+                return {on_load=function() ui.set_text(refs.title, 'Меню автора') end,
+                  on_event=function(event) if event.node == refs.continue_button then ui.close() end end}
+                """);
+            screen = screen with { HandlerScriptId = script.Id, Buttons = screen.Buttons.SetItem(0,
+                new(screen.Nodes[2].Id, NovellMaker.Core.Screens.ScreenButtonAction.Lua, null)) };
+            screen = screen with { Buttons = screen.Buttons.SetItem(1, new(screen.Nodes[3].Id, NovellMaker.Core.Screens.ScreenButtonAction.Open, project.Scenes.Single(s => s.Name.EndsWith("настройки звука")).Id)) };
+            screen = screen with { Nodes = screen.Nodes.Add(new(Guid.NewGuid(), screen.Nodes[0].Id, NovellMaker.Core.Screens.ScreenNodeKind.Image,
+                new(20, 240, 60, 50)) { ImageId = project.Images[0].Id, Name = "Спрайт из проекта" }) };
+            project = project with { Scenes = project.Scenes.Add(screen.ToScene()), InputBindings = project.InputBindings.Where(b => b.Key != "P").Append(new("P", NovellMaker.Core.Screens.ScreenButtonAction.Toggle, screen.Id)).ToImmutableArray(), Scripts = project.Scripts.Add(script) };
+        }
+        var storyId = project.Scenes[0].Id;
+        if (authorMenu)
+        {
+            var launcher = NovellMaker.Core.Scenes.NovelScene.Create("Главная сцена");
+            var button = new NovellMaker.Core.Screens.ScreenNode(Guid.NewGuid(), launcher.Canvas.Nodes[0].Id,
+                NovellMaker.Core.Screens.ScreenNodeKind.Button, new(20, 20, 200, 50), "Начать");
+            launcher = launcher with { Canvas = launcher.Canvas with
+            {
+                Nodes = launcher.Canvas.Nodes.Add(button),
+                Buttons = [new(button.Id, NovellMaker.Core.Screens.ScreenButtonAction.Scene, storyId)]
+            } };
+            project = project with { Scenes = project.Scenes.Insert(0, launcher) };
+        }
         var destination = Path.Combine(root, "exported game");
         await new WindowsExportService(realTemplate, new ImageAssetService()).ExportAsync(project, source, project.Scenes[0].Id, destination);
         var moved = Path.Combine(root, "перенесённая игра"); Directory.Move(destination, moved);
@@ -137,22 +167,24 @@ public sealed class WindowsExportTests
         foreach (var image in project.Images) File.Delete(Path.Combine(source, image.RelativePath));
         foreach (var sound in project.Audio.Assets) File.Delete(Path.Combine(source, sound.RelativePath));
         var captures = Path.Combine(repo.FullName, "artifacts", "screenshots", "export"); Directory.CreateDirectory(captures);
-        var report = Path.Combine(captures, "report.json");
+        var report = Path.Combine(captures, authorMenu ? "author-menu-report.json" : "report.json");
         var plan = Path.Combine(root, "plan.json");
         await File.WriteAllTextAsync(plan, """
             [{"Kind":"tick","Seconds":2},{"Kind":"quicksave"},{"Kind":"tick","Seconds":3},
              {"Kind":"quickload"},{"Kind":"next"},{"Kind":"click","X":650,"Y":300},
              {"Kind":"quicksave"},{"Kind":"click","X":500,"Y":300},{"Kind":"quickload"},{"Kind":"click","X":500,"Y":300},
-             {"Kind":"pause"},{"Kind":"tick","Seconds":40},{"Kind":"click","X":450,"Y":400},
+             {"Kind":"key","Key":"P"},{"Kind":"tick","Seconds":40},{"Kind":"click","X":450,"Y":400},
              {"Kind":"tick","Seconds":40},{"Kind":"back"},{"Kind":"activate"}]
             """);
+        if (authorMenu)
+            File.WriteAllText(plan, "[{\"Kind\":\"click\",\"X\":60,\"Y\":40}," + File.ReadAllText(plan).TrimStart()[1..]);
         var start = new ProcessStartInfo(Path.Combine(moved, "NovellMaker.Runtime.exe"))
         { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, StandardErrorEncoding = System.Text.Encoding.UTF8, RedirectStandardOutput = true, WindowStyle = ProcessWindowStyle.Hidden };
         start.Environment["DOTNET_ROOT"] = Path.Combine(root, "no-dotnet");
         start.Environment["DOTNET_ROOT_X64"] = Path.Combine(root, "no-dotnet");
         start.Environment["DOTNET_MULTILEVEL_LOOKUP"] = "0";
         start.Environment["PATH"] = Environment.GetFolderPath(Environment.SpecialFolder.System);
-        foreach (var arg in new[] { "--smoke-output", Path.Combine(captures, "game.png"), "--smoke-report", report, "--smoke-plan", plan }) start.ArgumentList.Add(arg);
+        foreach (var arg in new[] { "--smoke-output", Path.Combine(captures, authorMenu ? "author-menu-game.png" : "game.png"), "--smoke-report", report, "--smoke-plan", plan }) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
         var stderr = process.StandardError.ReadToEndAsync(); var stdout = process.StandardOutput.ReadToEndAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -160,12 +192,15 @@ public sealed class WindowsExportTests
         catch (OperationCanceledException) { process.Kill(true); await process.WaitForExitAsync(); Assert.Fail("Export smoke timed out."); }
         Assert.AreEqual(0, process.ExitCode, await stderr + await stdout);
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(report));
-        var trace = json.RootElement.GetProperty("ActionTrace");
-        Assert.AreEqual(16, trace.GetArrayLength());
-        Assert.AreEqual(3, json.RootElement.GetProperty("ScreenLuaAppliedBatches").GetInt32());
+        var allTrace = json.RootElement.GetProperty("ActionTrace").EnumerateArray().ToArray();
+        if (authorMenu) Assert.AreEqual(storyId, allTrace[0].GetProperty("State").GetProperty("SceneId").GetGuid());
+        var trace = allTrace.Skip(authorMenu ? 1 : 0).ToArray();
+        Assert.AreEqual(16, trace.Length);
+        if (authorMenu) Assert.IsTrue(trace[10].GetProperty("ScreenTexts").EnumerateArray().Any(t => t.GetString() == "Меню автора"));
+        Assert.AreEqual(2, json.RootElement.GetProperty("ScreenLuaAppliedBatches").GetInt32());
         Assert.IsGreaterThan(0, json.RootElement.GetProperty("PendingScreenLuaDrawFrames").GetInt32());
         Assert.AreEqual(0, json.RootElement.GetProperty("ScreenLuaDiagnostics").GetArrayLength());
-        Assert.IsTrue(trace.EnumerateArray().All(s => s.GetProperty("Success").GetBoolean()));
+        Assert.IsTrue(trace.All(s => s.GetProperty("Success").GetBoolean()));
         Assert.AreEqual(trace[1].GetProperty("State").GetRawText(), trace[3].GetProperty("State").GetRawText());
         Assert.AreEqual(trace[6].GetProperty("State").GetRawText(), trace[8].GetProperty("State").GetRawText());
         StringAssert.Contains(trace[9].GetProperty("Text").GetString()!, "Ветка успеха");
@@ -185,7 +220,7 @@ public sealed class WindowsExportTests
         Assert.IsFalse(quicksave.StartsWith(moved, StringComparison.OrdinalIgnoreCase));
         StringAssert.Contains(quicksave, Path.Combine("Games", project.Id.ToString(), "quicksave.json"));
         Assert.AreEqual(Path.Combine(moved, "System.Private.CoreLib.dll"), json.RootElement.GetProperty("RuntimeLibraryPath").GetString());
-        using (var bitmap = SkiaSharp.SKBitmap.Decode(Path.Combine(captures, "game.png")))
+        using (var bitmap = SkiaSharp.SKBitmap.Decode(Path.Combine(captures, authorMenu ? "author-menu-game.png" : "game.png")))
         {
             Assert.IsNotNull(bitmap);
             Assert.AreEqual(new SkiaSharp.SKColor(183, 146, 100), bitmap.GetPixel(720, 380));

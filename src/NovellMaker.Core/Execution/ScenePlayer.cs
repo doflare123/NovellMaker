@@ -86,6 +86,7 @@ public sealed class ScenePlayer : IDisposable, IAsyncDisposable
     public ValueTask DisposeAsync() => Execution.DisposeAsync();
     public bool Choose(Guid optionId) { var changed = Execution.Choose(optionId); if (changed) UpdateFrame(); return changed; }
     public bool Click(Guid objectId) { var changed = Execution.Click(objectId); if (changed) UpdateFrame(); return changed; }
+    public bool EnterScene(Guid sceneId) { var changed = Execution.EnterScene(sceneId); if (changed) { navigationAudio = []; UpdateFrame(); } return changed; }
     /// <summary>Validates and replaces state atomically. Does not replay commands, advance time or run Lua.</summary>
     public void LoadSave(string json) { GameSave.Load(Execution, json); navigationAudio = []; UpdateFrame(); }
 

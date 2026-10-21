@@ -1,4 +1,4 @@
-using NovellMaker.Editor.Services.Git;
+﻿using NovellMaker.Editor.Services.Git;
 
 namespace NovellMaker.Editor.ViewModels;
 

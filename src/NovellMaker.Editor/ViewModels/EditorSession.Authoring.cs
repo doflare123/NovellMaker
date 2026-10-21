@@ -41,7 +41,13 @@ public sealed partial class EditorSession
         {
             if (ReferenceEquals(selectedDocument, value)) return;
             selectedDocument = value;
-            InspectorTarget = value is SceneDocumentViewModel ? InspectorTarget.Phrase : InspectorTarget.Project;
+            InspectorTarget = value is SceneDocumentViewModel { SelectedSection: 6 } ? InspectorTarget.Screen : value is SceneDocumentViewModel ? InspectorTarget.Phrase : InspectorTarget.Project;
+            if (value is SceneDocumentViewModel scene)
+            {
+                SelectedScreenId = scene.Id;
+                SelectedScreenNodeId = project?.Scenes.FirstOrDefault(s => s.Id == scene.Id)?.Canvas.Nodes.FirstOrDefault()?.Id;
+                Changed(nameof(SelectedScreen)); Changed(nameof(SelectedScreenNode));
+            }
             InspectedActionId = null;
             EndEditGroup();
             NotifySelectionChanged();
@@ -104,6 +110,15 @@ public sealed partial class EditorSession
         OpenScene(scene.Id);
     }
 
+    public void AddScene(NovelScene scene, IEnumerable<NovellMaker.Core.Screens.ProjectInputBinding>? bindings = null)
+    {
+        if (!CanEdit || project is null) return;
+        var candidate = project with { Scenes = project.Scenes.Add(scene), InputBindings = project.InputBindings.AddRange(bindings ?? []) };
+        NovellMaker.Core.Screens.ScreenAsset.ValidateProject(candidate);
+        EditProject(candidate);
+        OpenScene(scene.Id);
+    }
+
     public void OpenScene(Guid id)
     {
         var scene = project?.Scenes.FirstOrDefault(item => item.Id == id);
@@ -151,7 +166,7 @@ public sealed partial class EditorSession
 
     internal void NotifySelectionChanged()
     {
-        foreach (var property in new[] { nameof(SelectedDocument), nameof(ActiveScene), nameof(SelectedSceneId), nameof(SelectedLineId), nameof(SelectedTextKey) })
+        foreach (var property in new[] { nameof(SelectedDocument), nameof(IsScreenDesigner), nameof(ActiveScene), nameof(SelectedSceneId), nameof(SelectedLineId), nameof(SelectedTextKey) })
             Changed(property);
         NotifyAuthoringCommands();
     }
@@ -170,7 +185,7 @@ public sealed partial class EditorSession
     private AuthoringSnapshot Snapshot() => new(project!, draftName, ActiveScene?.Id, ActiveScene?.SelectedLine?.Id,
         SelectedDocument is AssetLibraryDocumentViewModel, SelectedImage?.Id,
         SelectedDocument is CharacterLibraryDocumentViewModel, SelectedCharacter?.Id, SelectedState?.Id, deletedFiles,
-        InspectorTarget == InspectorTarget.Script, SelectedScriptId);
+        InspectorTarget == InspectorTarget.Script, SelectedScriptId, IsScreenDesigner, SelectedScreenId, SelectedScreenNodeId);
 
     private void RecordEdit(string? group)
     {
@@ -214,7 +229,12 @@ public sealed partial class EditorSession
         draftName = state.DraftName;
         EndEditGroup();
         NotifyProjectChanged();
-        if (state.SceneId is { } sceneId)
+        if (state.ScreenLibrarySelected)
+        {
+            OpenScreenLibrary(state.ScreenId);
+            ActiveScene?.SelectLine(state.LineId);
+        }
+        else if (state.SceneId is { } sceneId)
         {
             OpenScene(sceneId);
             ActiveScene?.SelectLine(state.LineId);
@@ -233,6 +253,7 @@ public sealed partial class EditorSession
         else if (state.ScriptLibrarySelected) OpenScriptLibrary(state.ScriptId);
         else SelectedDocument = Documents.FirstOrDefault();
         if (state.ScriptLibrarySelected) InspectScript(state.ScriptId);
+        if (state.ScreenLibrarySelected && !state.ScriptLibrarySelected) SelectScreen(state.ScreenId, state.ScreenNodeId);
     }
 
     private void ResetAuthoring()
@@ -284,5 +305,5 @@ public sealed partial class EditorSession
 
     private sealed record AuthoringSnapshot(NovelProject Project, string DraftName, Guid? SceneId, Guid? LineId,
         bool AssetLibrarySelected, Guid? ImageId, bool CharacterLibrarySelected, Guid? CharacterId, Guid? CharacterStateId, ImmutableArray<NovellMaker.Editor.Services.ProjectFileDeletion> DeletedFiles,
-        bool ScriptLibrarySelected, Guid? ScriptId);
+        bool ScriptLibrarySelected, Guid? ScriptId, bool ScreenLibrarySelected, Guid? ScreenId, Guid? ScreenNodeId);
 }

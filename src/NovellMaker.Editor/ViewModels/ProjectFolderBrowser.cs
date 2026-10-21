@@ -63,6 +63,7 @@ public sealed class ProjectFolderBrowser : INotifyPropertyChanged, IDisposable
     }
 
     private static string Key(ExplorerEntry entry) => entry.FilePath is { } file ? "file:" + file :
+        entry.ScreenId is { } screen ? $"screen:{screen}" :
         entry.ScriptId is { } script ? $"script:{script}" :
         entry.SceneId is { } scene ? $"scene:{scene}:{entry.IsFolder}" :
         entry.CharacterId is { } character ? $"character:{character}:{entry.IsFolder}:{(entry.IsFolder ? "" : entry.Label)}" : entry.Label;
@@ -152,6 +153,8 @@ public sealed class ProjectFolderBrowser : INotifyPropertyChanged, IDisposable
         if (entry.SceneId is { } scene) session.OpenScene(scene);
         else if (entry.ImageAssetId is { } image) session.SelectImage(image);
         else if (entry.CharacterId is { } character) session.SelectCharacter(character);
+        else if (entry.ScreenId is { } screen) session.OpenScreenLibrary(screen);
+        else if (entry.IsScreenLibrary) session.OpenScreenLibrary();
         else if (entry.ScriptId is { } script) _ = session.OpenScriptExternallyAsync(script);
         else if (entry.IsScriptLibrary) session.OpenScriptLibrary();
         else if (entry.IsProjectSettings) session.SelectedDocument = session.Documents.FirstOrDefault();

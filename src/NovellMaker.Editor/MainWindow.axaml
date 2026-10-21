@@ -1,4 +1,4 @@
-<Window xmlns="https://github.com/avaloniaui"
+﻿<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:NovellMaker.Editor.ViewModels"
         xmlns:views="using:NovellMaker.Editor.Views"
@@ -35,58 +35,65 @@
   <DockPanel>
     <Menu DockPanel.Dock="Top" Background="#292C31">
       <MenuItem Header="_Файл">
-        <MenuItem Header="_Создать проект" Command="{Binding NewCommand}" InputGesture="Ctrl+N" />
-        <MenuItem Header="_Открыть проект…" Command="{Binding OpenCommand}" InputGesture="Ctrl+O" />
+        <MenuItem Header="Создать проект" Command="{Binding NewCommand}" InputGesture="Ctrl+N" />
+        <MenuItem Header="Открыть проект…" Command="{Binding OpenCommand}" InputGesture="Ctrl+O" />
         <Separator />
-        <MenuItem Header="Со_хранить" Command="{Binding SaveCommand}" InputGesture="Ctrl+S" />
-        <MenuItem Header="Сохранить _как…" Command="{Binding SaveAsCommand}" InputGesture="Ctrl+Shift+S" />
-        <MenuItem Header="_Закрыть проект" Command="{Binding CloseProjectCommand}" InputGesture="Ctrl+W" />
-        <Separator />
-        <MenuItem Header="_Выход" Click="ExitClicked" />
+        <MenuItem Header="Сохранить" Command="{Binding SaveCommand}" InputGesture="Ctrl+S" />
+        <MenuItem Header="Сохранить как…" Command="{Binding SaveAsCommand}" InputGesture="Ctrl+Shift+S" />
+        <MenuItem Header="Закрыть проект" Command="{Binding CloseProjectCommand}" InputGesture="Ctrl+W" />
+        <Separator /><MenuItem Header="Выход" Click="ExitClicked" />
       </MenuItem>
       <MenuItem Header="_Правка">
-        <MenuItem Header="_Отменить" Command="{Binding UndoCommand}" InputGesture="Ctrl+Z" />
-        <MenuItem Header="_Повторить" Command="{Binding RedoCommand}" InputGesture="Ctrl+Y" />
+        <MenuItem Header="Отменить" Command="{Binding UndoCommand}" InputGesture="Ctrl+Z" />
+        <MenuItem Header="Повторить" Command="{Binding RedoCommand}" InputGesture="Ctrl+Y" />
       </MenuItem>
-      <MenuItem Header="_Сборка">
-        <MenuItem Name="ExportWindowsMenu" Header="Экспорт игры для Windows x64…" Command="{Binding ExportWindowsCommand}" />
-        <MenuItem Name="ExportWindowsInstallerMenu" Header="Установщик игры EXE…" Command="{Binding ExportWindowsInstallerCommand}" />
-      </MenuItem>
-      <MenuItem Header="_Сцена">
-        <MenuItem Header="Открыть проверочный фрагмент" Command="{Binding OpenExampleCommand}" />
-        <MenuItem Header="_Запустить сцену" Command="{Binding PreviewSceneCommand}" InputGesture="F6" />
-        <MenuItem Header="_Добавить сцену" Command="{Binding AddSceneCommand}" />
-        <MenuItem Header="_Удалить текущую сцену" Command="{Binding DeleteSceneCommand}" />
+      <MenuItem Header="_Проект" IsEnabled="{Binding HasProject}">
+        <MenuItem Header="Параметры проекта" Click="ProjectSettingsClicked" />
+        <Separator />
+        <MenuItem Header="Добавить сцену" Command="{Binding AddSceneCommand}" />
+        <MenuItem Header="Удалить текущую сцену" Command="{Binding DeleteSceneCommand}" />
+        <MenuItem Name="OpenScreenLibraryMenu" Header="Холст текущей сцены" Command="{Binding OpenScreenLibraryCommand}" />
+        <MenuItem Header="Персонажи и состояния" Command="{Binding OpenCharacterLibraryCommand}" />
+        <Separator />
+        <MenuItem Header="Изображения проекта" Command="{Binding OpenAssetLibraryCommand}" />
+        <MenuItem Header="Импортировать изображение…" Command="{Binding ImportImageCommand}" />
+        <MenuItem Name="OpenScriptLibraryMenu" Header="Lua-файлы проекта" Command="{Binding OpenScriptLibraryCommand}" />
       </MenuItem>
       <MenuItem Header="_Вид">
         <MenuItem Name="WorkspacePanelsMenu" Header="Панели" />
         <MenuItem Header="Восстановить расположение панелей" Click="ResetWorkspaceClicked" />
-        <Separator />
-        <MenuItem Header="_Обновить ресурсы и Git" Command="{Binding RefreshGitCommand}" InputGesture="F5" />
+        <Separator /><MenuItem Header="Обновить файлы проекта и Git" Command="{Binding RefreshGitCommand}" InputGesture="F5" />
       </MenuItem>
-      <MenuItem Header="_Ресурсы">
-        <MenuItem Name="OpenScriptLibraryMenu" Header="Lua-скрипты" Command="{Binding OpenScriptLibraryCommand}" />
-        <MenuItem Header="_Персонажи и состояния" Command="{Binding OpenCharacterLibraryCommand}" />
-        <MenuItem Header="_Библиотека изображений" Command="{Binding OpenAssetLibraryCommand}" />
-        <MenuItem Header="_Импортировать изображение…" Command="{Binding ImportImageCommand}" />
+      <MenuItem Header="_Запуск">
+        <MenuItem Header="Запустить предпросмотр" Command="{Binding PreviewSceneCommand}" InputGesture="F6" />
+        <Separator /><MenuItem Header="Открыть пример проекта" Command="{Binding OpenExampleCommand}" />
+      </MenuItem>
+      <MenuItem Header="_Сборка" IsEnabled="{Binding HasProject}">
+        <MenuItem Name="ExportWindowsMenu" Header="Папка игры Windows x64…" Command="{Binding ExportWindowsCommand}" />
+        <MenuItem Name="ExportWindowsInstallerMenu" Header="Установщик игры EXE…" Command="{Binding ExportWindowsInstallerCommand}" />
       </MenuItem>
     </Menu>
     <Border DockPanel.Dock="Top" Background="#26292E" BorderBrush="#383C43" BorderThickness="0,0,0,1" Padding="8,5">
       <StackPanel Orientation="Horizontal" Spacing="4">
-        <Button Name="NewProjectButton" Classes="tool" Content="Создать проект" Command="{Binding NewCommand}" />
-        <Button Name="OpenProjectButton" Classes="tool" Content="Открыть…" Command="{Binding OpenCommand}" />
-        <Button Name="SaveProjectButton" Classes="tool" Content="Сохранить" Command="{Binding SaveCommand}" />
-        <Border Width="1" Background="#444951" Margin="8,3" />
-        <Button Name="AddSceneButton" Classes="tool" Content="Добавить сцену" Command="{Binding AddSceneCommand}" />
-        <Button Classes="tool" Content="Отменить" Command="{Binding UndoCommand}" />
-        <Button Classes="tool" Content="Повторить" Command="{Binding RedoCommand}" />
-        <Button Name="AssetLibraryButton" Classes="tool" Content="Ресурсы" Command="{Binding OpenAssetLibraryCommand}" />
-        <Button Classes="tool" Content="Обновить" Command="{Binding RefreshGitCommand}" ToolTip.Tip="Обновить ресурсы и статус Git (F5)" />
+        <Button Name="NewProjectButton" Classes="tool" Content="Создать" Command="{Binding NewCommand}" ToolTip.Tip="Создать проект (Ctrl+N)" />
+        <Button Name="OpenProjectButton" Classes="tool" Content="Открыть" Command="{Binding OpenCommand}" ToolTip.Tip="Открыть проект (Ctrl+O)" />
+        <Button Name="SaveProjectButton" Classes="tool" Content="Сохранить" Command="{Binding SaveCommand}" ToolTip.Tip="Сохранить проект (Ctrl+S)" />
+        <StackPanel IsVisible="{Binding HasProject}" Orientation="Horizontal" Spacing="4">
+          <Border Width="1" Background="#444951" Margin="6,3" />
+          <Button Classes="tool" Content="↶" Command="{Binding UndoCommand}" ToolTip.Tip="Отменить (Ctrl+Z)" AutomationProperties.Name="Отменить" />
+          <Button Classes="tool" Content="↷" Command="{Binding RedoCommand}" ToolTip.Tip="Повторить (Ctrl+Y)" AutomationProperties.Name="Повторить" />
+          <Border Width="1" Background="#444951" Margin="6,3" />
+          <Button Name="AddSceneButton" Classes="tool" Content="+ Сцена" Command="{Binding AddSceneCommand}" />
+          <Button Name="ScreenDesignerButton" Classes="tool" Content="Холст" Command="{Binding OpenScreenLibraryCommand}" />
+          <Button Name="AssetLibraryButton" Classes="tool" Content="Изображения" Command="{Binding OpenAssetLibraryCommand}" />
+          <Border Width="1" Background="#444951" Margin="6,3" />
+          <Button Name="RunPreviewButton" Classes="tool" Content="▶ Запустить" Command="{Binding PreviewSceneCommand}" ToolTip.Tip="Предпросмотр (F6)" />
+        </StackPanel>
       </StackPanel>
     </Border>
     <Border DockPanel.Dock="Bottom" BorderBrush="#383C43" BorderThickness="0,1,0,0" Background="#26292E" Padding="12,7">
       <Grid ColumnDefinitions="*,Auto">
-        <TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" />
+        <TextBlock Text="{Binding ProjectName}" TextTrimming="CharacterEllipsis" />
         <TextBlock Grid.Column="1" Text="{Binding GitSummary}" Classes="muted" Margin="20,0,0,0" MaxWidth="460" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding GitSummary}" />
       </Grid>
     </Border>
@@ -95,9 +102,7 @@
         <Border Name="ExplorerPane" Background="#24262B">
           <DockPanel>
 
-            <TextBlock DockPanel.Dock="Bottom" Margin="12" Classes="muted" FontSize="11" TextWrapping="Wrap"
-                       Text="Git: первый столбец — индекс, второй — рабочая копия. M — изменён, A — добавлен, D — удалён, R — переименован, ?? — новый."
-                       IsVisible="{Binding HasProject}" />
+
             <Grid>
             <views:ProjectFolderView Name="ProjectFolders" IsVisible="{Binding IsFolderExplorer}" IsEnabled="{Binding IsIdle}" />
             <TreeView IsVisible="{Binding !IsFolderExplorer}" Name="ProjectExplorer" ItemsSource="{Binding Explorer}" Margin="4,8" IsEnabled="{Binding IsIdle}" SelectionChanged="ExplorerSelectionChanged">

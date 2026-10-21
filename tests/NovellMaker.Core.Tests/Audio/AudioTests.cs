@@ -1,4 +1,4 @@
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
 using System.Text.Json.Nodes;
 using NovellMaker.Core.Audio;
 using NovellMaker.Core.Execution;
@@ -69,7 +69,7 @@ public sealed class AudioTests
     {
         var path = Path.Combine(root, "project.novell"); var store = new JsonProjectStore();
         await store.SaveAsync(path, project); Assert.IsTrue(project.ContentEquals(await store.LoadAsync(path)));
-        var node = JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject(); node["formatVersion"] = 8;
+        var node = JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject(); node["formatVersion"] = 8; node.AsObject().Remove("inputBindings"); node.AsObject().Remove("screens"); node.AsObject().Remove("pauseScreenId"); node.AsObject().Remove("inputBindings"); if (node["scenes"] is JsonArray oldScenes) foreach (var oldScene in oldScenes) oldScene!.AsObject().Remove("canvas");
         await File.WriteAllTextAsync(path, node.ToJsonString());
         await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
         node.Remove("audio"); node.Remove("scripts"); await File.WriteAllTextAsync(path, node.ToJsonString()); var before = File.ReadAllBytes(path);

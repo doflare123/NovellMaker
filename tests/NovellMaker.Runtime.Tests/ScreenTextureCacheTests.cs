@@ -1,10 +1,26 @@
-using NovellMaker.Core.Screens;
+﻿using NovellMaker.Core.Screens;
 
 namespace NovellMaker.Runtime.Tests;
 
 [TestClass]
 public sealed class ScreenTextureCacheTests
 {
+    private static readonly ScreenDefinition Fixture = ScreenFixture.Create("Тест").Definition();
+    [TestMethod]
+    public void SameSceneOpenedTwiceUsesIndependentTexturesAndOneSharedAllocationBudget()
+    {
+        var scene = ScreenFixture.Create("Два экземпляра"); var stack = new ScreenStack(Guid.NewGuid());
+        stack.Open(Guid.NewGuid(), scene.Definition()); stack.Open(Guid.NewGuid(), scene.Definition());
+        using var cache = new ScreenTextureCache<Texture>(_ => new Texture());
+        var first = cache.UpdateLayers(stack.Instances, new(0, 0, 1280, 720));
+        Assert.IsLessThanOrEqualTo(ScreenTextureCache<Texture>.MaximumFrameTextures, first.Count);
+        var completed = cache.UpdateLayers(stack.Instances, new(0, 0, 1280, 720));
+        Assert.HasCount(6, completed); Assert.HasCount(2, completed.Select(t => t.Region.InstanceId).Distinct().ToArray());
+        var title = completed.Where(t => t.Region.Node.Id == scene.Nodes[1].Id).ToArray();
+        Assert.HasCount(2, title); Assert.AreNotSame(title[0].Texture, title[1].Texture);
+        stack.Close(stack.Instances.Last()); cache.UpdateLayers(stack.Instances, new(0, 0, 1280, 720));
+        Assert.IsLessThanOrEqualTo(ScreenTextureCache<Texture>.MaximumCachedPixels, cache.CachedPixels);
+    }
     private sealed class Texture : IDisposable
     {
         internal int Disposals;
@@ -17,7 +33,7 @@ public sealed class ScreenTextureCacheTests
     {
         var created = new List<Texture>();
         using var cache = new ScreenTextureCache<Texture>(_ => { var value = new Texture(); created.Add(value); return value; });
-        var definition = RuntimeScreens.Pause;
+        var definition = Fixture;
         Assert.AreEqual(3, cache.Update(definition, Viewport).Count);
         cache.Update(new(definition.Id, definition.Nodes), Viewport);
         Assert.AreEqual(3, created.Count);
@@ -46,7 +62,7 @@ public sealed class ScreenTextureCacheTests
         var plan = ScreenTextureCache<Texture>.Plan(definition, Viewport);
         Assert.AreEqual(1, plan.Count);
         Assert.AreEqual(40, plan[0].X); Assert.AreEqual(60, plan[0].Y);
-        Assert.AreEqual(new ScreenRaster("clipped", 100, 90, 50, 60, 100000), plan[0].Raster);
+        Assert.AreEqual(new ScreenRaster("clipped", 100, 90, 50, 60, 100000, Transparent: true), plan[0].Raster);
         using var cache = new ScreenTextureCache<Texture>(_ => new());
         cache.Update(definition, Viewport); Assert.AreEqual(9000, cache.CachedPixels);
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => DialogueTextureRenderer.RenderButton(null!, "huge", 100000, 100000));

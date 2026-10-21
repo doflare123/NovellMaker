@@ -1,4 +1,4 @@
-using System.Text.Encodings.Web;
+﻿using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Unicode;
 using Microsoft.Xna.Framework;
@@ -20,6 +20,7 @@ internal sealed partial class RuntimeGame : Game
     private readonly ScenePlayer player;
     private readonly bool showNavigationControls;
     private readonly Dictionary<Guid, Texture2D> assetTextures = [];
+    private readonly HashSet<Guid> screenBudgetRejected = [];
     private readonly Dictionary<Guid, string> assetDiagnostics = [];
     private SpriteBatch? spriteBatch;
     private RenderTarget2D? sceneTarget;
@@ -55,7 +56,7 @@ internal sealed partial class RuntimeGame : Game
     private RuntimeSmokeStep? pendingSmokeStep;
     private bool pendingSmokeSuccess;
     private RenderedTexture? actionHelp;
-    private string saveMessage = "F7/F8 — слот · Enter — дальше · F9 — звук · P — пауза";
+    private string saveMessage = "";
     private string SavePath => RuntimeStorage.SavePath(player.Execution.State.ProjectId, arguments.Package is not null);
     private bool UsesGameState => player.UsesActions || player.IsGamePlayback;
 
@@ -64,6 +65,8 @@ internal sealed partial class RuntimeGame : Game
         this.arguments = arguments ?? throw new ArgumentNullException(nameof(arguments));
         this.player = player ?? throw new ArgumentNullException(nameof(player));
         this.showNavigationControls = showNavigationControls;
+        screens = new(Guid.NewGuid(), enableLua: true, hostAction: ApplyProjectCommand);
+        screens.Configure(player.Execution.Project, () => player.Execution.State.Variables);
         if (arguments.SmokePlanPath is { } plan) smokePlan = JsonSerializer.Deserialize<RuntimeSmokeStep[]>(File.ReadAllText(plan)) ?? throw new ArgumentException("Пустой smoke-план.");
         graphics = new GraphicsDeviceManager(this)
         {
@@ -93,6 +96,7 @@ internal sealed partial class RuntimeGame : Game
             RenderTargetUsage.PreserveContents);
         pixel = new Texture2D(GraphicsDevice, 1, 1);
         pixel.SetData([Color.White]);
+        screens.SyncScene(player.Execution.State.SceneId);
         initialLineId = player.Frame.LineId;
         initialVisibleCharacterCount = player.Frame.Characters.Length;
         initialFrameCaptured = !player.Execution.HasPendingLua;
@@ -103,6 +107,7 @@ internal sealed partial class RuntimeGame : Game
 
     protected override void Update(GameTime gameTime)
     {
+        screens.SyncScene(player.Execution.State.SceneId);
         screens.Poll();
         var hostActive = arguments.SmokeOutputPath is not null || IsActive;
         screens.Stack.SetActive(hostActive);
@@ -116,6 +121,7 @@ internal sealed partial class RuntimeGame : Game
             var line = player.Frame.LineId;
             if (smokePlan is null && !paused) player.Tick(gameTime.ElapsedGameTime);
             else if (!paused) player.PollLua();
+            screens.SyncScene(player.Execution.State.SceneId);
             lineElapsed += TimeSpan.FromSeconds(Math.Max(0, player.Execution.State.Time - scenarioTime));
             if (line != player.Frame.LineId) lineElapsed = TimeSpan.Zero;
             RefreshFrameResources();
@@ -137,22 +143,19 @@ internal sealed partial class RuntimeGame : Game
         {
             var keyboard = Keyboard.GetState();
             var mouse = Mouse.GetState();
-            if (Pressed(keyboard, Keys.Escape))
+            if (keyboard.GetPressedKeys().Where(key => Pressed(keyboard, key)).Any(key => RouteProjectKey(key.ToString()))) { }
+            else if (Pressed(keyboard, Keys.Escape))
             {
                 if (!RouteScreen(new(ScreenInputKind.Back))) Exit();
             }
-            else if (Pressed(keyboard, Keys.F9)) ToggleMixer();
-            else if (Pressed(keyboard, Keys.P)) { screens.TogglePause(); RefreshMixer(); }
             else if (Pressed(keyboard, Keys.Tab)) RouteScreen(new(keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift)
                 ? ScreenInputKind.FocusPrevious : ScreenInputKind.FocusNext));
-            else if (UsesGameState && screens.Stack.Instances.IsEmpty && Pressed(keyboard, Keys.F7)) SaveGame();
-            else if (UsesGameState && screens.Stack.Instances.IsEmpty && Pressed(keyboard, Keys.F8)) LoadGame();
             else if (Pressed(keyboard, Keys.Enter) || Pressed(keyboard, Keys.Space))
             {
                 if (!RouteScreen(new(ScreenInputKind.Activate))) ApplyAction(RuntimeAction.Next);
             }
-            else if (screens.Stack.Instances.IsEmpty && Pressed(keyboard, Keys.Right)) ApplyAction(RuntimeAction.Next);
-            else if (screens.Stack.Instances.IsEmpty && Pressed(keyboard, Keys.Left))
+            else if (!screens.HasOverlays && Pressed(keyboard, Keys.Right)) ApplyAction(RuntimeAction.Next);
+            else if (!screens.HasOverlays && Pressed(keyboard, Keys.Left))
             {
                 ApplyAction(RuntimeAction.Previous);
             }
@@ -181,8 +184,11 @@ internal sealed partial class RuntimeGame : Game
         else { previousKeyboard = Keyboard.GetState(); previousMouse = Mouse.GetState(); }
 
         inputActive = IsActive;
+        screens.SyncScene(player.Execution.State.SceneId);
         screens.Poll();
-        if (screens.Scripts?.Diagnostics.IsEmpty == false) RefreshTextTextures();
+        RefreshFrameResources();
+        var menuDiagnostics = string.Join("\n", screens.Diagnostics);
+        if (menuDiagnostics != lastMenuDiagnostics) { lastMenuDiagnostics = menuDiagnostics; RefreshTextTextures(); }
         player.Execution.IsPaused = screens.Stack.PausesScenario || !hostActive;
         SynchronizeAudio();
         base.Update(gameTime);
@@ -210,8 +216,7 @@ internal sealed partial class RuntimeGame : Game
         DrawNavigationControls(spriteBatch);
         foreach (var button in interactionButtons) spriteBatch.Draw(button.Texture.Texture, button.Bounds, Color.White);
         if (actionHelp is not null) spriteBatch.Draw(actionHelp.Texture, new Vector2(16, 16), Color.White);
-        DrawPause(spriteBatch);
-        DrawMixer(spriteBatch);
+        DrawComponents(spriteBatch);
         spriteBatch.End();
 
         GraphicsDevice.SetRenderTarget(null);
@@ -245,9 +250,8 @@ internal sealed partial class RuntimeGame : Game
     {
         player.Dispose();
         screens.Dispose();
-        pauseTextures?.Dispose();
+        componentTextures?.Dispose();
         audio?.Dispose();
-        foreach (var button in mixerButtons) button.Texture.Dispose();
         actionHelp?.Dispose();
         foreach (var button in interactionButtons) button.Texture.Dispose();
         diagnosticsTexture?.Dispose();
@@ -316,13 +320,12 @@ internal sealed partial class RuntimeGame : Game
                 success = RouteScreen(new(ScreenInputKind.PointerUp, step.X, step.Y)) || consumed;
                 if (!success) success = ClickLogical(new Point(step.X, step.Y));
                 break;
-            case "mixer": ToggleMixer(); break;
-            case "pause": screens.TogglePause(); break;
+            case "key": success = RouteProjectKey(step.Key ?? ""); break;
             case "back": success = RouteScreen(new(ScreenInputKind.Back)); break;
             case "activate": success = RouteScreen(new(ScreenInputKind.Activate)); break;
             case "tab": success = RouteScreen(new(ScreenInputKind.FocusNext)); break;
             case "save": GameSave.SaveAsync(path, player.Execution).GetAwaiter().GetResult(); break;
-            case "load": player.LoadSave(File.ReadAllText(path)); screens.Reset(); RefreshMixer(); break;
+            case "load": player.LoadSave(File.ReadAllText(path)); screens.Reset(); screens.SyncScene(player.Execution.State.SceneId, afterLoad: true); SynchronizeAudio(); break;
             case "quicksave": success = SaveGame(); break;
             case "quickload": success = LoadGame(); break;
             default: throw new ArgumentException("Неизвестный шаг smoke-плана.");
@@ -339,6 +342,7 @@ internal sealed partial class RuntimeGame : Game
         return new(kind, success, player.Execution.State, player.Frame.Text)
         {
             ScreenCount = screens.Stack.Instances.Length,
+            ScreenTexts = screens.Stack.Instances.SelectMany(i => i.Definition.Nodes.Select(n => n.Text)).ToArray(),
             PausedAudioSources = audioBackend.PausedSources,
             AudioSources = audio?.ActiveSources ?? 0,
             AudioOpenedSources = audioBackend.OpenedSources,
@@ -375,7 +379,7 @@ internal sealed partial class RuntimeGame : Game
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SavePath)!);
             GameSave.SaveAsync(SavePath, player.Execution).GetAwaiter().GetResult();
-            saveMessage = "Игра сохранена · F8 — загрузить · Enter — продолжить";
+            saveMessage = "Игра сохранена";
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
         { saveMessage = "Не удалось сохранить: " + error.Message; success = false; }
@@ -389,8 +393,8 @@ internal sealed partial class RuntimeGame : Game
         try
         {
             player.LoadSave(File.ReadAllText(SavePath));
-            screens.Reset(); RefreshMixer();
-            saveMessage = "Игра загружена · F7 — сохранить · Enter — продолжить";
+            screens.Reset(); screens.SyncScene(player.Execution.State.SceneId, afterLoad: true); SynchronizeAudio();
+            saveMessage = "Игра загружена";
             lineElapsed = TimeSpan.Zero;
             RefreshFrameResources(); RefreshTextTextures();
         }
@@ -416,7 +420,7 @@ internal sealed partial class RuntimeGame : Game
         interactionButtons.Clear();
         foreach (var b in buttons) interactionButtons.Add((b.Id, b.Bounds, DialogueTextureRenderer.RenderButton(GraphicsDevice, b.Label, b.Bounds.Width, b.Bounds.Height)));
         actionHelp?.Dispose();
-        actionHelp = DialogueTextureRenderer.RenderButton(GraphicsDevice, state.Completed ? "Сценарий завершён · F8 — загрузить · Escape — закрыть" : saveMessage, 1040, 40);
+        actionHelp = string.IsNullOrEmpty(saveMessage) ? null : DialogueTextureRenderer.RenderButton(GraphicsDevice, saveMessage, 1040, 40);
     }
 
     private void RefreshFrameResources()
@@ -430,6 +434,26 @@ internal sealed partial class RuntimeGame : Game
         foreach (var character in player.Frame.Characters)
         {
             wanted[character.Image.Id] = character.Image;
+        }
+
+        foreach (var rejected in screenBudgetRejected) assetDiagnostics.Remove(rejected);
+        screenBudgetRejected.Clear();
+        var screenPixels = 0L; var screenImages = 0;
+        foreach (var id in screens.Stack.Instances.SelectMany(i => i.Definition.VisibleRegions(new(0, 0, LogicalWidth, LogicalHeight)))
+            .Where(r => r.Node.ImageId is not null).Select(r => r.Node.ImageId!.Value)
+            .Concat(screens.Stack.Instances.Select(i => player.Execution.Project.Scenes.FirstOrDefault(s => s.Id == i.Definition.Id)?.BackgroundImageId)
+                .OfType<Guid>()).Distinct())
+        {
+            if (wanted.ContainsKey(id) || player.Execution.Project.Images.FirstOrDefault(i => i.Id == id) is not { } image) continue;
+            wanted[id] = image;
+            var pixels = (long)image.PixelWidth * image.PixelHeight;
+            if (screenImages >= 32 || screenPixels + pixels > 16 * 1024 * 1024)
+            {
+                if (assetTextures.Remove(id, out var rejectedTexture)) rejectedTexture.Dispose();
+                screenBudgetRejected.Add(id);
+                assetDiagnostics[id] = $"Изображение «{image.Name}»: превышен бюджет спрайтов экранов (32 изображения / 16 Мп).";
+            }
+            else { screenImages++; screenPixels += pixels; }
         }
 
         foreach (var staleId in assetTextures.Keys.Where(id => !wanted.ContainsKey(id)).ToArray())
@@ -497,7 +521,7 @@ internal sealed partial class RuntimeGame : Game
 
     private IReadOnlyList<string> CurrentDiagnostics() =>
         player.Frame.Diagnostics.Concat(assetDiagnostics.Values.Order(StringComparer.Ordinal)).Concat(audio?.Diagnostics ?? [])
-            .Concat(screens.Scripts?.Diagnostics ?? []).ToArray();
+            .Concat(screens.Diagnostics).ToArray();
 
     private void DrawBackground(SpriteBatch batch, ImageAsset? background)
     {
@@ -546,7 +570,7 @@ internal sealed partial class RuntimeGame : Game
 
     private void DrawDialogue(SpriteBatch batch, SceneFrame frame)
     {
-        if (dialogueTexture is null)
+        if (dialogueTexture is null || frame.LineId is null)
         {
             return;
         }
@@ -685,10 +709,11 @@ internal sealed record RuntimeSmokeReport(
     public int AudioOpenedSources { get; init; }
     public Dictionary<NovellMaker.Core.Audio.AudioGroup, NovellMaker.Core.Audio.AudioBus> AudioMixer { get; init; } = [];
 }
-internal sealed record RuntimeSmokeStep(string Kind, double Seconds = 0, int X = 0, int Y = 0);
+internal sealed record RuntimeSmokeStep(string Kind, double Seconds = 0, int X = 0, int Y = 0, string? Key = null);
 internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState State, string Text)
 {
     public int ScreenCount { get; init; }
+    public IReadOnlyList<string> ScreenTexts { get; init; } = [];
     public int PausedAudioSources { get; init; }
     public int AudioSources { get; init; }
     public int AudioOpenedSources { get; init; }

@@ -25,7 +25,7 @@ public sealed partial class EditorSession
     public Task DeleteStateAsync(Guid character, Guid state) => DeleteExplorerEntryAsync(new ExplorerEntry("", "", [], CharacterId: character, CharacterStateId: state));
     public Task DeleteImageAsync(Guid id) => DeleteExplorerEntryAsync(new ExplorerEntry("", "", [], ImageAssetId: id));
 
-    public Task DeleteExplorerEntryAsync(ExplorerEntry entry) => entry.ScriptId is { } scriptId && entry.FilePath is null ? DeleteScriptAsync(scriptId) : RunAsync(async () =>
+    public Task DeleteExplorerEntryAsync(ExplorerEntry entry) => entry.ScreenId is { } screenId ? DeleteScreenAsync(screenId) : entry.ScriptId is { } scriptId && entry.FilePath is null ? DeleteScriptAsync(scriptId) : RunAsync(async () =>
     {
         if (project is null) return;
         var before = project;
@@ -121,8 +121,11 @@ public sealed partial class EditorSession
         return updated with
         {
             Images = updated.Images.Where(i => !ids.Contains(i.Id)).ToImmutableArray(),
-            Scenes = updated.Scenes.Select(scene => scene.BackgroundImageId is { } id && ids.Contains(id)
-                ? scene with { BackgroundImageId = null } : scene).ToImmutableArray()
+            Scenes = updated.Scenes.Select(scene => scene with
+            {
+                BackgroundImageId = scene.BackgroundImageId is { } id && ids.Contains(id) ? null : scene.BackgroundImageId,
+                Canvas = scene.Canvas with { Nodes = scene.Canvas.Nodes.Select(n => n.ImageId is { } image && ids.Contains(image) ? n with { ImageId = null } : n).ToImmutableArray() }
+            }).ToImmutableArray()
         };
     }
     private static NovelProject RemoveStates(NovelProject source, HashSet<Guid> ids) => source with

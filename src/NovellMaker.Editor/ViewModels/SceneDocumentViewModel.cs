@@ -13,7 +13,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
     private DialogueStyle style = DialogueCssParser.Parse(DialogueCssParser.DefaultCss);
     private string cssError = "";
     private string? sampledCss;
-    private int selectedSection;
+    private int selectedSection = 6;
 
     // Transient authoring UI state; docking or switching documents must not reset it.
     public int SelectedSection
@@ -21,9 +21,16 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         get => selectedSection;
         set
         {
-            if (value is < 0 or > 5 || selectedSection == value) return;
+            if (value is < 0 or > 6 || selectedSection == value) return;
+            var wasCanvas = selectedSection == 6;
             selectedSection = value;
             Changed();
+            if (Session.ActiveScene == this && (wasCanvas || value == 6))
+            {
+                if (value == 6) Session.SelectScreen(Id);
+                else Session.InspectPhrase();
+                Session.NotifySelectionChanged();
+            }
         }
     }
 

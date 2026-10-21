@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -18,4 +18,5 @@
     <ProjectReference Include="../../src/NovellMaker.Runtime/NovellMaker.Runtime.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup><Compile Include="../AudioFixture.cs" Link="AudioFixture.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../ScreenFixture.cs" Link="ScreenFixture.cs" /></ItemGroup>
 </Project>

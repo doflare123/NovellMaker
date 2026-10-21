@@ -4,7 +4,7 @@ using NovellMaker.Core.Execution;
 namespace NovellMaker.Core.Scenes;
 
 /// <summary>
-/// An ordered collection of dialogue lines with optional presentation override.
+/// One authoring resource: visual components, dialogue sequence and scenario/event bindings.
 /// </summary>
 public sealed record NovelScene(Guid Id, string Name)
 {
@@ -13,6 +13,13 @@ public sealed record NovelScene(Guid Id, string Name)
     public string Name { get; init; } = ValidateName(Name);
 
     public ImmutableArray<DialogueLine> Lines { get; init; } = [];
+
+    public SceneCanvas Canvas { get; init; } = SceneCanvas.Empty(Id);
+
+    public NovellMaker.Core.Screens.ScreenAsset AsScreen() => Canvas.AsScreen(Id, Name);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasPresentation => BackgroundImageId is not null || Canvas.HandlerScriptId is not null || Canvas.Nodes.Length > 1 ||
+        Canvas.Nodes.Any(n => n.Kind != NovellMaker.Core.Screens.ScreenNodeKind.Container || n.ImageId is not null);
 
     public ImmutableArray<ScenarioAction> Actions { get; init; } = [];
     public ImmutableArray<ScriptBlock> ScriptBlocks { get; init; } = [];
@@ -35,6 +42,7 @@ public sealed record NovelScene(Guid Id, string Name)
             !string.Equals(Name, other.Name, StringComparison.Ordinal) ||
             !string.Equals(DialogueCssOverride, other.DialogueCssOverride, StringComparison.Ordinal) ||
             BackgroundImageId != other.BackgroundImageId ||
+            Canvas is null || other.Canvas is null || !AsScreen().ContentEquals(other.AsScreen()) ||
             UseActions != other.UseActions ||
             Lines.IsDefault != other.Lines.IsDefault ||
             !System.Text.Json.JsonSerializer.Serialize(ScriptBlocks).Equals(System.Text.Json.JsonSerializer.Serialize(other.ScriptBlocks), StringComparison.Ordinal) ||

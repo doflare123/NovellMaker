@@ -54,6 +54,23 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         return true;
     }
 
+    /// <summary>Explicit host navigation from a scene button. Starts the target once, preserving variables and time.</summary>
+    public bool EnterScene(Guid sceneId)
+    {
+        if (disposed || !programs.TryGetValue(sceneId, out var actions)) return false;
+        CancelPendingLua();
+        ResetPass();
+        audioEvents.Clear();
+        State = new GameState
+        {
+            ProjectId = project.Id, Revision = State.Revision, SceneId = sceneId,
+            NextActionId = actions.FirstOrDefault()?.Id, Variables = State.Variables, Time = State.Time
+        };
+        Audio(AudioEventKind.Scene);
+        Pump();
+        return true;
+    }
+
     public bool Choose(Guid optionId)
     {
         if (disposed || IsPaused || HasPendingLua || State.Error is not null || State.Choice?.Options.FirstOrDefault(o => o.Id == optionId) is not { } option) return false;

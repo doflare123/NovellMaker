@@ -5,7 +5,7 @@ namespace NovellMaker.Editor.ViewModels;
 public sealed record ExplorerEntry(string Label, string Detail, IReadOnlyList<ExplorerEntry> Children, Guid? SceneId = null, Guid? ImageAssetId = null, bool IsAssetLibrary = false,
     Guid? CharacterId = null, bool IsCharacterLibrary = false, string? FilePath = null, bool IsProjectSettings = false,
     bool ExpandInitially = true, Func<IReadOnlyList<ExplorerEntry>>? ChildLoader = null, bool IsDirectory = false, string GitStatus = "", Guid? CharacterStateId = null,
-    Guid? ScriptId = null, bool IsScriptLibrary = false) : INotifyPropertyChanged
+    Guid? ScriptId = null, bool IsScriptLibrary = false, Guid? ScreenId = null, bool IsScreenLibrary = false) : INotifyPropertyChanged
 {
     public bool IsLua => ScriptId is not null || FilePath is { } file && Path.GetExtension(file).Equals(".lua", StringComparison.OrdinalIgnoreCase);
     public bool IsScene => SceneId is not null;

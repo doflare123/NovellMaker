@@ -1,4 +1,4 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:NovellMaker.Editor.ViewModels"
              xmlns:views="using:NovellMaker.Editor.Views"
@@ -11,6 +11,7 @@
         <TextBlock Text="{Binding NameValidation}" IsVisible="{Binding !IsNameValid}" Foreground="#D9B68C" />
       </StackPanel>
       <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Margin="8,16,0,0" Spacing="4">
+        <Button Name="DuplicateScene" Content="Копия сцены" Click="DuplicateSceneClicked" IsEnabled="{Binding Session.CanEdit}" />
         <Button Name="PreviewSceneButton" Content="Запустить" Command="{Binding Session.PreviewSceneCommand}" ToolTip.Tip="F6: с выбранной реплики; сцена с самостоятельными действиями — с начала" />
         <Button Content="Удалить сцену" Command="{Binding Session.DeleteSceneCommand}" />
       </StackPanel>
@@ -63,7 +64,7 @@
                 <TextBlock Text="{Binding NavigationPosition}" VerticalAlignment="Center" />
                 <Button Name="NextLineButton" Content="Вперёд" Command="{Binding NextLineCommand}" />
               </StackPanel>
-              <TextBlock Text="Навигация автора меняет выбранную фразу и статический показ. F6 запускает игру; Enter в игре продолжает ожидание ввода, F8 восстанавливает сохранённое состояние." Classes="muted" TextWrapping="Wrap" />
+              <views:HelpTip Explanation="Навигация автора меняет выбранную фразу и статический показ. F6 запускает игру; Enter в игре продолжает ожидание ввода, F8 восстанавливает сохранённое состояние." />
             </StackPanel>
           </ScrollViewer>
         </Grid>
@@ -101,7 +102,7 @@
                 </StackPanel>
             </ScrollViewer>
             <DockPanel Grid.Column="2">
-              <TextBlock DockPanel.Dock="Top" Text="Перетащите персонажа; Escape — отмена. X/Y — нижняя середина спрайта, Y растёт вниз. Размещение сохраняется до следующей команды." Classes="muted" TextWrapping="Wrap" Margin="0,0,0,8" />
+              <views:HelpTip DockPanel.Dock="Top" Explanation="Перетащите персонажа; Escape — отмена. X/Y — нижняя середина спрайта, Y растёт вниз. Размещение сохраняется до следующей команды." />
               <DockPanel>
                 <TextBlock DockPanel.Dock="Bottom" Text="{Binding PlaybackDiagnostics}" Foreground="#D9B68C" TextWrapping="Wrap" />
                 <views:DialogueStyleSample Name="PlacementSample" StyleSheet="{Binding Style}" SampleText="{Binding SampleText}" SampleFrame="{Binding SampleFrame}" PlacementEditor="{Binding}"
@@ -120,7 +121,7 @@
             <CheckBox Content="Собственный стиль сцены" IsChecked="{Binding UseSceneStyle, Mode=TwoWay}" IsEnabled="{Binding Session.CanEdit}" />
             <TextBox Name="SceneCssBox" Text="{Binding Css, Mode=TwoWay}" AcceptsReturn="True" FontFamily="Consolas, DejaVu Sans Mono, monospace" FontSize="12" MinHeight="260" IsEnabled="{Binding CanEditCss}" IsUndoEnabled="False" />
             <TextBlock Text="{Binding CssError}" IsVisible="{Binding HasCssError}" Foreground="#D9B68C" TextWrapping="Wrap" />
-            <TextBlock Text="Поддерживаемые CSS-свойства и @keyframes описаны в документации проекта. При выключенном переопределении сцена наследует общий CSS." Classes="muted" TextWrapping="Wrap" />
+            <views:HelpTip Explanation="Поддерживаемые CSS-свойства и @keyframes описаны в документации проекта. При выключенном переопределении сцена наследует общий CSS." />
             <views:DialogueStyleSample StyleSheet="{Binding Style}" SampleText="{Binding SampleText}" BackgroundImage="{Binding BackgroundImage}" ProjectDirectory="{Binding Session.ProjectDirectory}" AssetRevision="{Binding Session.AssetRevision}" ShowVoiceProgress="{Binding Session.ShowVoiceProgress}" ShowVoiceControls="{Binding Session.ShowVoiceControls}" ShowNavigationControls="{Binding Session.ShowNavigationControls}" PreviousCommand="{Binding PreviousLineCommand}" NextCommand="{Binding NextLineCommand}" />
           </StackPanel>
         </ScrollViewer>
@@ -140,7 +141,7 @@
             <Border Background="#17191D" BorderBrush="#383C43" BorderThickness="1" MinHeight="160">
               <views:ProjectImageView Name="BackgroundPreview" Asset="{Binding BackgroundImage}" ProjectDirectory="{Binding Session.ProjectDirectory}" Revision="{Binding Session.AssetRevision}" MaxHeight="360" />
             </Border>
-            <TextBlock Text="Статический задник сцены. Привязка сохраняется по ID изображения; переименование в библиотеке её не меняет." Classes="muted" TextWrapping="Wrap" />
+            <views:HelpTip Explanation="Статический задник сцены. Привязка сохраняется по ID изображения; переименование в библиотеке её не меняет." />
           </StackPanel>
         </ScrollViewer>
       </TabItem>
@@ -166,9 +167,12 @@
             <Grid ColumnDefinitions="*,120,130"><TextBlock Text="sound — музыка и окружение" VerticalAlignment="Center" /><NumericUpDown Name="SoundAudioVolume" Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding SoundVolume, Mode=TwoWay}" /><CheckBox Name="SoundAudioMute" Grid.Column="2" Content="Выключить" IsChecked="{Binding SoundMuted, Mode=TwoWay}" /></Grid>
             <Grid ColumnDefinitions="*,120,130"><TextBlock Text="effect — эффекты" VerticalAlignment="Center" /><NumericUpDown Name="EffectAudioVolume" Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding EffectVolume, Mode=TwoWay}" /><CheckBox Name="EffectAudioMute" Grid.Column="2" Content="Выключить" IsChecked="{Binding EffectMuted, Mode=TwoWay}" /></Grid>
             <Grid ColumnDefinitions="*,120,130"><TextBlock Text="voice — речь" VerticalAlignment="Center" /><NumericUpDown Name="VoiceAudioVolume" Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding VoiceVolume, Mode=TwoWay}" /><CheckBox Name="VoiceAudioMute" Grid.Column="2" Content="Выключить" IsChecked="{Binding VoiceMuted, Mode=TwoWay}" /></Grid>
-            <TextBlock Text="Проверка: F6. Продолжение останавливает voice; эффекты доигрывают. Переход останавливает voice/effect, смена сцены заменяет sound. Загрузка: фон с начала, без повтора voice/effect. В игре F9 — микшер, P — пауза звука и сценария." Classes="muted" TextWrapping="Wrap" />
+            <views:HelpTip Explanation="Проверка: F6. Продолжение останавливает voice; эффекты доигрывают. Переход останавливает voice/effect, смена сцены заменяет sound. Загрузка: фон с начала, без повтора voice/effect. Игровые клавиши и интерфейс задаются самим проектом." />
           </StackPanel>
         </ScrollViewer>
+      </TabItem>
+      <TabItem Name="CanvasTab"><TabItem.Header><TextBlock Text="Холст" FontSize="12" /></TabItem.Header>
+        <views:ScreenLibraryView DataContext="{Binding Session}" />
       </TabItem>
     </TabControl>
   </DockPanel>

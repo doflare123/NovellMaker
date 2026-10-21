@@ -13,6 +13,42 @@ namespace NovellMaker.Core.Tests.Execution;
 public sealed class PendingLuaTests
 {
     [TestMethod]
+    [DataRow(0)] [DataRow(80)]
+    public void EnterSceneResetsActionAndLuaCallBudgetsOfCancelledPass(int actionsBeforeLua)
+    {
+        var scene = NovelScene.Create("Pending") with { UseActions = true, Actions = [
+            .. Enumerable.Range(0, actionsBeforeLua).Select(i => new SetAction(Guid.NewGuid(), "value", i.ToString())),
+            new ScriptAction(Guid.NewGuid(), "", "pending.lua")] };
+        var project = NovelProject.Create("Переходы") with { Scenes = [scene] };
+        var calls = 0;
+        Task<ImmutableArray<ScenarioAction>> Run(ScriptAction script, GameState state, NovelProject data, CancellationToken token)
+        {
+            calls++; var task = new TaskCompletionSource<ImmutableArray<ScenarioAction>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            token.Register(() => task.TrySetCanceled(token)); return task.Task;
+        }
+        using var player = new ScenarioPlayer(project, scene.Id, "ru", Run);
+        for (var i = 0; i < 45; i++)
+        {
+            Assert.IsTrue(player.EnterScene(scene.Id)); Assert.IsTrue(player.HasPendingLua); Assert.IsNull(player.State.Error);
+        }
+        Assert.AreEqual(46, calls);
+    }
+
+    [TestMethod]
+    public async Task EnterSceneStartsFreshWallTimeBudgetAfterCancelledPassDeadline()
+    {
+        var scene = NovelScene.Create("Pending") with { UseActions = true, Actions = [new ScriptAction(Guid.NewGuid(), "", "pending.lua")] };
+        var project = NovelProject.Create("Переходы") with { Scenes = [scene] };
+        Task<ImmutableArray<ScenarioAction>> Run(ScriptAction script, GameState state, NovelProject data, CancellationToken token)
+        {
+            var task = new TaskCompletionSource<ImmutableArray<ScenarioAction>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            token.Register(() => task.TrySetCanceled(token)); return task.Task;
+        }
+        using var player = new ScenarioPlayer(project, scene.Id, "ru", Run);
+        await Task.Delay(TimeSpan.FromSeconds(5.1));
+        Assert.IsTrue(player.EnterScene(scene.Id)); Assert.IsTrue(player.HasPendingLua); Assert.IsNull(player.State.Error);
+    }
+    [TestMethod]
     public void ConstructorAndFramesReturnWithStablePositionUntilHostAppliesResultOnce()
     {
         var (project, scene, script, _) = Fixture();

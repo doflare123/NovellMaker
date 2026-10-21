@@ -65,8 +65,7 @@ public sealed class ScriptLibraryView : UserControl
         autoOpen.DataContextChanged += (_, _) => autoOpen.IsChecked = (autoOpen.DataContext as EditorSession)?.OpenCodeOnCreation == true;
         editorSettings.Children.Add(autoOpen);
         inspector.Children.Add(new Expander { Name = "CodeEditorSettings", Header = "Открывать по умолчанию", Content = editorSettings });
-        inspector.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap,
-            FontSize = 11, Text = "Код открывается во внешнем редакторе. Сохранения файлов проверяются автоматически. F5 — обновить вручную." });
+        inspector.Children.Add(new HelpTip { Explanation = "Код открывается во внешнем редакторе. Сохранения файлов проверяются автоматически. F5 — обновить вручную." });
         var referencePanel = new StackPanel { Spacing = 6 };
         referencePanel.Children.Add(targets); referencePanel.Children.Add(alias);
         inspector.Children.Add(new Expander { Name = "LuaReferencesSettings", Header = "Именованные ссылки", Content = referencePanel });

@@ -4,7 +4,7 @@ using NovellMaker.Editor.Services;
 
 namespace NovellMaker.Editor.ViewModels;
 
-public enum InspectorTarget { Project, Phrase, Action, Script }
+public enum InspectorTarget { Project, Phrase, Action, Script, Screen }
 
 public sealed partial class EditorSession
 {

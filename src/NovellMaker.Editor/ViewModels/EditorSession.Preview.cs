@@ -1,4 +1,4 @@
-using NovellMaker.Editor.Services.Preview;
+﻿using NovellMaker.Editor.Services.Preview;
 
 namespace NovellMaker.Editor.ViewModels;
 
@@ -30,12 +30,15 @@ public sealed partial class EditorSession
 
     public Task PreviewSceneAsync() => RunAsync(async () =>
     {
-        if (project is null || ActiveScene is not { } document) return;
+        if (project is null) return;
+        var document = ActiveScene;
+        var sceneId = document?.Id;
+        if (sceneId is null) return;
         await ValidateExternalScriptsForRunAsync();
-        if (!IsNameValid || !AreDocumentsValid || !document.IsEditingLanguageValid)
+        if (!IsNameValid || !AreDocumentsValid || document is { IsEditingLanguageValid: false })
             throw new InvalidOperationException("Исправьте названия и язык перед запуском предпросмотра.");
-        var request = new PreviewRequest(project, ProjectDirectory ?? Path.GetTempPath(), document.Id,
-            project.Scenes.First(s => s.Id == document.Id).HasActionScript ? null : document.SelectedLine?.Id, document.EditingLanguage);
+        var request = new PreviewRequest(project, ProjectDirectory ?? Path.GetTempPath(), sceneId.Value,
+            project.Scenes.First(s => s.Id == sceneId).HasActionScript ? null : document?.SelectedLine?.Id, document?.EditingLanguage ?? project.DefaultLanguage);
         await previewService.StartAsync(request, Log);
         Log("Запущен игровой предпросмотр снимка сцены. Повторный запуск применит текущие изменения.");
     });

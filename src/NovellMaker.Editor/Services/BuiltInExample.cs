@@ -1,4 +1,4 @@
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
 using NovellMaker.Core.Assets;
 using NovellMaker.Core.Characters;
 using NovellMaker.Core.Execution;
@@ -61,7 +61,7 @@ public static class BuiltInExample
             Cue(3, ScriptPhase.AfterLine, EndingChoice()),
             Cue(4, ScriptPhase.AfterLine, EndingChoice()),
         ] };
-        return NovelProject.Create("Проверочный фрагмент") with { Scenes = [scene], Images = [.. images], Characters = [guide, traveller], Scripts = [terminalStart] };
+        return Examples.ExampleInterfaceModule.AddTo(NovelProject.Create("Проверочный фрагмент") with { Scenes = [scene], Images = [.. images], Characters = [guide, traveller], Scripts = [terminalStart] });
     }
 
     private static ImageAsset Sprite(string directory, string name, SKColor color)

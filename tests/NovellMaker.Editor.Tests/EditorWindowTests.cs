@@ -1,4 +1,4 @@
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Input;
@@ -33,10 +33,153 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task ProjectShortcutsAndAudioCommandsAreAuthoredThroughInspectorWithUndo() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        session.AddScreenNodeAt(NovellMaker.Core.Screens.ScreenNodeKind.Button, 100, 100); Dispatcher.UIThread.RunJobs();
+        var properties = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single();
+        Find<ComboBox>(properties, "ScreenButtonAction").SelectedIndex = (int)NovellMaker.Core.Screens.ScreenButtonAction.Volume;
+        Find<ComboBox>(properties, "ScreenAudioGroup").SelectedItem = NovellMaker.Core.Audio.AudioGroup.Voice;
+        Find<NumericUpDown>(properties, "ScreenAudioAmount").Value = -20;
+        Assert.AreEqual(-.2, session.SelectedScreen!.Buttons.Single().Amount);
+        Assert.AreEqual(NovellMaker.Core.Audio.AudioGroup.Voice, session.SelectedScreen.Buttons.Single().Group);
+        Find<Expander>(properties, "ProjectKeysExpander").IsExpanded = true; Dispatcher.UIThread.RunJobs();
+        Find<TextBox>(properties, "ProjectKey").Text = "F9";
+        Find<Button>(properties, "SetProjectKey").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.AreEqual(new NovellMaker.Core.Screens.ProjectInputBinding("F9", NovellMaker.Core.Screens.ScreenButtonAction.Toggle, session.ActiveScene!.Id), session.Project!.InputBindings.Single());
+        session.Undo(); Assert.IsEmpty(session.Project.InputBindings); session.Redo(); Assert.HasCount(1, session.Project.InputBindings);
+        Find<TextBox>(properties, "ProjectKey").Text = "F13"; var before = session.Project;
+        Find<Button>(properties, "SetProjectKey").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.AreSame(before, session.Project); Assert.IsFalse(string.IsNullOrEmpty(Find<TextBlock>(properties, "ScreenEditorStatus").Text));
+        window.Close();
+    });
+    [TestMethod]
+    public Task ComponentDepthErrorIsContainedByActualDropHandlerAndKeepsUnsavedWork() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene(); Dispatcher.UIThread.RunJobs();
+        var artboard = window.GetVisualDescendants().OfType<ScreenDesignSurface>().Single().Artboard;
+        using var data = new DataTransfer(); data.Add(DataTransferItem.CreateText(new ComponentDrop(NovellMaker.Core.Screens.ScreenNodeKind.Container).Encode(session.Project!.Id)));
+        void Drop() => artboard.RaiseEvent(new DragEventArgs(DragDrop.DropEvent, data, artboard, new Point(50, 50), KeyModifiers.None));
+        for (var i = 0; i < 31; i++) Drop();
+        var before = session.Project; var selection = session.SelectedScreenNodeId;
+        Drop(); Dispatcher.UIThread.RunJobs();
+        Assert.AreSame(before, session.Project); Assert.AreEqual(selection, session.SelectedScreenNodeId); Assert.IsTrue(session.IsDirty);
+        StringAssert.Contains(Find<TextBlock>(window, "ComponentAddError").Text!, "не добавлен");
+        session.Undo(); Assert.HasCount(31, session.SelectedScreen!.Nodes);
+        window.Close();
+    });
+    [TestMethod]
+    public Task SameSceneDocumentContainsCanvasDialogueAndAllComponentsWithoutScreenLibrary() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); Click(window, Find<Button>(window, "AddSceneButton"));
+        var document = session.ActiveScene!; Assert.IsTrue(session.IsScreenDesigner);
+        Assert.IsTrue(window.WorkspaceLayout.IsVisible("explorer")); Assert.IsTrue(window.WorkspaceLayout.IsVisible("tools"));
+        Assert.IsNotNull(window.GetVisualDescendants().OfType<ScreenDesignSurface>().Single());
+        session.AddScreenNodeAt(NovellMaker.Core.Screens.ScreenNodeKind.Button, 300, 200);
+        document.SelectedSection = 0; Dispatcher.UIThread.RunJobs();
+        Click(window, Find<Button>(window, "AddLineButton")); TypeInto(window, Find<TextBox>(window, "LineTextBox"), "Одна сцена");
+        document.SelectedSection = 6; Dispatcher.UIThread.RunJobs();
+        Assert.AreSame(document, session.SelectedDocument); Assert.HasCount(2, session.Documents);
+        Assert.HasCount(1, session.Project!.Scenes); Assert.HasCount(2, session.Project.Scenes[0].Canvas.Nodes);
+        Assert.AreEqual("Одна сцена", document.LineText);
+        var sample = window.GetVisualDescendants().OfType<ScreenDesignSurface>().Single().GetVisualDescendants().OfType<DialogueStyleSample>().Single();
+        Assert.AreSame(session, sample.DataContext);
+        Assert.AreEqual(document.SelectedLine!.Id, sample.SampleFrame?.LineId);
+        Assert.AreEqual("Одна сцена", sample.SampleText);
+        Assert.IsFalse(session.Explorer[0].Children.Any(e => e.IsScreenLibrary));
+        Capture(window, "editor-unified-scene.png"); window.Close();
+    });
+
+    [TestMethod]
+    public Task VisualDesignerDropsMovesResizesCancelsAndEditsPropertiesImmediately() => WithUi(async () =>
+    {
+        using var session = CreateSession(out var dialogs, out _); dialogs.Decision = UnsavedChangesDecision.Discard; dialogs.AcceptDeletion = true;
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0; session.ActiveScene!.AddLine(); session.OpenScreenLibrary();
+        Dispatcher.UIThread.RunJobs(); Click(window, Find<Button>(window, "AddSceneButton"));
+        Assert.IsTrue(window.WorkspaceLayout.IsVisible("tools")); Assert.IsFalse(window.WorkspaceLayout.IsVisible("scene"));
+        Assert.HasCount(1, session.SelectedScreen!.Nodes);
+        var surface = window.GetVisualDescendants().OfType<ScreenDesignSurface>().Single(); var canvas = surface.Artboard;
+        using var data = new DataTransfer(); data.Add(DataTransferItem.CreateText(new ComponentDrop(NovellMaker.Core.Screens.ScreenNodeKind.Button).Encode(session.Project!.Id)));
+        Assert.AreSame(session, surface.DataContext); Assert.IsTrue(session.CanEdit);
+        Assert.IsNotNull(ComponentDrop.Decode(data.TryGetText(), session));
+        canvas.RaiseEvent(new DragEventArgs(DragDrop.DropEvent, data, canvas, new Point(250, 200), KeyModifiers.None)); Dispatcher.UIThread.RunJobs();
+        Assert.HasCount(2, session.SelectedScreen.Nodes); var node = session.SelectedScreenNode!;
+        Assert.AreEqual(250d, node.Bounds.X); Assert.AreEqual(200d, node.Bounds.Y);
+        var before = session.Project;
+        Point At(double x, double y) => canvas.TranslatePoint(new Point(x, y), window)!.Value;
+        window.MouseDown(At(300, 220), MouseButton.Left); window.MouseMove(At(360, 250));
+        Assert.AreSame(before, session.Project, "Dragging previews locally until release.");
+        window.MouseUp(At(360, 250), MouseButton.Left); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(310d, session.SelectedScreenNode!.Bounds.X); Assert.AreEqual(230d, session.SelectedScreenNode.Bounds.Y);
+        session.Undo(); Dispatcher.UIThread.RunJobs(); Assert.AreEqual(node.Bounds, session.SelectedScreenNode!.Bounds);
+        window.MouseDown(At(450, 248), MouseButton.Left); window.MouseMove(At(510, 278)); window.MouseUp(At(510, 278), MouseButton.Left); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(260d, session.SelectedScreenNode!.Bounds.Width); Assert.AreEqual(78d, session.SelectedScreenNode.Bounds.Height);
+        before = session.Project;
+        window.MouseDown(At(300, 220), MouseButton.Left); window.MouseMove(At(500, 300)); window.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null); window.MouseUp(At(500, 300), MouseButton.Left);
+        Assert.AreSame(before, session.Project, "Escape must discard a gesture without an undo entry.");
+        var properties = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single();
+        Find<TextBox>(properties, "ScreenNodeName").Text = "Начать игру"; Find<TextBox>(properties, "ScreenNodeText").Text = "Играть";
+        Assert.AreEqual("Играть", session.SelectedScreenNode!.Text); Assert.AreEqual("Начать игру", session.SelectedScreenNode.Name);
+        Find<NumericUpDown>(properties, "ScreenNodeX").Value = 180; Assert.AreEqual(180d, session.SelectedScreenNode.Bounds.X);
+        Find<ComboBox>(properties, "ScreenButtonAction").SelectedIndex = 1;
+        Assert.AreEqual(NovellMaker.Core.Screens.ScreenButtonAction.Close, session.SelectedScreen!.Buttons.Single().Action);
+        Find<Expander>(properties, "ScreenReferencesExpander").IsExpanded = true; Dispatcher.UIThread.RunJobs();
+        Find<TextBox>(properties, "ScreenReferenceName").Text = "play"; Click(window, Find<Button>(properties, "AddScreenReference"));
+        Assert.AreEqual(node.Id, session.SelectedScreen!.References["play"]);
+        Find<TextBox>(properties, "ScreenReferenceName").Text = "bad alias"; Click(window, Find<Button>(properties, "AddScreenReference"));
+        Assert.IsFalse(session.SelectedScreen.References.ContainsKey("bad alias"));
+        Find<Expander>(properties, "ScreenReferencesExpander").IsExpanded = false;
+        foreach (var scroll in properties.GetVisualDescendants().OfType<ScrollViewer>()) scroll.Offset = default;
+        var zoom = Find<ComboBox>(window, "ScreenZoom"); zoom.SelectedIndex = 3; Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(1280d, Find<Viewbox>(window, "ScreenViewport").Width);
+        zoom.SelectedIndex = 0; Dispatcher.UIThread.RunJobs();
+        Capture(window, "editor-visual-designer.png");
+        session.OpenScene(session.Project!.Scenes[0].Id); session.ActiveScene!.SelectedSection = 0; Dispatcher.UIThread.RunJobs(); Assert.IsTrue(window.WorkspaceLayout.IsVisible("scene"));
+        session.OpenScreenLibrary(); Dispatcher.UIThread.RunJobs(); Assert.IsTrue(window.WorkspaceLayout.IsVisible("tools"));
+        window.Close();
+    });
+
+    [TestMethod]
+    public Task VisualDesignerImportsDropsSpriteKeepsDocumentAndSupportsDeleteUndo() => WithUi(async () =>
+    {
+        var root = Path.Combine(Path.GetTempPath(), "NovellMaker.DesignerTests", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            using var image = new SKBitmap(32, 32); image.Erase(new SKColor(35, 155, 210));
+            var imagePath = Path.Combine(root, "sprite.png"); using (var stream = File.Create(imagePath)) image.Encode(stream, SKEncodedImageFormat.Png, 100);
+            using var session = CreateSession(out var dialogs, out _); dialogs.SavePath = Path.Combine(root, "story.novell"); dialogs.ImagePath = imagePath;
+            dialogs.AcceptDeletion = true; dialogs.Decision = UnsavedChangesDecision.Discard; dialogs.CodeEditor.OpenOnCreation = false;
+            var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScreen(empty: true); var document = session.SelectedDocument;
+            await session.ImportDesignerImageAsync(); Dispatcher.UIThread.RunJobs(); Assert.AreSame(document, session.SelectedDocument);
+            var asset = session.Project!.Images.Single(); var canvas = window.GetVisualDescendants().OfType<ScreenDesignSurface>().Single().Artboard;
+            using var data = new DataTransfer(); data.Add(DataTransferItem.CreateText(new ComponentDrop(NovellMaker.Core.Screens.ScreenNodeKind.Image, asset.Id).Encode(session.Project.Id)));
+            canvas.RaiseEvent(new DragEventArgs(DragDrop.DropEvent, data, canvas, new Point(100, 100), KeyModifiers.None)); Dispatcher.UIThread.RunJobs();
+            Assert.AreEqual(asset.Id, session.SelectedScreenNode!.ImageId);
+            foreach (var preview in window.GetVisualDescendants().OfType<ProjectImageView>()) await preview.PreviewLoad;
+            Dispatcher.UIThread.RunJobs(); var properties = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single();
+            Assert.IsTrue(Find<ProjectImageView>(properties, "ScreenSpritePreview").HasImage);
+            Find<TextBox>(properties, "ScreenNodeName").Text = "Логотип";
+            session.AddScreenNodeAt(NovellMaker.Core.Screens.ScreenNodeKind.Button, 450, 350);
+            properties = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single();
+            Find<Border>(properties, "ScreenSpriteDrop").RaiseEvent(new DragEventArgs(DragDrop.DropEvent, data, properties, default, KeyModifiers.None));
+            Assert.AreEqual(asset.Id, session.SelectedScreenNode!.ImageId);
+            Find<ComboBox>(properties, "ScreenButtonAction").SelectedIndex = 1;
+            await session.SaveAsync(); Assert.IsFalse(session.IsDirty);
+            await session.DeleteImageAsync(asset.Id); Assert.IsTrue(session.Project.Screens.SelectMany(s => s.Nodes).All(n => n.ImageId is null));
+            session.Undo(); Assert.AreEqual(asset.Id, session.SelectedScreenNode!.ImageId);
+            await session.CreateScreenHandlerAsync(); Dispatcher.UIThread.RunJobs(); Assert.AreSame(document, session.SelectedDocument);
+            foreach (var scroll in properties.GetVisualDescendants().OfType<ScrollViewer>()) scroll.Offset = default;
+            Dispatcher.UIThread.RunJobs(); Capture(window, "editor-designer-sprites.png"); window.Close();
+        }
+        finally { Directory.Delete(root, true); }
+    });
+
+    [TestMethod]
     public Task StandardActionParametersAndExistingScriptReferenceCanBeChanged() => WithUi(async () =>
     {
         using var session = CreateSession(out var dialogs, out _); var window = CreateWindow(session); window.Show();
-        await session.NewProjectAsync(); session.AddScene(); var scene = session.ActiveScene!; scene.AddLine(); scene.SelectedSection = 4;
+        await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0; var scene = session.ActiveScene!; scene.AddLine(); scene.SelectedSection = 4;
         Dispatcher.UIThread.RunJobs();
         var view = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => !v.PropertiesOnly);
         var menu = Find<Button>(view, "ScriptEventMenu").ContextMenu!;
@@ -106,7 +249,7 @@ public sealed class EditorWindowTests
     public Task DroppingScriptAttachesToPhraseAndRejectsForeignProject() => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
-        await session.NewProjectAsync(); session.AddScene(); var scene = session.ActiveScene!; scene.AddLine(); session.AddScript(); var script = session.SelectedScript!;
+        await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0; var scene = session.ActiveScene!; scene.AddLine(); session.AddScript(); var script = session.SelectedScript!;
         session.InspectPhrase(); Dispatcher.UIThread.RunJobs();
         var target = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
         using var data = new DataTransfer(); data.Add(DataTransferItem.CreateText(ScriptDragDrop.Encode(session.Project!.Id, script.Id)));
@@ -132,7 +275,7 @@ public sealed class EditorWindowTests
     public Task ScriptNameWithoutExtensionKeepsResourceIdentityAndIcon() => WithUi(async () =>
     {
         using var session = CreateSession(out var dialogs, out _); dialogs.CodeEditor.OpenOnCreation = false;
-        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0;
         await session.CreateAndOpenScriptAsync(); Dispatcher.UIThread.RunJobs(); var script = session.SelectedScript!;
         Find<TextBox>(window, "LuaScriptName").Text = "intro"; Dispatcher.UIThread.RunJobs();
         Assert.AreEqual("intro", session.SelectedScript!.Name);
@@ -169,7 +312,7 @@ public sealed class EditorWindowTests
     public Task PhraseAddButtonOpensMenuAndAddsActionWithoutLosingDocument() => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _);
-        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0;
         var scene = session.ActiveScene!; scene.AddLine(); scene.LineText = "Текст"; Dispatcher.UIThread.RunJobs();
         Click(window, Find<Button>(window, "OpenPhraseScriptButton"));
         var view = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
@@ -199,7 +342,7 @@ public sealed class EditorWindowTests
     public Task CreatingLuaFromPhrasePropertiesKeepsDocumentAndUnsavedText() => WithUi(async () =>
     {
         using var session = CreateSession(out var dialogs, out _);
-        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0;
         var scene = session.ActiveScene!; scene.AddLine(); scene.LineText = "Несохранённая реплика";
         var documentCount = session.Documents.Count; Dispatcher.UIThread.RunJobs();
         Click(window, Find<Button>(window, "OpenPhraseScriptButton"));
@@ -219,7 +362,7 @@ public sealed class EditorWindowTests
     public Task LuaLibraryEditsReferencesValidatesAndAttachesResourceThroughActualControls() => WithUi(async () =>
     {
         using var session = CreateSession(out var dialogs, out _);
-        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0;
         var sceneId = session.ActiveScene!.Id;
         var document = session.SelectedDocument; var documentCount = session.Documents.Count;
         var explorer = Find<TreeView>(window, "ProjectExplorer");
@@ -270,7 +413,7 @@ public sealed class EditorWindowTests
         Capture(window, "editor-lua-library.png");
         session.OpenScene(sceneId); session.ActiveScene!.SelectedSection = 4; Dispatcher.UIThread.RunJobs();
         var headers = Find<TabControl>(window, "SceneSections").GetVisualDescendants().OfType<TabItem>().ToArray();
-        Assert.AreEqual(6, headers.Length);
+        Assert.AreEqual(7, headers.Length);
         foreach (var header in headers) Assert.IsTrue(header.Header is TextBlock { FontSize: 12 });
         var headerY = headers.Select(h => h.TranslatePoint(default, window)!.Value.Y).ToArray();
         Assert.IsTrue(headerY.All(y => Math.Abs(y - headerY[0]) < 1), "All six sections must share a single compact header row.");
@@ -508,6 +651,7 @@ public sealed class EditorWindowTests
         Dispatcher.UIThread.RunJobs();
 
         Click(window, Find<Button>(window, "AddSceneButton"));
+        session.ActiveScene!.SelectedSection = 0; Dispatcher.UIThread.RunJobs();
         Assert.IsNotNull(session.ActiveScene);
         var document = session.ActiveScene;
         Click(window, Find<Button>(window, "AddLineButton"));
@@ -555,7 +699,7 @@ public sealed class EditorWindowTests
         var window = CreateWindow(session);
         window.Show();
         await session.NewProjectAsync();
-        session.AddScene();
+        session.AddScene(); session.ActiveScene!.SelectedSection = 0;
         session.ActiveScene!.AddLine();
         session.ActiveScene.LineText = "Образец текста";
         session.ActiveScene.UseSceneStyle = true;
@@ -665,6 +809,7 @@ public sealed class EditorWindowTests
             session.AssetFilter = "";
 
             Click(window, Find<Button>(window, "AddSceneButton"));
+        session.ActiveScene!.SelectedSection = 0; Dispatcher.UIThread.RunJobs();
             var document = session.ActiveScene!;
             Find<TabControl>(window, "SceneSections").SelectedIndex = 3;
             Dispatcher.UIThread.RunJobs();
@@ -784,6 +929,7 @@ public sealed class EditorWindowTests
             Capture(window, "editor-characters.png");
 
             Click(window, Find<Button>(window, "AddSceneButton"));
+        session.ActiveScene!.SelectedSection = 0; Dispatcher.UIThread.RunJobs();
             Click(window, Find<Button>(window, "AddLineButton"));
             var document = session.ActiveScene!;
             var lineId = document.SelectedLine!.Id;
@@ -890,7 +1036,7 @@ public sealed class EditorWindowTests
         dialogs.Decision = UnsavedChangesDecision.Discard;
         var window = CreateWindow(session);
         window.Show();
-        await session.NewProjectAsync(); session.AddScene();
+        await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0;
         session.ActiveScene!.AddLine();
         session.ActiveScene.LineText = "Текст сохраняется при перестройке панелей";
         Dispatcher.UIThread.RunJobs();
@@ -1001,7 +1147,7 @@ public sealed class EditorWindowTests
         var session = CreateSession(out var dialogs, out _);
         dialogs.Decision = UnsavedChangesDecision.Discard;
         var window = CreateWindow(session); window.Show();
-        await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.AddLine();
+        await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0; session.ActiveScene!.AddLine();
         session.ActiveScene.LineText = "Сцена остаётся видимой после переноса";
         var layout = window.WorkspaceLayout;
         foreach (var id in new[] { "information", "explorer", "messages" }) layout.Hide(id);
@@ -1038,9 +1184,9 @@ public sealed class EditorWindowTests
         var session = CreateSession(out var dialogs, out _);
         dialogs.Decision = UnsavedChangesDecision.Discard;
         var window = CreateWindow(session); window.Show();
-        await session.NewProjectAsync(); session.AddScene();
+        await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0;
         var first = session.ActiveScene!; first.Name = "Вступление";
-        session.AddScene();
+        session.AddScene(); session.ActiveScene!.SelectedSection = 0;
         session.ExplorerModeIndex = 1;
         Dispatcher.UIThread.RunJobs();
         var tree = Find<TreeView>(window, "FolderNavigation");
@@ -1085,7 +1231,7 @@ public sealed class EditorWindowTests
             dialogs.Decision = UnsavedChangesDecision.Discard;
             dialogs.SavePath = Path.Combine(projectDirectory, "project.novell");
             var window = CreateWindow(session); window.Show();
-            await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.Name = "Вступление";
+            await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0; session.ActiveScene!.Name = "Вступление";
             await session.SaveAsync();
             var source = Path.Combine(directory, "park.png"); await File.WriteAllBytesAsync(source, PreviewPng(160, 90));
             dialogs.ImagePath = source; await session.ImportImageAsync();
@@ -1144,7 +1290,7 @@ public sealed class EditorWindowTests
     {
         var session = CreateSession(out var dialogs, out _); dialogs.Decision = UnsavedChangesDecision.Discard;
         var window = CreateWindow(session); window.Show();
-        await session.NewProjectAsync(); session.AddScene();
+        await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0;
         var id = session.ActiveScene!.Id;
         Dispatcher.UIThread.RunJobs();
         var tree = window.FindControl<TreeView>("ProjectExplorer")!;
@@ -1177,7 +1323,7 @@ public sealed class EditorWindowTests
     public Task SceneAndLineDeleteButtonsConfirmBeforeChangingTheProject() => WithUi(async () =>
     {
         var session = CreateSession(out var dialogs, out _); dialogs.Decision = UnsavedChangesDecision.Discard;
-        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene(); session.ActiveScene!.SelectedSection = 0;
         var document = session.ActiveScene!; document.AddLine(); document.LineText = "Не удалять без подтверждения";
         Dispatcher.UIThread.RunJobs();
         var lineButton = window.GetVisualDescendants().OfType<Button>().Single(button => ReferenceEquals(button.Command, document.DeleteLineCommand));
@@ -1435,4 +1581,3 @@ public sealed class EditorWindowTests
                 [new GitFileChange("test-ui.novell", " ", "M")], "Git: 1 изменённый файл"));
     }
 }
-

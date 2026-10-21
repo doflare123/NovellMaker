@@ -183,7 +183,7 @@ public sealed class ScenarioActionsView : UserControl
         }
         form.Children.Clear(); error.Text = ""; readDraft = null;
         if (list.SelectedItem is not Row row)
-        { form.Children.Add(new TextBlock { Text = "Здесь пока нет скрипта. Текст, порядок фраз и размещение уже работают. Добавьте нужное поведение блоком или напишите Lua.", TextWrapping = TextWrapping.Wrap }); return; }
+        { form.Children.Add(new HelpTip { Explanation = "Текст и порядок фраз уже работают. Добавьте поведение блоком или подключите Lua." }); return; }
         form.Children.Add(new TextBlock { Text = row.Title, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap });
         ComboBox? binding = null; ComboBox? timing = null;
         if (row.Block is { } block)
@@ -235,7 +235,7 @@ public sealed class ScenarioActionsView : UserControl
         if (name == "References") return () => value?.DeepClone();
         if (name == "Source" && action is ScriptAction inline)
         {
-            parent.Children.Add(new TextBlock { Name = "LuaQueueHelp", Text = "Код редактируется во внешнем приложении. Открытие перенесёт этот блок в самостоятельный ресурс с сохранением ссылок.", TextWrapping = TextWrapping.Wrap });
+            parent.Children.Add(new HelpTip { Name = "LuaQueueHelp", Explanation = "Код редактируется во внешнем приложении. Открытие перенесёт этот блок в самостоятельный ресурс с сохранением ссылок." });
             var open = new Button { Name = "OpenInlineLuaExternally", Content = "Открыть код во внешнем редакторе" };
             open.Click += async (_, _) => { if (Scene is { } scene && document is not null) await document.Session.OpenInlineScriptExternallyAsync(scene.Id, inline.Id); };
             parent.Children.Add(open);

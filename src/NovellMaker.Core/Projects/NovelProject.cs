@@ -1,4 +1,4 @@
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
 using NovellMaker.Core.Assets;
 using NovellMaker.Core.Characters;
 using NovellMaker.Core.Scenes;
@@ -10,7 +10,7 @@ namespace NovellMaker.Core.Projects;
 /// </summary>
 public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
 {
-    public const int CurrentFormatVersion = 10;
+    public const int CurrentFormatVersion = 14;
 
     public int FormatVersion { get; init; } = ValidateFormatVersion(FormatVersion);
 
@@ -27,6 +27,23 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
     public ImmutableArray<NovelCharacter> Characters { get; init; } = [];
 
     public ImmutableArray<NovellMaker.Core.Execution.LuaScriptAsset> Scripts { get; init; } = [];
+
+    // Adapter for the screen host and older authoring operations. Scenes are the only stored resources.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public ImmutableArray<NovellMaker.Core.Screens.ScreenAsset> Screens
+    {
+        get => Scenes.Select(s => s.AsScreen()).ToImmutableArray();
+    }
+
+    public NovelProject WithCanvas(NovellMaker.Core.Screens.ScreenAsset canvas)
+    {
+        var index = -1;
+        for (var i = 0; i < Scenes.Length; i++) if (Scenes[i].Id == canvas.Id) { index = i; break; }
+        if (index < 0) throw new ArgumentException("Сцена отсутствует.");
+        return this with { Scenes = Scenes.SetItem(index, Scenes[index] with { Name = canvas.Name, Canvas = SceneCanvas.FromScreen(canvas) }) };
+    }
+
+    public ImmutableArray<NovellMaker.Core.Screens.ProjectInputBinding> InputBindings { get; init; } = [];
 
     public string DefaultLanguage { get; init; } = "ru";
 
@@ -45,6 +62,7 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
         ValidateGraph(project);
         NovellMaker.Core.Audio.AudioProject.Validate(project);
         NovellMaker.Core.Execution.ScenarioProgram.Validate(project);
+        NovellMaker.Core.Screens.ScreenAsset.ValidateProject(project);
     }
 
     public bool ContentEquals(NovelProject? other)
@@ -63,6 +81,8 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
         {
             return false;
         }
+
+        if (InputBindings.IsDefault != other.InputBindings.IsDefault || !InputBindings.IsDefault && !InputBindings.SequenceEqual(other.InputBindings)) return false;
 
         if (Scripts.IsDefault != other.Scripts.IsDefault || !Scripts.IsDefault &&
             (Scripts.Length != other.Scripts.Length || Scripts.Where((script, index) => !script.ContentEquals(other.Scripts[index])).Any())) return false;
@@ -252,6 +272,8 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
             {
                 throw new ArgumentException("Идентификатор сцены не может быть пустым.", nameof(project));
             }
+
+            if (scene.Canvas is null) throw new ArgumentException("Компоненты сцены отсутствуют.");
 
             if (!ids.Add(scene.Id))
             {

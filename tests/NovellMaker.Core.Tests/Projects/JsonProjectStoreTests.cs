@@ -1,4 +1,4 @@
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
 using System.Text;
 using NovellMaker.Core.Assets;
 using NovellMaker.Core.Projects;
@@ -21,7 +21,7 @@ public sealed class JsonProjectStoreTests
         Assert.IsTrue(project.ContentEquals(await store.LoadAsync(path)));
         Assert.IsFalse(project.ContentEquals(project with { ExplorerShowsFiles = false }));
         var document = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
-        document["formatVersion"] = 5; document.AsObject().Remove("audio"); document.Remove("scripts");
+        document["formatVersion"] = 5; document.AsObject().Remove("screens"); document.AsObject().Remove("pauseScreenId"); document.AsObject().Remove("inputBindings"); document.AsObject().Remove("audio"); document.Remove("scripts");
         await File.WriteAllTextAsync(path, document.ToJsonString());
         await Assert.ThrowsExactlyAsync<ProjectFormatException>(() => store.LoadAsync(path));
         document.Remove("explorerShowsFiles");
@@ -31,7 +31,7 @@ public sealed class JsonProjectStoreTests
         Assert.AreEqual(NovelProject.CurrentFormatVersion, migrated.FormatVersion);
         Assert.IsFalse(migrated.ExplorerShowsFiles);
         CollectionAssert.AreEqual(bytes, await File.ReadAllBytesAsync(path));
-        document["formatVersion"] = 6; document.AsObject().Remove("audio");
+        document["formatVersion"] = 6; document.AsObject().Remove("screens"); document.AsObject().Remove("pauseScreenId"); document.AsObject().Remove("inputBindings"); document.AsObject().Remove("audio");
         await File.WriteAllTextAsync(path, document.ToJsonString());
         await Assert.ThrowsExactlyAsync<ProjectFormatException>(() => store.LoadAsync(path));
         document["explorerShowsFiles"] = "files";

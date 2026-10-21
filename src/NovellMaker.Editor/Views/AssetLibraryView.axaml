@@ -88,8 +88,7 @@
                                TextWrapping="Wrap" FontSize="12" />
           <TextBlock Text="{Binding SelectedImageStatus}"
                      Foreground="#D9B68C" TextWrapping="Wrap" />
-          <TextBlock Text="Файлы изображений хранятся внутри проекта. Название изменяет только подпись ресурса."
-                     Classes="muted" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0" />
+          <views:HelpTip Explanation="Файлы изображений хранятся внутри проекта. Название изменяет только подпись ресурса." />
         </StackPanel>
       </ScrollViewer>
     </Grid>

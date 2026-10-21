@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
@@ -11,4 +11,5 @@
     <PackageReference Include="Avalonia.Headless" Version="12.1.0" />
   </ItemGroup>
   <ItemGroup><Compile Include="../AudioFixture.cs" Link="AudioFixture.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../ScreenFixture.cs" Link="ScreenFixture.cs" /></ItemGroup>
 </Project>

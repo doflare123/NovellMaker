@@ -1,4 +1,4 @@
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -20,6 +20,57 @@ public sealed class JsonProjectStore : IProjectStore
         CreateSerializerOptions(JsonUnmappedMemberHandling.Skip);
     private static readonly JsonSerializerOptions Version7SerializerOptions = CreateVersion7Options();
     private static readonly JsonSerializerOptions PreVersion10SerializerOptions = CreatePreVersion10Options();
+
+    private static readonly JsonSerializerOptions Version11SerializerOptions = CreateVersion11Options();
+    private static readonly JsonSerializerOptions Version12SerializerOptions = CreateLegacyScreenOptions();
+    private static JsonSerializerOptions CreateLegacyScreenOptions()
+    {
+        var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
+        var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(RemoveScenePolicies);
+        options.TypeInfoResolver = resolver;
+        return options;
+    }
+    private static void RemoveScenePolicies(JsonTypeInfo info)
+    {
+        RemoveLegacyBindingFields(info);
+        if (info.Type == typeof(NovellMaker.Core.Screens.ScreenAsset))
+            foreach (var property in info.Properties.Where(p => p.Name is "pauseOnOverlay" or "blockInputOnOverlay").ToArray()) info.Properties.Remove(property);
+        if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode))
+            foreach (var property in info.Properties) property.IsRequired = true;
+    }
+    private static void RemoveLegacyBindingFields(JsonTypeInfo info)
+    {
+        if (info.Type == typeof(NovellMaker.Core.Screens.ScreenButtonBinding))
+            foreach (var property in info.Properties.Where(p => p.Name is "group" or "amount").ToArray()) info.Properties.Remove(property);
+    }
+    private static readonly JsonSerializerOptions Version13SerializerOptions = CreateVersion13Options();
+    private static JsonSerializerOptions CreateVersion13Options()
+    {
+        var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
+        var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(info =>
+        {
+            if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode)) foreach (var property in info.Properties) property.IsRequired = true;
+            RemoveLegacyBindingFields(info);
+        });
+        options.TypeInfoResolver = resolver; return options;
+    }
+    private static JsonSerializerOptions CreateVersion11Options()
+    {
+        var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
+        var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(info =>
+        {
+            RemoveScenePolicies(info);
+            if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode))
+            {
+                foreach (var property in info.Properties.Where(p => p.Name is "imageId" or "name").ToArray()) info.Properties.Remove(property);
+                foreach (var property in info.Properties) property.IsRequired = true;
+            }
+        });
+        options.TypeInfoResolver = resolver; return options;
+    }
 
     private static JsonSerializerOptions CreatePreVersion10Options()
     {
@@ -104,6 +155,10 @@ public sealed class JsonProjectStore : IProjectStore
                 6 => MapVersion6(await DeserializeRequiredAsync<Version6ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 7 => MapVersion7(await DeserializeRequiredAsync<Version7ProjectDocument>(stream, cancellationToken, Version7SerializerOptions).ConfigureAwait(false)),
                 9 => MapVersion9(await DeserializeRequiredAsync<Version9ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
+                11 => MapLegacyVersion11(await DeserializeRequiredAsync<Version11ProjectDocument>(stream, cancellationToken, Version11SerializerOptions).ConfigureAwait(false)),
+                12 => MapVersion11(await DeserializeRequiredAsync<Version11ProjectDocument>(stream, cancellationToken, Version12SerializerOptions).ConfigureAwait(false)),
+                13 => MapVersion13(await DeserializeRequiredAsync<Version13ProjectDocument>(stream, cancellationToken, Version13SerializerOptions).ConfigureAwait(false)),
+                14 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
                 _ => throw new ProjectFormatException(
@@ -196,8 +251,17 @@ public sealed class JsonProjectStore : IProjectStore
     }
 
     private static JsonSerializerOptions CreateSerializerOptions(
-        JsonUnmappedMemberHandling unmappedMemberHandling) => new()
+        JsonUnmappedMemberHandling unmappedMemberHandling)
+    {
+        var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(info =>
         {
+            if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode) || info.Type == typeof(NovellMaker.Core.Screens.ScreenButtonBinding))
+                foreach (var property in info.Properties) property.IsRequired = true;
+        });
+        return new()
+        {
+            TypeInfoResolver = resolver,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             PropertyNameCaseInsensitive = false,
             UnmappedMemberHandling = unmappedMemberHandling,
@@ -206,6 +270,7 @@ public sealed class JsonProjectStore : IProjectStore
             Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
             WriteIndented = true,
         };
+    }
 
     private static async Task<TDocument> DeserializeRequiredAsync<TDocument>(
         Stream stream,
@@ -336,6 +401,65 @@ public sealed class JsonProjectStore : IProjectStore
 
     private static NovelProject MapVersion10(Version10ProjectDocument document) =>
         MapVersion9(document) with { Scripts = document.Scripts ?? throw new ArgumentException("Нет скриптов.") };
+
+    private static NovelProject MapLegacyVersion11(Version11ProjectDocument document)
+    {
+        var project = MapVersion11(document);
+        if (project.Screens.Any(s => s is not null && !s.Nodes.IsDefault && s.Nodes.Any(n => n is not null && (int)n.Kind > 3)))
+            throw new ArgumentException("Версия 11 не поддерживает изображения экранов.");
+        return project;
+    }
+
+    private static NovelProject MapVersion11(Version11ProjectDocument document)
+    {
+        var project = MapVersion10(document);
+        var screens = document.Screens ?? throw new ArgumentException("Нет экранов.");
+        // Validate the old separate namespaces before merging, so a colliding ID cannot overwrite a scene.
+        var ids = project.Scenes.Select(s => s.Id).ToHashSet();
+        foreach (var screen in screens)
+        {
+            if (screen is null || !ids.Add(screen.Id)) throw new ArgumentException("Повторный ID сцены или экрана.");
+            if (!screen.Buttons.IsDefault && screen.Buttons.Any(b => b is not null && (int)b.Action > 5))
+                throw new ArgumentException("Старый формат не поддерживает переходы кнопок к сцене.");
+        }
+        return project with
+        {
+            Scenes = project.Scenes.AddRange(screens.Select(s => new NovelScene(s.Id, s.Name) { Canvas = SceneCanvas.FromScreen(s) })),
+            InputBindings = LegacyInputBindings(document.PauseScreenId)
+        };
+    }
+
+    private static NovelProject MapVersion13(Version13ProjectDocument document, bool legacy = true)
+    {
+        if (legacy && document.Scenes is { } scenes && scenes.Any(s => s?.Canvas is { } canvas && !canvas.Buttons.IsDefault && canvas.Buttons.Any(b => b is not null && (int)b.Action > 6)))
+            throw new ArgumentException("Формат 13 не поддерживает эту команду компонента.");
+        return CreateProject(document.Id, document.Name,
+            MapScenes(document.Scenes, s => MapVersion5Scene(s) with
+            {
+                Actions = s.Actions ?? throw new ArgumentException("Нет действий."), UseActions = s.UseActions,
+                ScriptBlocks = s.ScriptBlocks ?? throw new ArgumentException("Нет блоков."),
+                Canvas = s.Canvas ?? throw new ArgumentException("Нет компонентов сцены.")
+            }), MapImages(document.Images),
+            document.Characters?.Select(c => MapCharacter(c ?? throw new ArgumentException("Персонаж null."))).ToImmutableArray()
+                ?? throw new ArgumentException("Нет персонажей."), document.DefaultLanguage, document.DialogueUi)
+        with
+        {
+            Audio = document.Audio ?? throw new ArgumentException("Нет звука."),
+            Scripts = document.Scripts ?? throw new ArgumentException("Нет Lua-ресурсов."),
+            ExplorerShowsFiles = document.ExplorerShowsFiles, InputBindings = LegacyInputBindings(document.PauseScreenId)
+        };
+
+    }
+
+    private static ImmutableArray<NovellMaker.Core.Screens.ProjectInputBinding> LegacyInputBindings(Guid? pause) => pause is { } id
+        ? [new("P", NovellMaker.Core.Screens.ScreenButtonAction.Toggle, id)] : [];
+
+    private static NovelProject MapVersion14(Version14ProjectDocument document) => MapVersion13(new Version13ProjectDocument
+    {
+        Id = document.Id, Name = document.Name, Scenes = document.Scenes, Images = document.Images, Characters = document.Characters,
+        Audio = document.Audio, Scripts = document.Scripts, DefaultLanguage = document.DefaultLanguage, DialogueUi = document.DialogueUi,
+        ExplorerShowsFiles = document.ExplorerShowsFiles
+    }, legacy: false) with { InputBindings = document.InputBindings ?? throw new ArgumentException("Нет назначений клавиш.") };
 
     private static ImmutableArray<ImageAsset> MapImages(List<ImageDocument?>? imageDocuments)
     {
@@ -539,15 +663,16 @@ public sealed class JsonProjectStore : IProjectStore
         };
     }
 
-    private static Version10ProjectDocument MapForSave(NovelProject project) => new()
+    private static Version14ProjectDocument MapForSave(NovelProject project) => new()
     {
+        InputBindings = project.InputBindings,
         Scripts = project.Scripts,
         Audio = project.Audio,
         ExplorerShowsFiles = project.ExplorerShowsFiles,
         FormatVersion = project.FormatVersion,
         Id = project.Id,
         Name = project.Name,
-        Scenes = project.Scenes.Select(scene => (Version8SceneDocument?)MapSceneForSave(scene)).ToList(),
+        Scenes = project.Scenes.Select(scene => (Version13SceneDocument?)MapSceneForSave(scene)).ToList(),
         Images = project.Images.Select(image => (ImageDocument?)MapImageForSave(image)).ToList(),
         Characters = project.Characters.Select(character => (CharacterDocument?)MapCharacterForSave(character)).ToList(),
         DefaultLanguage = project.DefaultLanguage,
@@ -560,7 +685,7 @@ public sealed class JsonProjectStore : IProjectStore
         },
     };
 
-    private static Version8SceneDocument MapSceneForSave(NovelScene scene) => new()
+    private static Version13SceneDocument MapSceneForSave(NovelScene scene) => new()
     {
         Id = scene.Id,
         Name = scene.Name,
@@ -570,6 +695,7 @@ public sealed class JsonProjectStore : IProjectStore
         Actions = scene.Actions,
         UseActions = scene.UseActions,
         ScriptBlocks = scene.ScriptBlocks,
+        Canvas = scene.Canvas,
     };
 
     private static Version5LineDocument MapLineForSave(DialogueLine line)
@@ -734,7 +860,7 @@ public sealed class JsonProjectStore : IProjectStore
         [JsonRequired] public bool UseActions { get; init; }
     }
 
-    private sealed class Version8SceneDocument : Version7SceneDocument
+    private class Version8SceneDocument : Version7SceneDocument
     {
         [JsonRequired] public ImmutableArray<ScriptBlock>? ScriptBlocks { get; init; }
     }
@@ -757,9 +883,32 @@ public sealed class JsonProjectStore : IProjectStore
         [JsonRequired] public NovellMaker.Core.Audio.AudioProject? Audio { get; init; }
     }
 
-    private sealed class Version10ProjectDocument : Version9ProjectDocument
+    private class Version10ProjectDocument : Version9ProjectDocument
     {
         [JsonRequired] public ImmutableArray<LuaScriptAsset>? Scripts { get; init; }
+    }
+
+    private sealed class Version11ProjectDocument : Version10ProjectDocument
+    {
+        [JsonRequired] public ImmutableArray<NovellMaker.Core.Screens.ScreenAsset>? Screens { get; init; }
+        [JsonRequired] public Guid? PauseScreenId { get; init; }
+    }
+
+    private sealed class Version13SceneDocument : Version8SceneDocument
+    {
+        [JsonRequired] public SceneCanvas? Canvas { get; init; }
+    }
+
+    private sealed class Version13ProjectDocument : Version10ProjectDocument
+    {
+        [JsonRequired] public new List<Version13SceneDocument?>? Scenes { get; init; }
+        [JsonRequired] public Guid? PauseScreenId { get; init; }
+    }
+
+    private sealed class Version14ProjectDocument : Version10ProjectDocument
+    {
+        [JsonRequired] public new List<Version13SceneDocument?>? Scenes { get; init; }
+        [JsonRequired] public ImmutableArray<NovellMaker.Core.Screens.ProjectInputBinding>? InputBindings { get; init; }
     }
 
     private class Version5ProjectDocument

@@ -1,4 +1,4 @@
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Scenes;
@@ -32,6 +32,7 @@ internal static class ActionReferences
             bool Keep(ScenarioAction? a) => a is not null && a is not ChoiceAction { Options.IsEmpty: true };
             project = source with { Scenes = source.Scenes.Select(scene => scene with
             {
+                Canvas = scene.Canvas with { Buttons = scene.Canvas.Buttons.Where(b => b.TargetScreenId is null || source.Scenes.Any(s => s.Id == b.TargetScreenId)).ToImmutableArray() },
                 UseActions = scene.HasLegacyActionScript,
                 Actions = scene.Actions.Select(a => Clean(a, scene)).Where(Keep).Select(a => a!).ToImmutableArray(),
                 ScriptBlocks = scene.ScriptBlocks.Where(b => b.LineId is null || scene.Lines.Any(l => l.Id == b.LineId))
@@ -40,6 +41,6 @@ internal static class ActionReferences
             int Count(NovelProject p) => p.Scenes.Sum(s => s.Actions.Length + s.ScriptBlocks.Length);
             removed = Count(source) != Count(project);
         } while (removed);
-        return project with { Audio = project.Audio.Prune(project) };
+        return project with { Audio = project.Audio.Prune(project), InputBindings = project.InputBindings.Where(b => b.TargetSceneId is null || project.Scenes.Any(s => s.Id == b.TargetSceneId)).ToImmutableArray() };
     }
 }

@@ -1,100 +1,129 @@
 using System.Collections.Immutable;
-using NovellMaker.Core.Audio;
+using NovellMaker.Core.Projects;
 using NovellMaker.Core.Screens;
 using NovellMaker.Core.Screens.Lua;
 
 namespace NovellMaker.Runtime;
 
-/// <summary>Engine-provided menus until author-defined screen resources arrive in stage 2.3.</summary>
+/// <summary>Project-owned scene instances and input. Contains no game menus or predefined shortcuts.</summary>
 internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
 {
     private readonly Guid ownerId;
-    private readonly string? pauseHandler;
-    public RuntimeScreens(Guid ownerId, bool enableLua = false, string? pauseHandler = null)
+    private readonly Action<ScreenButtonBinding>? hostAction;
+    private NovelProject? project;
+    private ScreenInstance? sceneInstance;
+    private Guid? sceneId;
+    private bool deferredHandler;
+    private Func<ImmutableDictionary<string, string>> snapshot = () => ImmutableDictionary<string, string>.Empty;
+    private readonly Queue<string> errors = [];
+
+    public RuntimeScreens(Guid ownerId, bool enableLua = false, Action<ScreenButtonBinding>? hostAction = null)
     {
-        this.ownerId = ownerId;
-        this.pauseHandler = pauseHandler;
+        this.ownerId = ownerId; this.hostAction = hostAction;
         if (enableLua) Scripts = new(Stack);
     }
+    public ScreenStack Stack { get; } = new(Guid.NewGuid());
     public ScreenLuaSession? Scripts { get; }
+    public Guid? NavigationRequested { get; private set; }
+    public bool HasOverlays => Stack.Instances.Any(i => !ReferenceEquals(i, sceneInstance));
+    public bool IsSceneInstance(ScreenInstance instance) => ReferenceEquals(instance, sceneInstance);
+    public IEnumerable<string> Diagnostics => errors.Concat(Scripts?.Diagnostics ?? []);
     public bool HasPending => Scripts?.HasPending ?? false;
     public bool Poll() => Scripts?.Poll() ?? false;
-    internal static readonly Guid PauseId = Id(1);
-    internal static readonly Guid MixerId = Id(2);
-    internal static readonly Guid ContinueId = Id(3);
-    internal static readonly Guid SoundId = Id(4);
-    internal static readonly ScreenRect PauseBounds = new(360, 200, 560, 300);
-    internal static readonly ScreenDefinition Pause = new(PauseId,
-    [
-        new(Id(5), null, ScreenNodeKind.Panel, PauseBounds),
-        new(Id(6), Id(5), ScreenNodeKind.Text, new(40, 24, 480, 50), "Пауза"),
-        new(ContinueId, Id(5), ScreenNodeKind.Button, new(40, 100, 480, 52), "Продолжить"),
-        new(SoundId, Id(5), ScreenNodeKind.Button, new(40, 170, 480, 52), "Звук"),
-    ]);
-    internal static readonly ImmutableDictionary<Guid, (AudioGroup Group, int Change)> MixerCommands =
-        Enum.GetValues<AudioGroup>().SelectMany(g => new[] { -1, 1, 2 }.Select(change =>
-            KeyValuePair.Create(Id(100 + (int)g * 10 + change + 1), (g, change)))).ToImmutableDictionary();
-    internal static readonly ScreenDefinition Mixer = CreateMixer();
 
-    public ScreenStack Stack { get; } = new(Guid.NewGuid());
-    public bool ShowMixer => Stack.Instances.Any(i => i.Definition.Id == MixerId);
-
-    public void TogglePause()
+    public void Configure(NovelProject value, Func<ImmutableDictionary<string, string>> capture)
     {
-        if (Stack.Instances.IsEmpty)
+        ScreenAsset.ValidateProject(value); Reset(); project = value; snapshot = capture;
+    }
+    public void SyncScene(Guid id, bool afterLoad = false)
+    {
+        if (sceneId == id) return;
+        Reset(); sceneId = id;
+        if (project?.Scenes.FirstOrDefault(s => s.Id == id) is not { } scene) return;
+        var asset = scene.AsScreen();
+        if (asset.Nodes.Length == 1 && asset.Nodes[0].Kind == ScreenNodeKind.Container && asset.Nodes[0].ImageId is null && asset.HandlerScriptId is null) return;
+        sceneInstance = Stack.Open(ownerId, asset.Definition(), new(false, false));
+        deferredHandler = afterLoad;
+        if (!afterLoad) AttachHandler(asset, sceneInstance);
+    }
+    private void Report(string error)
+    {
+        errors.Enqueue(error); while (errors.Count > 32) errors.Dequeue();
+    }
+    private void AttachHandler(ScreenAsset asset, ScreenInstance instance)
+    {
+        try
         {
-            var instance = Stack.Open(ownerId, Pause);
-            Scripts?.Attach(instance, pauseHandler ?? """
-                return {
-                  on_load = function() ui.set_text(refs.title, "Пауза · Esc — назад") end,
-                  on_event = function(event)
-                    if event.node == refs.continue_button then ui.close() end
-                  end
-                }
-                """, ImmutableDictionary<string, Guid>.Empty.Add("title", Id(6)).Add("continue_button", ContinueId));
+            if (asset.HandlerScriptId is { } id && project?.Scripts.FirstOrDefault(s => s.Id == id) is { } script)
+                Scripts?.Attach(instance, script.Source, asset.References, snapshot());
         }
-        else Stack.Route(new(ScreenInputKind.Back));
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException)
+        { Report(asset.Name + ": " + error.Message); }
     }
-
-    public void ToggleMixer()
+    private void Open(ScreenAsset asset, ScreenInstance? replace = null)
     {
-        if (Stack.Instances.LastOrDefault() is { } top && top.Definition.Id == MixerId) Stack.Close(top);
-        else Stack.Open(ownerId, Mixer);
+        var policy = new ScreenPolicy(asset.BlockInputOnOverlay, asset.PauseOnOverlay);
+        var instance = replace is null ? Stack.Open(ownerId, asset.Definition(), policy) : Stack.Replace(replace, asset.Definition(), policy);
+        AttachHandler(asset, instance);
     }
-
+    public bool RouteKey(string key)
+    {
+        var binding = project?.InputBindings.FirstOrDefault(b => b.Key == key);
+        if (binding is null) return false;
+        Dispatch(new(Guid.Empty, binding.Action, binding.TargetSceneId), null);
+        return true;
+    }
     public ScreenInputResult Route(ScreenInput input)
     {
+        if (input.Kind == ScreenInputKind.Back && !HasOverlays) return new(false);
+        if (input.Kind == ScreenInputKind.Activate && !HasOverlays && Stack.Focus is null) return new(false);
         var result = Stack.Route(input);
-        if (result.Activation is { } activation)
-        {
-            var instance = Stack.Instances.Single(i => i.Id == activation.InstanceId);
-            var accepted = Scripts?.EnqueueUsingInstanceSnapshot(instance, new("click", activation.NodeId)) is ScreenEventAdmission.Accepted or ScreenEventAdmission.Coalesced;
-            if (activation.NodeId == ContinueId)
-            {
-                if (!accepted) Stack.Close(instance); // Engine fallback remains usable when the handler fails.
-            }
-            else if (activation.NodeId == SoundId) ToggleMixer();
-        }
+        if (result.Activation is not { } activation) return result;
+        var instance = Stack.Instances.Single(i => i.Id == activation.InstanceId);
+        var asset = project?.Scenes.FirstOrDefault(s => s.Id == instance.Definition.Id)?.AsScreen();
+        if (asset is null) return result;
+        if (ReferenceEquals(instance, sceneInstance) && deferredHandler)
+        { deferredHandler = false; AttachHandler(asset, instance); }
+        Dispatch(asset.Buttons.FirstOrDefault(b => b.NodeId == activation.NodeId) ?? new(activation.NodeId, ScreenButtonAction.Lua, null), instance);
         return result;
     }
-
-    public void Reset() { Stack.Clear(); Scripts?.Reset(); }
+    public ScreenInputResult Route(ScreenInput input, Guid currentSceneId)
+    {
+        SyncScene(currentSceneId);
+        return Route(input);
+    }
+    private void Dispatch(ScreenButtonBinding binding, ScreenInstance? instance)
+    {
+        try
+        {
+            switch (binding.Action)
+            {
+                case ScreenButtonAction.None: break;
+                case ScreenButtonAction.Close: if (instance is not null) Stack.Close(instance); break;
+                case ScreenButtonAction.Back: if (HasOverlays) Stack.Route(new(ScreenInputKind.Back)); break;
+                case ScreenButtonAction.Scene: NavigationRequested = binding.TargetScreenId; break;
+                case ScreenButtonAction.Open:
+                case ScreenButtonAction.Replace:
+                case ScreenButtonAction.Toggle:
+                    var target = project!.Scenes.Single(s => s.Id == binding.TargetScreenId).AsScreen();
+                    if (binding.Action == ScreenButtonAction.Toggle && Stack.Instances.LastOrDefault() is { } top &&
+                        !IsSceneInstance(top) && top.Definition.Id == target.Id) Stack.Close(top);
+                    else if (binding.Action == ScreenButtonAction.Replace && ReferenceEquals(instance, sceneInstance)) NavigationRequested = target.Id;
+                    else Open(target, binding.Action == ScreenButtonAction.Replace ? instance : null);
+                    break;
+                case ScreenButtonAction.Lua:
+                    if (instance is not null && Scripts?.Enqueue(instance, new("click", binding.NodeId), snapshot())
+                        is not (ScreenEventAdmission.Accepted or ScreenEventAdmission.Coalesced))
+                        Report("Обработчик компонента недоступен или занят.");
+                    break;
+                default: hostAction?.Invoke(binding); break;
+            }
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException)
+        { Report("Команда проекта не выполнена: " + error.Message); }
+    }
+    public void Reset()
+    { Stack.Clear(); Scripts?.Reset(); errors.Clear(); sceneId = null; sceneInstance = null; deferredHandler = false; NavigationRequested = null; }
     public void Dispose() { Stack.Clear(); Scripts?.Dispose(); }
     public async ValueTask DisposeAsync() { Dispose(); if (Scripts is { } scripts) await scripts.DisposeAsync(); }
-
-    private static ScreenDefinition CreateMixer()
-    {
-        var root = Id(7);
-        var nodes = ImmutableArray.CreateBuilder<ScreenNode>();
-        nodes.Add(new(root, null, ScreenNodeKind.Panel, new(140, 110, 1000, 340)));
-        foreach (var (id, command) in MixerCommands.OrderBy(c => c.Value.Group).ThenBy(c => c.Value.Change))
-        {
-            var x = command.Change switch { -1 => 570, 1 => 680, _ => 790 };
-            nodes.Add(new(id, root, ScreenNodeKind.Button,
-                new(x, 40 + (int)command.Group * 70, command.Change == 2 ? 170 : 100, 52)));
-        }
-        return new(MixerId, nodes.ToImmutable());
-    }
-
-    private static Guid Id(int value) => new(value, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
 }

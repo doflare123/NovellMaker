@@ -77,7 +77,9 @@ public sealed partial class EditorSession
         OpenAssetLibraryCommand = Command(OpenAssetLibrary, () => CanEdit);
     }
 
-    public Task ImportImageAsync() => RunAsync(async () =>
+    public Task ImportImageAsync() => ImportImageCoreAsync(false);
+    public Task ImportDesignerImageAsync() => ImportImageCoreAsync(true);
+    private Task ImportImageCoreAsync(bool preserveDocument) => RunAsync(async () =>
     {
         if (project is null) return;
         var source = await dialogs.PickImageAsync();
@@ -87,7 +89,7 @@ public sealed partial class EditorSession
         EditProject(project with { Images = project.Images.Add(image) });
         AssetFilter = "";
         SelectedImage = Images.First(item => item.Id == image.Id);
-        OpenAssetLibrary();
+        if (!preserveDocument) OpenAssetLibrary();
         Log($"Изображение «{image.Name}» импортировано.");
         await UpdateGitAsync();
     });

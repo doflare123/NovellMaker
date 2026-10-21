@@ -2,7 +2,7 @@ using System.Collections.Immutable;
 
 namespace NovellMaker.Core.Screens;
 
-public enum ScreenNodeKind { Container, Panel, Text, Button }
+public enum ScreenNodeKind { Container, Panel, Text, Button, Image }
 
 /// <summary>Logical pixels; child rectangles are relative to their parent. All parents clip.</summary>
 public readonly record struct ScreenRect(double X, double Y, double Width, double Height)
@@ -14,7 +14,11 @@ public readonly record struct ScreenRect(double X, double Y, double Width, doubl
 }
 
 public sealed record ScreenNode(Guid Id, Guid? ParentId, ScreenNodeKind Kind, ScreenRect Bounds,
-    string Text = "", bool Visible = true, bool Enabled = true);
+    string Text = "", bool Visible = true, bool Enabled = true)
+{
+    public Guid? ImageId { get; init; }
+    public string Name { get; init; } = "";
+}
 
 /// <summary>Immutable, validated screen resource, independent of graphics and script execution.</summary>
 public sealed class ScreenDefinition
@@ -35,7 +39,7 @@ public sealed class ScreenDefinition
         foreach (var node in nodes)
         {
             if (node is null || node.Id == Guid.Empty || !map.TryAdd(node.Id, node) ||
-                !Enum.IsDefined(node.Kind) || !node.Bounds.IsValid || node.Text is null || node.Text.Length > 8192)
+                !Enum.IsDefined(node.Kind) || node.ImageId == Guid.Empty || node.Name is null || node.Name.Length > 128 || !node.Bounds.IsValid || node.Text is null || node.Text.Length > 8192)
                 throw new ArgumentException("Недопустимый узел экрана.");
             characters += node.Text.Length;
         }
@@ -67,6 +71,36 @@ public sealed class ScreenDefinition
     public ImmutableArray<ScreenNode> Nodes { get; }
 
     public ImmutableArray<ScreenNode> Buttons { get; }
+
+    /// <summary>Clipped logical rectangles in subtree paint order, shared by menu previews.</summary>
+    public IEnumerable<(ScreenNode Node, ScreenRect Bounds)> VisibleRegions(ScreenRect viewport)
+    {
+        return Visit(root, 0, 0, viewport);
+        IEnumerable<(ScreenNode, ScreenRect)> Visit(ScreenNode node, double x, double y, ScreenRect clip)
+        {
+            if (!node.Visible) yield break;
+            x += node.Bounds.X; y += node.Bounds.Y;
+            var left = Math.Max(x, clip.X); var top = Math.Max(y, clip.Y);
+            var right = Math.Min(x + node.Bounds.Width, clip.X + clip.Width);
+            var bottom = Math.Min(y + node.Bounds.Height, clip.Y + clip.Height);
+            if (left >= right || top >= bottom) yield break;
+            var bounds = new ScreenRect(left, top, right - left, bottom - top);
+            yield return (node, bounds);
+            foreach (var child in children.GetValueOrDefault(node.Id, []).Reverse())
+                foreach (var region in Visit(child, x, y, bounds)) yield return region;
+        }
+    }
+
+    public ScreenRect AbsoluteBounds(Guid id)
+    {
+        var node = byId[id]; var bounds = node.Bounds;
+        while (node.ParentId is { } parent)
+        { node = byId[parent]; bounds = bounds with { X = bounds.X + node.Bounds.X, Y = bounds.Y + node.Bounds.Y }; }
+        return bounds;
+    }
+
+    public Guid? PickNode(double x, double y) => VisibleRegions(new(-100000, -100000, 200000, 200000))
+        .Reverse().FirstOrDefault(r => r.Bounds.Contains(x, y)).Node?.Id;
 
     public Guid? HitTest(double x, double y)
     {

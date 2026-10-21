@@ -27,11 +27,16 @@ public sealed class ObjectPropertiesView : UserControl
     }
     private void Changed(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(EditorSession.InspectorTarget) or nameof(EditorSession.ActiveScene) or nameof(EditorSession.HasProject)) Refresh();
+        if (e.PropertyName is nameof(EditorSession.InspectorTarget) or nameof(EditorSession.ActiveScene) or nameof(EditorSession.HasProject) or nameof(EditorSession.IsScreenDesigner)) Refresh();
     }
     private void Refresh()
     {
         if (session is null || !session.HasProject) { Content = new TextBlock { Text = "Выберите объект", Margin = new Thickness(10) }; return; }
+        if (session.IsScreenDesigner && session.InspectorTarget != InspectorTarget.Script)
+        {
+            if (Content is not ScreenPropertiesView) Content = new ScreenPropertiesView { DataContext = session };
+            key = null; return;
+        }
         var scene = session.ActiveScene;
         var nextKey = $"{session.InspectorTarget}/{scene?.Id}/{scene?.SelectedLine?.Id}/{session.InspectedActionId}/{session.SelectedScriptId}";
         if (key == nextKey) return;

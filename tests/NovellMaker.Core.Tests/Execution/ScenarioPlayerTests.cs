@@ -1,4 +1,4 @@
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
 using System.Text.Json.Nodes;
 using NovellMaker.Core.Assets;
 using NovellMaker.Core.Characters;
@@ -205,7 +205,7 @@ public sealed class ScenarioPlayerTests
             var loaded = await store.LoadAsync(path); Assert.IsTrue(project.ContentEquals(loaded));
             Assert.AreEqual(ScenarioProgram.Fingerprint(project), ScenarioProgram.Fingerprint(loaded));
             var node = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
-            node["formatVersion"] = 6; node.AsObject().Remove("audio"); node.AsObject().Remove("scripts"); node["scenes"]![0]!.AsObject().Remove("actions"); node["scenes"]![0]!.AsObject().Remove("useActions"); node["scenes"]![0]!.AsObject().Remove("scriptBlocks");
+            node["formatVersion"] = 6; node.AsObject().Remove("inputBindings"); node.AsObject().Remove("screens"); node.AsObject().Remove("pauseScreenId"); node.AsObject().Remove("inputBindings"); if (node["scenes"] is JsonArray oldScenes) foreach (var oldScene in oldScenes) oldScene!.AsObject().Remove("canvas"); node.AsObject().Remove("audio"); node.AsObject().Remove("scripts"); node["scenes"]![0]!.AsObject().Remove("actions"); node["scenes"]![0]!.AsObject().Remove("useActions"); node["scenes"]![0]!.AsObject().Remove("scriptBlocks");
             await File.WriteAllTextAsync(path, node.ToJsonString()); var bytes = await File.ReadAllBytesAsync(path);
             loaded = await store.LoadAsync(path); Assert.IsTrue(loaded.Scenes[0].Actions.IsEmpty);
             CollectionAssert.AreEqual(bytes, await File.ReadAllBytesAsync(path));

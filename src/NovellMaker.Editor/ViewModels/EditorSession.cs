@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using NovellMaker.Core.Projects;
@@ -24,7 +24,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
     private bool isBusy;
     private TaskCompletionSource? operationFinished;
     private string status = "Создайте или откройте проект.";
-    private string gitSummary = "Git: проект не открыт";
+    private string gitSummary = "Git: —";
 
     public EditorSession(IProjectStore store, IEditorDialogs dialogs, IGitStatusService git, IImageAssetService? imageAssets = null, IPreviewService? previewService = null, IExternalCodeEditor? codeEditor = null, RecentProjectsStore? recentProjects = null)
     {
@@ -44,6 +44,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         RefreshGitCommand = new(RefreshGitAsync, () => !IsBusy && ProjectPath is not null);
         InitializeAuthoring();
         InitializeScripts();
+        OpenScreenLibraryCommand = Command(() => OpenScreenLibrary(), () => CanEdit);
         InitializeAssets();
         InitializeCharacters();
         InitializePreview();
@@ -234,11 +235,13 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         ResetAssets();
         ResetCharacters();
         SelectedScriptId = null;
+ SelectedScreenId = null; SelectedScreenNodeId = null;
+        ScreenAuthoringError = ""; Changed(nameof(ScreenAuthoringError));
         InspectorTarget = InspectorTarget.Project; InspectedActionId = null;
         StopScriptWatcher();
         scriptDiagnostics.Clear();
-        gitSummary = path is null ? "Git: сохраните проект для проверки" : "Git: проверка…";
-        if (value is null) gitSummary = "Git: проект не открыт";
+        gitSummary = path is null ? "Git: —" : "Git: проверка…";
+        if (value is null) gitSummary = "Git: —";
         fileExplorerRoot = null;
         fileGitSnapshot = null;
         Explorer.Clear();
@@ -251,6 +254,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
                      nameof(IsNameValid), nameof(NameValidation), nameof(CanEdit), nameof(ProjectId), nameof(FormatVersion),
                      nameof(ExplorerModeIndex), nameof(IsFolderExplorer), nameof(ProjectPath), nameof(PathDisplay), nameof(DocumentTitle), nameof(WindowTitle), nameof(GitSummary) })
             Changed(name);
+        NotifyScreensChanged();
         NotifyAssetsChanged();
         NotifyCharactersChanged();
         Changed(nameof(ScriptLibraryTitle));
@@ -277,7 +281,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
                  project.Images.Select(image => new ExplorerEntry(image.Name, image.RelativePath, [], ImageAssetId: image.Id)).ToArray(), IsAssetLibrary: true),
              new ExplorerEntry($"Персонажи ({project.Characters.Length})", "Персонажи и состояния",
                  project.Characters.Select(character => new ExplorerEntry(character.Name, character.Id.ToString(), [], CharacterId: character.Id)).ToArray(), IsCharacterLibrary: true),
-             new ExplorerEntry($"Lua-скрипты ({project.Scripts.Length})", "Lua-ресурсы внутри .novell",
+             new ExplorerEntry($"Lua-файлы ({project.Scripts.Length})", "Lua-ресурсы внутри .novell",
                  project.Scripts.Select(script => new ExplorerEntry(script.Name, script.Id.ToString(), [], ScriptId: script.Id)).ToArray(), IsScriptLibrary: true)]);
         if (Explorer.Count == 0) Explorer.Add(row);
         else Explorer[0] = row;
@@ -334,7 +338,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
 
     private void NotifyCommands()
     {
-        foreach (var command in new[] { NewCommand, OpenCommand, SaveCommand, SaveAsCommand, CloseProjectCommand, RefreshGitCommand, OpenExampleCommand, ExportWindowsCommand, ExportWindowsInstallerCommand, OpenScriptLibraryCommand })
+        foreach (var command in new[] { NewCommand, OpenCommand, SaveCommand, SaveAsCommand, CloseProjectCommand, RefreshGitCommand, OpenExampleCommand, ExportWindowsCommand, ExportWindowsInstallerCommand, OpenScriptLibraryCommand, OpenScreenLibraryCommand })
             command.NotifyCanExecuteChanged();
     }
 

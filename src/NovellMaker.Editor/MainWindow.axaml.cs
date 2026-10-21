@@ -34,6 +34,7 @@ public sealed partial class MainWindow : Window
         WorkspaceLayout.Register("information", "Свойства", contents[2]);
         WorkspaceLayout.Register("messages", "Сообщения", contents[3]);
         WorkspaceLayout.Register("scene", "Экран сцены", contents[4]);
+        WorkspaceLayout.Register("tools", "Компоненты", new ComponentToolbox());
         WorkspaceLayout.Reset();
         Session.PropertyChanged += ShowInspectedProperties;
         var layoutPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovellMaker", "workspace.json");
@@ -88,15 +89,20 @@ public sealed partial class MainWindow : Window
 
     private void ShowInspectedProperties(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(EditorSession.IsScreenDesigner)) WorkspaceLayout.SetDesignerMode(Session.IsScreenDesigner);
         if (Session.HasProject && e.PropertyName == nameof(EditorSession.InspectorTarget) && !WorkspaceLayout.IsVisible("information"))
             Avalonia.Threading.Dispatcher.UIThread.Post(() => { if (Session.HasProject) WorkspaceLayout.Show("information"); });
     }
+
+    private void ProjectSettingsClicked(object? sender, RoutedEventArgs args) => Session.SelectedDocument = Session.Documents.FirstOrDefault();
 
     private void ExitClicked(object? sender, RoutedEventArgs args) => Close();
 
     private void ExplorerSelectionChanged(object? sender, SelectionChangedEventArgs args)
     {
-        if (sender is TreeView { SelectedItem: ExplorerEntry { SceneId: { } id } }) { Session.OpenScene(id); Session.InspectPhrase(); }
+        if (sender is TreeView { SelectedItem: ExplorerEntry { ScreenId: { } screenId } }) Session.OpenScreenLibrary(screenId);
+        else if (sender is TreeView { SelectedItem: ExplorerEntry { IsScreenLibrary: true } }) Session.OpenScreenLibrary();
+        else if (sender is TreeView { SelectedItem: ExplorerEntry { SceneId: { } id } }) { Session.OpenScene(id); Session.InspectPhrase(); }
         else if (sender is TreeView { SelectedItem: ExplorerEntry { ImageAssetId: { } imageId } }) Session.SelectImage(imageId);
         else if (sender is TreeView { SelectedItem: ExplorerEntry { IsAssetLibrary: true } }) Session.OpenAssetLibrary();
         else if (sender is TreeView { SelectedItem: ExplorerEntry { CharacterId: { } characterId } }) Session.SelectCharacter(characterId);

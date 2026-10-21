@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -32,6 +32,9 @@ internal sealed class WorkspaceDock
     private readonly MenuItem menu;
     private readonly Dictionary<string, Pane> panes = [];
     private Node? root;
+    private Node? regularRoot;
+    private Node? designerRoot;
+    private bool designerMode;
     private Pane? dragging;
     private IPointer? capturedPointer;
     private Point dragStart;
@@ -62,9 +65,27 @@ internal sealed class WorkspaceDock
     }
     public bool IsVisible(string id) => Contains(root, panes[id]);
 
+    public void SetDesignerMode(bool value)
+    {
+        if (designerMode == value) return;
+        CancelDrag(); RememberSizes(root);
+        if (value)
+        {
+            regularRoot = root;
+            root = designerRoot ?? new Split(new Split(panes["explorer"], panes["tools"], false, .38), new Split(panes["documents"], panes["information"], true, .73), true, .19);
+        }
+        else { designerRoot = root; root = regularRoot; }
+        designerMode = value; Render();
+    }
+
     public void Reset()
     {
         CancelDrag();
+        if (designerMode)
+        {
+            root = new Split(new Split(panes["explorer"], panes["tools"], false, .38), new Split(panes["documents"], panes["information"], true, .73), true, .19);
+            designerRoot = root; Render(); return;
+        }
         var right = new Split(panes["scene"], panes["information"], false, .58);
         var editors = new Split(panes["documents"], right, true, .67);
         root = new Split(new Split(panes["explorer"], editors, true, .18), panes["messages"], false, .82);
@@ -312,7 +333,7 @@ internal sealed class WorkspaceDock
     internal string ExportLayout()
     {
         RememberSizes(root);
-        return JsonSerializer.Serialize(Snapshot(root));
+        return JsonSerializer.Serialize(Snapshot(designerMode ? regularRoot : root));
     }
 
     internal void ImportLayout(string json)

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
@@ -14,4 +14,6 @@
     <ProjectReference Include="../../src/NovellMaker.Runtime/NovellMaker.Runtime.csproj" />
   </ItemGroup>
   <ItemGroup><Compile Include="../AudioFixture.cs" Link="AudioFixture.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../ScreenFixture.cs" Link="ScreenFixture.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/NovellMaker.Editor/Examples/ExampleInterfaceModule.cs" Link="ExampleInterfaceModule.cs" /></ItemGroup>
 </Project>

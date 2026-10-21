@@ -21,6 +21,8 @@ namespace NovellMaker.Editor.Views;
 /// <summary>A design-time sample of a dialogue skin, not a script interpreter.</summary>
 public sealed partial class DialogueStyleSample : UserControl
 {
+    public static readonly StyledProperty<bool> CanvasOnlyProperty = AvaloniaProperty.Register<DialogueStyleSample, bool>(nameof(CanvasOnly));
+    public bool CanvasOnly { get => GetValue(CanvasOnlyProperty); set => SetValue(CanvasOnlyProperty, value); }
     public static readonly StyledProperty<DialogueStyle?> StyleSheetProperty = AvaloniaProperty.Register<DialogueStyleSample, DialogueStyle?>(nameof(StyleSheet));
     public static readonly StyledProperty<string> SampleTextProperty = AvaloniaProperty.Register<DialogueStyleSample, string>(nameof(SampleText), "Текст реплики");
     public static readonly StyledProperty<ImageAsset?> BackgroundImageProperty = AvaloniaProperty.Register<DialogueStyleSample, ImageAsset?>(nameof(BackgroundImage));
@@ -81,6 +83,7 @@ public sealed partial class DialogueStyleSample : UserControl
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
+        if (ready && change.Property == CanvasOnlyProperty) { AnimationTools.IsVisible = !CanvasOnly; ApplyText(); }
         if (ready && change.Property == PlacementEditorProperty)
         {
             if (change.OldValue is SceneDocumentViewModel old) old.PropertyChanged -= PlacementChanged;
@@ -145,6 +148,7 @@ public sealed partial class DialogueStyleSample : UserControl
 
     private void ApplyText()
     {
+        DialoguePlate.IsVisible = !CanvasOnly || SampleFrame?.LineId is not null;
         var runs = NovellMaker.Core.Text.DialogueText.Parse(SampleText);
         DialogueText.Inlines?.Clear();
         if (runs.Count == 1 && runs[0].Color is null) DialogueText.Text = runs[0].Text;

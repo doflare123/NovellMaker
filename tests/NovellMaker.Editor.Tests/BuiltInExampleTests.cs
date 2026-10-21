@@ -11,6 +11,20 @@ namespace NovellMaker.Editor.Tests;
 public sealed class BuiltInExampleTests
 {
     [TestMethod]
+    public async Task CheckedInExampleOwnsItsInterfaceScriptsAssetsAndShortcuts()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "NovellMaker.slnx"))) root = root.Parent;
+        var directory = Path.Combine(root!.FullName, "examples", "author-interface");
+        var project = await new JsonProjectStore().LoadAsync(Path.Combine(directory, "example.novell"));
+        Assert.HasCount(3, project.Scenes); Assert.HasCount(4, project.InputBindings);
+        foreach (var script in project.Scripts)
+            Assert.AreEqual(script.Source, File.ReadAllText(Path.Combine(directory, "Scripts", script.Id.ToString("N") + ".lua")));
+        foreach (var image in project.Images) Assert.IsTrue(File.Exists(Path.Combine(directory, image.RelativePath)));
+        using var player = new ScenarioPlayer(project, project.Scenes[0].Id, "ru").Settled(); Assert.IsNull(player.State.Error);
+        Assert.IsEmpty(NovelProject.Create("Пустой").InputBindings);
+    }
+    [TestMethod]
     public void DeletionPrunesDirectActionTargetsWithoutResurrectingLegacyLines()
     {
         var line = NovellMaker.Core.Scenes.DialogueLine.Create("ru", "Текст");

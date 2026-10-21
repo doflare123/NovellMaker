@@ -98,7 +98,7 @@
             </DataTemplate>
           </ComboBox.ItemTemplate>
         </ComboBox>
-        <TextBlock Text="{Binding AddCharacterStateHint}" Classes="muted" TextWrapping="Wrap" FontSize="12" />
+        <views:HelpTip Explanation="{Binding AddCharacterStateHint}" />
 
         <Border Height="150" MinHeight="120" Margin="0,8,0,0"
                 Background="#1B1D21" BorderBrush="#41464E" BorderThickness="1">

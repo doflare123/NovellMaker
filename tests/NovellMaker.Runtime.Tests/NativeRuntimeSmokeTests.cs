@@ -1,4 +1,4 @@
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Xna.Framework;
@@ -15,6 +15,35 @@ namespace NovellMaker.Runtime.Tests;
 [DoNotParallelize]
 public sealed class NativeRuntimeSmokeTests
 {
+    [TestMethod]
+    public async Task NativeProjectHotkeyAtFullStackReportsFailureAndKeepsRendering()
+    {
+        if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1") Assert.Inconclusive("Set NOVELLMAKER_NATIVE_SMOKE=1.");
+        var directory = Path.Combine(FindRepositoryRoot(), "artifacts", "screenshots", "stack-limit");
+        var images = Path.Combine(directory, "Assets", "Images"); Directory.CreateDirectory(images);
+        var fixture = await CreateFixtureAsync(directory, images, false); var store = new JsonProjectStore(); var project = await store.LoadAsync(fixture.ProjectPath);
+        var a = project.Scenes[0]; var node = new NovellMaker.Core.Screens.ScreenNode(Guid.NewGuid(), a.Canvas.Nodes[0].Id, NovellMaker.Core.Screens.ScreenNodeKind.Button, new(20, 20, 200, 50), "Ещё слой");
+        a = a with { Canvas = a.Canvas with { Nodes = a.Canvas.Nodes.Add(node), Buttons = [new(node.Id, NovellMaker.Core.Screens.ScreenButtonAction.Open, a.Id)] } };
+        var b = ScreenFixture.Create("Другой модуль").ToScene();
+        project = project with { Scenes = [a, b], InputBindings = [new("F9", NovellMaker.Core.Screens.ScreenButtonAction.Open, b.Id)] };
+        await store.SaveAsync(fixture.ProjectPath, project);
+        var png = Path.Combine(directory, "frame.png"); var report = Path.ChangeExtension(png, ".json"); var plan = Path.Combine(directory, "plan.json");
+        File.WriteAllText(plan, "[{\"Kind\":\"tab\"}," + string.Join(',', Enumerable.Repeat("{\"Kind\":\"activate\"}", 31)) + ",{\"Kind\":\"key\",\"Key\":\"F9\"},{\"Kind\":\"back\"}]");
+        var runtime = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
+        var start = CreateStartInfo(runtime, fixture.ProjectPath, directory, fixture.SceneId, fixture.StartLineId, png, report);
+        start.ArgumentList.Add("--smoke-plan"); start.ArgumentList.Add(plan);
+        using var process = Process.Start(start)!; var stderr = process.StandardError.ReadToEndAsync(); var stdout = process.StandardOutput.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException) { process.Kill(true); await process.WaitForExitAsync(); Assert.Fail("Stack smoke timed out."); }
+        Assert.AreEqual(0, process.ExitCode, await stderr + await stdout);
+        using var json = JsonDocument.Parse(File.ReadAllText(report)); var trace = json.RootElement.GetProperty("ActionTrace");
+        Assert.AreEqual(32, trace[31].GetProperty("ScreenCount").GetInt32()); Assert.AreEqual(32, trace[32].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(31, trace[33].GetProperty("ScreenCount").GetInt32());
+        Assert.IsTrue(trace.EnumerateArray().All(t => t.GetProperty("Success").GetBoolean()));
+        Assert.IsTrue(json.RootElement.GetProperty("Diagnostics").EnumerateArray().Any(d => d.GetString()!.Contains("бюджет")));
+        Assert.IsTrue(File.Exists(png));
+    }
     [TestMethod]
     [TestCategory("NativeSmoke")]
     [DataRow(false)]
@@ -118,9 +147,12 @@ public sealed class NativeRuntimeSmokeTests
         var fixtureDirectory = Path.Combine(artifacts, "audio-mixer-fixture");
         var images = Path.Combine(fixtureDirectory, "Assets", "Images"); Directory.CreateDirectory(images);
         var fixture = await CreateFixtureAsync(fixtureDirectory, images, false);
+        var testStore = new JsonProjectStore();
+        var withUi = NovellMaker.Editor.Examples.ExampleInterfaceModule.AddTo(await testStore.LoadAsync(fixture.ProjectPath));
+        await testStore.SaveAsync(fixture.ProjectPath, withUi);
         var png = Path.Combine(artifacts, "runtime-audio-mixer.png"); var report = Path.ChangeExtension(png, ".json");
         var plan = Path.Combine(fixtureDirectory, "mixer-plan.json");
-        await File.WriteAllTextAsync(plan, """[{"Kind":"mixer"},{"Kind":"click","X":760,"Y":170},{"Kind":"click","X":1000,"Y":380}]""");
+        await File.WriteAllTextAsync(plan, """[{"Kind":"key","Key":"F9"},{"Kind":"click","X":760,"Y":170},{"Kind":"click","X":1000,"Y":380}]""");
         var runtime = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
         var start = CreateStartInfo(runtime, fixture.ProjectPath, fixtureDirectory, fixture.SceneId, fixture.StartLineId, png, report);
         start.ArgumentList.Add("--smoke-plan"); start.ArgumentList.Add(plan);
@@ -138,28 +170,47 @@ public sealed class NativeRuntimeSmokeTests
     }
 
     [TestMethod]
-    public async Task NativeScreenStackPausesTimerMovementAndEveryAudioGroupWithoutReplayingCommands()
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task NativeScreenStackPausesTimerMovementAndEveryAudioGroupWithoutReplayingCommands(bool authorMenu)
     {
         if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1") Assert.Inconclusive("Set NOVELLMAKER_NATIVE_SMOKE=1.");
         var artifacts = Path.Combine(FindRepositoryRoot(), "artifacts", "screenshots");
         var directory = Path.Combine(artifacts, "screens-fixture");
         var images = Path.Combine(directory, "Assets", "Images"); Directory.CreateDirectory(images);
         var fixture = await CreateFixtureAsync(directory, images, false);
-        var store = new JsonProjectStore(); var project = await store.LoadAsync(fixture.ProjectPath);
+        var store = new JsonProjectStore(); var project = NovellMaker.Editor.Examples.ExampleInterfaceModule.AddTo(await store.LoadAsync(fixture.ProjectPath));
         var actor = project.Characters[0]; var scene = project.Scenes[0];
         scene = scene with { Actions = [
             new PlaceAction(Guid.NewGuid(), actor.Id, new(0.2, 1, 1, 0)),
             new ShowAction(Guid.NewGuid(), actor.Id), new MoveAction(Guid.NewGuid(), actor.Id, new(0.8, 1, 1, 0), 4),
             new TextAction(Guid.NewGuid(), fixture.StartLineId), new WaitAction(Guid.NewGuid(), "timer", 5),
             new WaitAction(Guid.NewGuid(), "input") ] };
-        await store.SaveAsync(fixture.ProjectPath, project with { Scenes = [scene] });
-        var png = Path.Combine(artifacts, "runtime-screens-pause.png"); var report = Path.ChangeExtension(png, ".json");
+        if (authorMenu)
+        {
+            var screen = ScreenFixture.Create("Пауза автора");
+            var script = new LuaScriptAsset(Guid.NewGuid(), "author-menu.lua", """
+                return {on_load=function() ui.set_text(refs.title, 'Меню автора') end,
+                  on_event=function(event) if event.node == refs.continue_button then ui.close() end end}
+                """);
+            screen = screen with { HandlerScriptId = script.Id, Buttons = screen.Buttons.SetItem(0,
+                new(screen.Nodes[2].Id, NovellMaker.Core.Screens.ScreenButtonAction.Lua, null)) };
+            screen = screen with { Buttons = screen.Buttons.SetItem(1, new(screen.Nodes[3].Id, NovellMaker.Core.Screens.ScreenButtonAction.Open, project.Scenes.Single(s => s.Name.EndsWith("настройки звука")).Id)) };
+            screen = screen with { Nodes = screen.Nodes.Add(new(Guid.NewGuid(), screen.Nodes[0].Id, NovellMaker.Core.Screens.ScreenNodeKind.Image,
+                new(20, 240, 60, 50)) { ImageId = project.Images[1].Id, Name = "Спрайт меню" }) };
+            project = project with { Scenes = project.Scenes.Add(screen.ToScene()), InputBindings = project.InputBindings.Where(b => b.Key != "P").Append(new("P", NovellMaker.Core.Screens.ScreenButtonAction.Toggle, screen.Id)).ToImmutableArray(), Scripts = project.Scripts.Add(script) };
+        }
+        if (authorMenu)
+            scene = scene with { Canvas = scene.Canvas with { Nodes = scene.Canvas.Nodes.Add(new(Guid.NewGuid(), scene.Canvas.Nodes[0].Id,
+                NovellMaker.Core.Screens.ScreenNodeKind.Image, new(1000, 80, 120, 220)) { ImageId = project.Images[1].Id }) } };
+        await store.SaveAsync(fixture.ProjectPath, project with { Scenes = project.Scenes.SetItem(0, scene) });
+        var png = Path.Combine(artifacts, authorMenu ? "runtime-author-screens.png" : "runtime-screens-pause.png"); var report = Path.ChangeExtension(png, ".json");
         var plan = Path.Combine(directory, "screens-plan.json");
         await File.WriteAllTextAsync(plan, """
-            [{"Kind":"tick","Seconds":1},{"Kind":"pause"},{"Kind":"tick","Seconds":20},
+            [{"Kind":"tick","Seconds":1},{"Kind":"key","Key":"P"},{"Kind":"tick","Seconds":20},
              {"Kind":"click","X":450,"Y":400},{"Kind":"tick","Seconds":20},{"Kind":"back"},
              {"Kind":"tick","Seconds":20},{"Kind":"click","X":450,"Y":320},{"Kind":"tick","Seconds":1},
-             {"Kind":"pause"},{"Kind":"activate"},{"Kind":"tick","Seconds":1},{"Kind":"pause"}]
+             {"Kind":"key","Key":"P"},{"Kind":"activate"},{"Kind":"tick","Seconds":1},{"Kind":"key","Key":"P"}]
             """);
         var runtime = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
         var start = CreateStartInfo(runtime, fixture.ProjectPath, directory, fixture.SceneId, fixture.StartLineId, png, report);
@@ -173,22 +224,23 @@ public sealed class NativeRuntimeSmokeTests
         using var json = JsonDocument.Parse(File.ReadAllText(report)); var root = json.RootElement;
         var trace = root.GetProperty("ActionTrace").EnumerateArray().ToArray();
         Assert.AreEqual(13, trace.Length);
-        Assert.AreEqual(6, root.GetProperty("ScreenLuaAppliedBatches").GetInt32());
+        if (authorMenu) Assert.IsTrue(trace[1].GetProperty("ScreenTexts").EnumerateArray().Any(t => t.GetString() == "Меню автора"));
+        Assert.AreEqual(5, root.GetProperty("ScreenLuaAppliedBatches").GetInt32());
         Assert.IsGreaterThan(0, root.GetProperty("PendingScreenLuaDrawFrames").GetInt32());
         Assert.AreEqual(0, root.GetProperty("ScreenLuaDiagnostics").GetArrayLength());
         Assert.IsTrue(trace.All(t => t.GetProperty("Success").GetBoolean()));
         for (var i = 1; i <= 7; i++)
             Assert.AreEqual(trace[0].GetProperty("State").GetRawText(), trace[i].GetProperty("State").GetRawText(), $"Story mutated at menu step {i}.");
-        Assert.AreEqual(2, trace[3].GetProperty("ScreenCount").GetInt32());
-        Assert.AreEqual(1, trace[5].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(authorMenu ? 3 : 2, trace[3].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(authorMenu ? 2 : 1, trace[5].GetProperty("ScreenCount").GetInt32());
         for (var i = 1; i <= 6; i++)
         {
             Assert.AreEqual(3, trace[i].GetProperty("PausedAudioSources").GetInt32());
             Assert.AreEqual(trace[1].GetProperty("AudioSubmittedBytes").GetInt64(), trace[i].GetProperty("AudioSubmittedBytes").GetInt64());
         }
-        Assert.AreEqual(0, trace[7].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(authorMenu ? 1 : 0, trace[7].GetProperty("ScreenCount").GetInt32());
         Assert.AreEqual(0, trace[7].GetProperty("PausedAudioSources").GetInt32());
-        Assert.AreEqual(0, trace[10].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(authorMenu ? 1 : 0, trace[10].GetProperty("ScreenCount").GetInt32());
         var state = JsonSerializer.Deserialize<GameState>(trace[11].GetProperty("State"))!;
         Assert.AreEqual(3d, state.Time); Assert.AreEqual("timer", state.Wait?.Mode);
         Assert.AreEqual(0.65, state.Placements[actor.Id].X, 1e-9);
@@ -197,6 +249,11 @@ public sealed class NativeRuntimeSmokeTests
         using var bitmap = SKBitmap.Decode(png);
         Assert.AreEqual(new SKColor(20, 22, 26), bitmap.GetPixel(370, 210));
         Assert.IsGreaterThan(50, CountBrightPixels(bitmap, new(400, 300, 880, 352)));
+        if (authorMenu)
+        {
+            Assert.AreEqual(new SKColor(214, 58, 64), bitmap.GetPixel(410, 470), "Sprite from the overlay must be rendered by MonoGame.");
+            Assert.AreEqual(new SKColor(214, 58, 64), bitmap.GetPixel(1050, 180), "Components of the plot scene remain visible below the overlay.");
+        }
     }
 
     private static ProcessStartInfo CreateStartInfo(
