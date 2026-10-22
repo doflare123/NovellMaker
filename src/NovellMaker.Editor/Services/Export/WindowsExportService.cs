@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Styling;
 using NovellMaker.Editor.Services.Assets;
@@ -12,6 +12,7 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
 
     public async Task ExportAsync(NovelProject project, string assetsRoot, Guid startSceneId, string destination)
     {
+        DialogueDisplayValidation.Validate(project);
         destination = Path.GetFullPath(destination);
         if (Directory.Exists(destination) || File.Exists(destination))
             throw new IOException("Каталог сборки уже существует. Выберите новое имя; готовые сборки не перезаписываются.");

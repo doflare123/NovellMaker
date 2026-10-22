@@ -31,6 +31,7 @@ public sealed class PreviewService : IPreviewService
     public async Task StartAsync(PreviewRequest request, Action<string> report)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
+        DialogueDisplayValidation.Validate(request.Project);
         StopOwnedProcess();
         if (!File.Exists(runtime)) throw new FileNotFoundException("Игровой модуль отсутствует. Соберите редактор вместе с NovellMaker.Runtime.", runtime);
         var directory = Path.Combine(temporaryRoot, Guid.NewGuid().ToString("N"));

@@ -10,7 +10,27 @@ namespace NovellMaker.Rendering;
 // Compiled into Editor and Runtime: identical fonts, wrapping, inline colors and panel painting.
 internal static class DialogueRasterizer
 {
+    internal const int MaximumLayoutCharacters = 8192;
+    internal static string LayoutText(string text) => text.Length <= MaximumLayoutCharacters
+        ? text : "[Текст превышает лимит отображения: 8192 символа]";
+    private static readonly object measurementLock = new();
+    private static (DialogueStyle Style, string Speaker, string Text)? measurementKey;
+    private static (double Height, double SpeakerHeight) measurement;
+
     internal static (double Height, double SpeakerHeight) Measure(DialogueStyle style, string speaker, string text)
+    {
+        speaker = LayoutText(speaker); text = LayoutText(text);
+        lock (measurementLock)
+        {
+            var key = (style, speaker, text);
+            if (measurementKey == key) return measurement;
+            measurement = MeasureCore(style, speaker, text);
+            measurementKey = key;
+            return measurement;
+        }
+    }
+
+    private static (double Height, double SpeakerHeight) MeasureCore(DialogueStyle style, string speaker, string text)
     {
         var width = Math.Clamp((int)Math.Ceiling(style.Width), 64, 1280);
         using var typeface = CreateTypeface(style.FontFamily);
@@ -28,6 +48,7 @@ internal static class DialogueRasterizer
     {
         if (width <= 0 || height <= 0 || width > 2048 || height > 2048 || (long)width * height > 262144)
             throw new ArgumentOutOfRangeException(nameof(width), "Превышен бюджет текстуры диалога.");
+        text = LayoutText(text);
         var bitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
         try
         {

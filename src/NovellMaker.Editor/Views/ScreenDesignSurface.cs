@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -64,7 +64,7 @@ public sealed class ScreenDesignSurface : UserControl
         if (e.PropertyName is nameof(EditorSession.ActiveScene) or nameof(EditorSession.SelectedScreen) or nameof(EditorSession.SelectedScreenNode) or nameof(EditorSession.AssetRevision) or nameof(EditorSession.ProjectDirectory) or nameof(EditorSession.CanEdit))
         {
             if (e.PropertyName is nameof(EditorSession.AssetRevision) or nameof(EditorSession.ProjectDirectory))
-            { foreach (var item in visuals.Values) artboard.Children.Remove(item.Clip); visuals.Clear(); }
+            { foreach (var item in visuals.Values) { ReleaseVisual(item.Visual); artboard.Children.Remove(item.Clip); } visuals.Clear(); }
             if (gesture is { } g && (session?.Project?.Id != g.Project || session.SelectedScreen?.Id != g.Screen || session.SelectedScreenNode?.Id != g.Before.Id || session.SelectedScreenNode != g.Before || !session.CanEdit)) Cancel();
             Refresh();
         }
@@ -92,7 +92,7 @@ public sealed class ScreenDesignSurface : UserControl
         scenePreview.ShowNavigationControls = session?.ShowNavigationControls == true;
         var definition = Definition();
         var wanted = definition?.Visuals(new(0, 0, 1280, 720)).ToArray() ?? [];
-        foreach (var stale in visuals.Keys.Where(id => !wanted.Any(r => r.Node.Id == id)).ToArray()) { artboard.Children.Remove(visuals[stale].Clip); visuals.Remove(stale); }
+        foreach (var stale in visuals.Keys.Where(id => !wanted.Any(r => r.Node.Id == id)).ToArray()) { ReleaseVisual(visuals[stale].Visual); artboard.Children.Remove(visuals[stale].Clip); visuals.Remove(stale); }
         artboard.Children.Remove(selection);
         var z = 0;
         foreach (var visual in wanted)
@@ -101,7 +101,7 @@ public sealed class ScreenDesignSurface : UserControl
             var tinted = node with { Color = $"#{(byte)(visual.Tint.R * 255):X2}{(byte)(visual.Tint.G * 255):X2}{(byte)(visual.Tint.B * 255):X2}" };
             if (!visuals.TryGetValue(node.Id, out var item) || item.Node.Text != node.Text || item.Node.Kind != node.Kind || item.Node.ImageId != node.ImageId || item.Node.Color != tinted.Color || item.Node.Dialogue != node.Dialogue)
             {
-                if (item.Clip is not null) artboard.Children.Remove(item.Clip);
+                if (item.Clip is not null) { ReleaseVisual(item.Visual); artboard.Children.Remove(item.Clip); }
                 var inner = CreateNode(tinted);
                 var clipping = new Border { IsHitTestVisible = false, Child = new Canvas { Children = { inner } } };
                 item = (clipping, inner, tinted); visuals[node.Id] = item; artboard.Children.Add(clipping);
@@ -119,6 +119,12 @@ public sealed class ScreenDesignSurface : UserControl
         selection.Selected = session?.SelectedScreenNode is { } selected && definition?.Nodes.Any(n => n.Id == selected.Id) == true ? definition.Visual(selected.Id) : null;
         selection.Resizable = session?.SelectedScreenNode?.ParentId is not null; selection.ZIndex = z;
         artboard.Children.Add(selection); selection.InvalidateVisual();
+    }
+    private static void ReleaseVisual(Control control)
+    {
+        if (control is DialogueComponentView dialogue) dialogue.Clear();
+        if (control is Panel panel)
+            foreach (var child in panel.Children) ReleaseVisual(child);
     }
     private static StreamGeometry Polygon(System.Collections.Immutable.ImmutableArray<ScreenPoint> points)
     {

@@ -1,4 +1,4 @@
-﻿using NovellMaker.Editor.Services.Preview;
+using NovellMaker.Editor.Services.Preview;
 
 namespace NovellMaker.Editor.ViewModels;
 
@@ -34,6 +34,7 @@ public sealed partial class EditorSession
         var document = ActiveScene;
         var sceneId = document?.Id;
         if (sceneId is null) return;
+        Services.DialogueDisplayValidation.Validate(project);
         await ValidateExternalScriptsForRunAsync();
         if (!IsNameValid || !AreDocumentsValid || document is { IsEditingLanguageValid: false })
             throw new InvalidOperationException("Исправьте названия и язык перед запуском предпросмотра.");

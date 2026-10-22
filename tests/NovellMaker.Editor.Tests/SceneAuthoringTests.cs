@@ -484,6 +484,47 @@ public sealed class SceneAuthoringTests
         session.Undo(); Assert.AreEqual(id, session.Project.Audio.SceneSounds[doc.Id]);
     }
 
+    [TestMethod]
+    public async Task DialogueProjectionGeometryFailureKeepsAuthoredNodesAndReportsOnce()
+    {
+        using var session = await NewSessionAsync();
+        var root = new NovellMaker.Core.Screens.ScreenNode(Guid.NewGuid(), null,
+            NovellMaker.Core.Screens.ScreenNodeKind.Container, new(0, 0, 1, 1))
+            { Geometry = new() { ScaleX = 1000, ScaleY = 1000 } };
+        var parent = root with { Id = Guid.NewGuid(), ParentId = root.Id };
+        var panel = new NovellMaker.Core.Screens.ScreenNode(Guid.NewGuid(), parent.Id,
+            NovellMaker.Core.Screens.ScreenNodeKind.Panel, new(0, 0, 1, 1))
+            { Dialogue = NovellMaker.Core.Screens.DialogueBinding.CssPanel };
+        var screen = new NovellMaker.Core.Screens.ScreenAsset(Guid.NewGuid(), "Extreme", [root, parent, panel]);
+        var result = session.PresentScreen(screen);
+        Assert.IsFalse(result.Nodes.Single(n => n.Id == panel.Id).Visible);
+        Assert.AreEqual(panel.Bounds, result.Nodes.Single(n => n.Id == panel.Id).Bounds);
+        session.PresentScreen(screen);
+        Assert.AreEqual(1, session.Diagnostics.Count(d => d.StartsWith("Геометрия диалога:")));
+        Assert.IsTrue(screen.Nodes.Single(n => n.Id == panel.Id).Visible);
+    }
+
+    [TestMethod]
+    public async Task LongDialogueShowsAuthorErrorBeforePreviewAndBothExportDialogs()
+    {
+        var dialogs = new Dialogs();
+        using var session = await NewSessionAsync(dialogs);
+        session.AddScene();
+        session.ActiveScene!.AddLine();
+        session.ActiveScene.LineText = new string('x', 8193);
+        await session.PreviewSceneAsync();
+        await session.ExportWindowsAsync();
+        await session.ExportWindowsInstallerAsync();
+        Assert.AreEqual(3, dialogs.Errors.Count);
+        foreach (var error in dialogs.Errors)
+        {
+            StringAssert.Contains(error.Message, "8193");
+            StringAssert.Contains(error.Message, "8192");
+            StringAssert.Contains(error.Message, "фраза");
+        }
+        Assert.AreEqual(8193, session.ActiveScene.LineText.Length);
+    }
+
     private static async Task<EditorSession> NewSessionAsync(Dialogs? dialogs = null)
     {
         var session = new EditorSession(new JsonProjectStore(), dialogs ?? new Dialogs(), new Git());

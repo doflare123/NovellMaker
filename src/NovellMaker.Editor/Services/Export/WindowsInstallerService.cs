@@ -23,6 +23,7 @@ public sealed class WindowsInstallerService(WindowsExportService exporter, strin
     public async Task ExportAsync(NovelProject project, string assetsRoot, Guid startSceneId, string destination,
         WindowsInstallerOptions options, CancellationToken cancellationToken = default)
     {
+        DialogueDisplayValidation.Validate(project);
         _ = options.ValidateVersion();
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Сборка установщика EXE пока поддержана только на Windows.");
         destination = Path.GetFullPath(destination);

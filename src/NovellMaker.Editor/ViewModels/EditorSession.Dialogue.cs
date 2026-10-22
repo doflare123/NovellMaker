@@ -18,7 +18,13 @@ public sealed partial class EditorSession
         var text = frame?.LineId is null ? "Текст реплики" : ActiveScene?.SampleText ?? "";
         var speaker = frame?.LineId is null ? "Имя говорящего" : frame.SpeakerName;
         var metrics = DialogueRasterizer.Measure(style, speaker, text);
-        return DialogueCanvas.Present(source, style, speaker, text, true, metrics.Height, metrics.SpeakerHeight);
+        try { return DialogueCanvas.Present(source, style, speaker, text, true, metrics.Height, metrics.SpeakerHeight); }
+        catch (ArgumentException error)
+        {
+            var message = "Геометрия диалога: " + error.Message;
+            if (!Diagnostics.Contains(message)) Diagnostics.Insert(0, message);
+            return new(source.Id, [.. source.Nodes.Select(n => n.Dialogue == DialogueBinding.None ? n : n with { Visible = false })]);
+        }
     }
 
     public void AddDialogueComponent()
