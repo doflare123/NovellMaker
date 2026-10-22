@@ -187,7 +187,7 @@ internal sealed partial class RuntimeGame : Game
         screens.SyncScene(player.Execution.State.SceneId);
         screens.Poll();
         RefreshFrameResources();
-        var menuDiagnostics = string.Join("\n", screens.Diagnostics);
+        var menuDiagnostics = string.Join("\n", screens.Diagnostics.Concat(componentTextures?.Diagnostics ?? []));
         if (menuDiagnostics != lastMenuDiagnostics) { lastMenuDiagnostics = menuDiagnostics; RefreshTextTextures(); }
         player.Execution.IsPaused = screens.Stack.PausesScenario || !hostActive;
         SynchronizeAudio();
@@ -212,11 +212,11 @@ internal sealed partial class RuntimeGame : Game
         DrawBackground(spriteBatch, player.Frame.Background);
         DrawCharacters(spriteBatch, player.Frame.Characters);
         DrawDialogue(spriteBatch, player.Frame);
-        DrawDiagnostics(spriteBatch);
         DrawNavigationControls(spriteBatch);
         foreach (var button in interactionButtons) spriteBatch.Draw(button.Texture.Texture, button.Bounds, Color.White);
         if (actionHelp is not null) spriteBatch.Draw(actionHelp.Texture, new Vector2(16, 16), Color.White);
         DrawComponents(spriteBatch);
+        DrawDiagnostics(spriteBatch);
         spriteBatch.End();
 
         GraphicsDevice.SetRenderTarget(null);
@@ -531,7 +531,7 @@ internal sealed partial class RuntimeGame : Game
 
     private IReadOnlyList<string> CurrentDiagnostics() =>
         player.Frame.Diagnostics.Concat(assetDiagnostics.Values.Order(StringComparer.Ordinal)).Concat(audio?.Diagnostics ?? [])
-            .Concat(screens.Diagnostics).ToArray();
+            .Concat(screens.Diagnostics).Concat(componentTextures?.Diagnostics ?? []).ToArray();
 
     private void DrawBackground(SpriteBatch batch, ImageAsset? background)
     {

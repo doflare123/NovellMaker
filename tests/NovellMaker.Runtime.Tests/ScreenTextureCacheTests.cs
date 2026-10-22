@@ -7,6 +7,38 @@ public sealed class ScreenTextureCacheTests
 {
     private static readonly ScreenDefinition Fixture = ScreenFixture.Create("Тест").Definition();
     [TestMethod]
+    public void ReducedOversizedButtonReportsRejectedRasterWithoutAllocatingAndDiagnosticsClearOnRecovery()
+    {
+        var root = new ScreenNode(Guid.NewGuid(), null, ScreenNodeKind.Container, Viewport);
+        var button = new ScreenNode(Guid.NewGuid(), root.Id, ScreenNodeKind.Button, new(100, 200, 3000, 500), "Большая кнопка")
+            { Name = "Уменьшенная кнопка", Geometry = new() { ScaleX = .1, ScaleY = .1 } };
+        var definition = new ScreenDefinition(Guid.NewGuid(), [root, button]); var allocations = 0;
+        using var cache = new ScreenTextureCache<Texture>(_ => { allocations++; return new(); });
+        Assert.IsEmpty(cache.Update(definition, Viewport)); Assert.AreEqual(0, allocations); Assert.AreEqual(0, cache.CachedPixels);
+        Assert.AreEqual(1, cache.RejectedNodes); var diagnostic = cache.Diagnostics.Single();
+        StringAssert.Contains(diagnostic, button.Name); StringAssert.Contains(diagnostic, button.Id.ToString()); StringAssert.Contains(diagnostic, "бюджет");
+        cache.Update(definition, Viewport); Assert.AreEqual(diagnostic, cache.Diagnostics.Single());
+        Assert.AreEqual(button.Id, definition.HitTest(150, 220), "The renderer must draw a visible allocation-free button surface here.");
+        definition = new(definition.Id, [root, button with { Bounds = new(100, 200, 300, 50), Geometry = new() }]);
+        Assert.HasCount(1, cache.Update(definition, Viewport)); Assert.AreEqual(1, allocations); Assert.IsEmpty(cache.Diagnostics);
+        cache.Update(null, Viewport); Assert.IsEmpty(cache.Diagnostics); Assert.AreEqual(0, cache.CachedPixels);
+    }
+
+    [TestMethod]
+    public void FrameDeferralIsTemporaryAndCapacityDeferralReportsAndRecoversAfterRelease()
+    {
+        var root = new ScreenNode(Guid.NewGuid(), null, ScreenNodeKind.Container, Viewport);
+        var definition = new ScreenDefinition(Guid.NewGuid(), [root, .. Enumerable.Range(0, 17).Select(_ => new ScreenNode(Guid.NewGuid(), root.Id, ScreenNodeKind.Button, new(0, 0, 512, 512)))]);
+        using var cache = new ScreenTextureCache<Texture>(_ => new());
+        cache.Update(definition, Viewport); Assert.AreEqual(16, cache.DeferredNodes); Assert.AreEqual(0, cache.CapacityDeferredNodes); Assert.IsEmpty(cache.Diagnostics);
+        for (var i = 0; i < 15; i++) cache.Update(definition, Viewport);
+        Assert.AreEqual(ScreenTextureCache<Texture>.MaximumCachedPixels, cache.CachedPixels);
+        Assert.AreEqual(1, cache.CapacityDeferredNodes); Assert.AreEqual(1, cache.DeferredNodes); StringAssert.Contains(cache.Diagnostics.Single(), "кэш");
+        var last = definition.Nodes[^1];
+        cache.Update(new(definition.Id, [root, last]), Viewport); Assert.IsEmpty(cache.Diagnostics); Assert.AreEqual(0, cache.DeferredNodes);
+        cache.Dispose(); Assert.AreEqual(0, cache.CachedPixels); Assert.IsEmpty(cache.Diagnostics);
+    }
+    [TestMethod]
     public void SameSceneOpenedTwiceUsesIndependentTexturesAndOneSharedAllocationBudget()
     {
         var scene = ScreenFixture.Create("Два экземпляра"); var stack = new ScreenStack(Guid.NewGuid());

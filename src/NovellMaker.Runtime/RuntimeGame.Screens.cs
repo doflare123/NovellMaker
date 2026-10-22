@@ -70,17 +70,23 @@ internal sealed partial class RuntimeGame
                 var node = visual.Node;
                 var local = new ScreenRect(0, 0, node.Bounds.Width, node.Bounds.Height);
                 var tint = new Color((float)(visual.Tint.R * visual.Opacity), (float)(visual.Tint.G * visual.Opacity), (float)(visual.Tint.B * visual.Opacity), (float)visual.Opacity);
-                if (node.Kind == ScreenNodeKind.Panel)
-                    DrawMesh(pixel, visual, local, Mix(new Color(20, 22, 26), tint));
-                if (node.ImageId is { } imageId && assetTextures.TryGetValue(imageId, out var sprite))
-                {
-                    DrawMesh(sprite, visual, local, tint);
-                }
-                if (!rendered.TryGetValue((instance.Id, node.Id), out var item)) continue;
-                var (region, texture) = item;
+                var hasRaster = rendered.TryGetValue((instance.Id, node.Id), out var item);
+                var sprite = node.ImageId is { } imageId ? assetTextures.GetValueOrDefault(imageId) : null;
                 var focused = screens.Stack.Focus is { } focus && focus.NodeId == node.Id && focus.InstanceId == instance.Id;
                 var disabled = node.Kind == ScreenNodeKind.Button && !instance.Definition.Buttons.Any(n => n.Id == node.Id);
                 var stateColor = disabled ? new Color(110, 115, 120) : focused ? new Color(160, 215, 255) : Color.White;
+                if (node.Kind == ScreenNodeKind.Panel)
+                    DrawMesh(pixel, visual, local, Mix(new Color(20, 22, 26), tint));
+                // A button always has a visible surface, including rejected/deferred bitmaps or missing sprites.
+                // This uses the shared clipped polygon and one pixel; no raster budget or input state is bypassed.
+                if (node.Kind == ScreenNodeKind.Button && (!hasRaster || node.ImageId is not null && sprite is null))
+                    DrawMesh(pixel, visual, local, Mix(Mix(new Color(40, 45, 52), stateColor), tint));
+                if (sprite is not null)
+                {
+                    DrawMesh(sprite, visual, local, tint);
+                }
+                if (!hasRaster) continue;
+                var (region, texture) = item;
                 DrawMesh(texture.Texture, visual, new(region.Raster.OffsetX, region.Raster.OffsetY, region.Raster.Width, region.Raster.Height), Mix(stateColor, tint));
             }
         }

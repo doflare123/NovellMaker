@@ -27,6 +27,7 @@ public sealed record ScreenNode(Guid Id, Guid? ParentId, ScreenNodeKind Kind, Sc
 /// <summary>Immutable, validated screen resource, independent of graphics and script execution.</summary>
 public sealed class ScreenDefinition
 {
+    public static ScreenRect CanvasViewport => new(0, 0, 1280, 720);
     public const int MaxNodes = 1024;
     public const int MaxDepth = 32;
     public const int MaxTextCharacters = 131072;
@@ -73,10 +74,10 @@ public sealed class ScreenDefinition
         children = nodes.Where(n => n.ParentId is not null).GroupBy(n => n.ParentId!.Value)
             .ToImmutableDictionary(g => g.Key, g => g.OrderBy(n => n.Order).ToImmutableArray());
         var prepared = ImmutableArray.CreateBuilder<ScreenVisual>();
-        Build(root, ScreenMatrix.Identity, 1280, 720, null, true, true, 1, ScreenTint.White);
+        Build(root, ScreenMatrix.Identity, CanvasViewport.Width, CanvasViewport.Height, null, true, true, 1, ScreenTint.White);
         visuals = prepared.ToImmutable();
         layout = visuals.ToImmutableDictionary(v => v.Node.Id);
-        Buttons = [.. visuals.Where(v => v.Node.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area && v.Enabled && !v.Polygon.IsEmpty).Select(v => v.Node)];
+        Buttons = [.. Visuals(CanvasViewport).Where(v => v.Node.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area && v.Enabled).Select(v => v.Node)];
 
         void Build(ScreenNode node, ScreenMatrix parent, double width, double height,
             ImmutableArray<ScreenPoint>? clip, bool visible, bool enabled, double opacity, ScreenTint tint)
@@ -127,8 +128,8 @@ public sealed class ScreenDefinition
         return hit?.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area ? hit.Id : null;
     }
 
-    public ScreenNode? PointerTarget(double x, double y) => visuals.Reverse()
-        .FirstOrDefault(v => v.Enabled && v.Node.Kind != ScreenNodeKind.Container && Contains(v, x, y))?.Node;
+    public ScreenNode? PointerTarget(double x, double y) => CanvasViewport.Contains(x, y) ? visuals.Reverse()
+        .FirstOrDefault(v => v.Enabled && v.Node.Kind != ScreenNodeKind.Container && Contains(v, x, y))?.Node : null;
 
     private bool Contains(ScreenVisual visual, double x, double y)
     {

@@ -21,9 +21,27 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
     private ScreenDefinition? plannedDefinition;
     private ScreenRect plannedViewport;
     private List<ScreenRasterNode> planned = [];
+    private readonly List<string> rejectedLabels = [];
     internal int RejectedNodes { get; private set; }
     internal int DeferredNodes { get; private set; }
+    internal int CapacityDeferredNodes { get; private set; }
     internal int CachedPixels => textures.Values.Sum(t => t.Raster.Width * t.Raster.Height);
+    internal IEnumerable<string> Diagnostics
+    {
+        get
+        {
+            if (RejectedNodes > 0)
+                yield return $"Текст компонентов: превышен бюджет текстуры ({MaximumTextureSide} по стороне / {MaximumTexturePixels} пикселей), узлов: {RejectedNodes}. {string.Join(", ", rejectedLabels)}. Кнопки показаны заливкой без подписи.";
+            if (CapacityDeferredNodes > 0)
+                yield return $"Текст компонентов: заполнен кэш ({MaximumCachedPixels} пикселей), ожидают: {CapacityDeferredNodes}. Кнопки показаны заливкой без подписи.";
+        }
+    }
+
+    private void Reject(ScreenNode node)
+    {
+        RejectedNodes++;
+        if (rejectedLabels.Count < 2) rejectedLabels.Add($"«{(node.Name.Length == 0 ? node.Kind.ToString() : node.Name)}» ({node.Id:D})");
+    }
 
     internal IReadOnlyList<(ScreenRasterNode Region, T Texture)> Update(ScreenDefinition? definition, ScreenRect viewport)
     {
@@ -31,8 +49,8 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
         {
             layers = null;
             plannedDefinition = definition; plannedViewport = viewport;
-            RejectedNodes = 0;
-            planned = definition is null ? [] : Plan(definition, viewport, () => RejectedNodes++);
+            RejectedNodes = 0; rejectedLabels.Clear();
+            planned = definition is null ? [] : PlanCore(definition, viewport, Reject);
         }
         return Upload();
     }
@@ -43,8 +61,8 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
             layers.Where((layer, index) => layer.Id != instances[index].Id || !ReferenceEquals(layer.Definition, instances[index].Definition)).Any())
         {
             layers = instances.Select(i => (i.Id, i.Definition)).ToArray(); plannedViewport = viewport;
-            RejectedNodes = 0;
-            planned = layers.SelectMany(layer => Plan(layer.Definition, viewport, () => RejectedNodes++)
+            RejectedNodes = 0; rejectedLabels.Clear();
+            planned = layers.SelectMany(layer => PlanCore(layer.Definition, viewport, Reject)
                 .Select(node => node with { InstanceId = layer.Id })).ToList();
         }
         return Upload();
@@ -53,7 +71,7 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
     private IReadOnlyList<(ScreenRasterNode Region, T Texture)> Upload()
     {
         var desired = planned;
-        DeferredNodes = 0;
+        DeferredNodes = 0; CapacityDeferredNodes = 0;
         var keys = desired.ToDictionary(n => (n.InstanceId, n.Node.Id));
         foreach (var id in textures.Keys.ToArray())
             if (!keys.TryGetValue(id, out var node) || textures[id].Raster != node.Raster)
@@ -68,7 +86,9 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
             if (!textures.TryGetValue(key, out var item))
             {
                 var area = node.Raster.Width * node.Raster.Height;
-                if (count >= MaximumFrameTextures || pixels + area > MaximumFramePixels || cached + area > MaximumCachedPixels)
+                if (cached + area > MaximumCachedPixels)
+                { DeferredNodes++; CapacityDeferredNodes++; continue; }
+                if (count >= MaximumFrameTextures || pixels + area > MaximumFramePixels)
                 { DeferredNodes++; continue; }
                 item = (node.Raster, render(node.Raster));
                 textures.Add(key, item);
@@ -79,7 +99,10 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
         return result;
     }
 
-    internal static List<ScreenRasterNode> Plan(ScreenDefinition definition, ScreenRect viewport, Action? reject = null)
+    internal static List<ScreenRasterNode> Plan(ScreenDefinition definition, ScreenRect viewport, Action? reject = null) =>
+        PlanCore(definition, viewport, reject is null ? null : _ => reject());
+
+    private static List<ScreenRasterNode> PlanCore(ScreenDefinition definition, ScreenRect viewport, Action<ScreenNode>? reject)
     {
         var result = new List<ScreenRasterNode>();
         foreach (var visual in definition.Visuals(viewport).Where(v => v.Node.Kind is ScreenNodeKind.Text or ScreenNodeKind.Button))
@@ -91,7 +114,7 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
             var height = (int)Math.Ceiling(Math.Min(node.Bounds.Height, local.Y + local.Height) - 1e-8) - top;
             if (width <= 0 || height <= 0) continue;
             if (width > MaximumTextureSide || height > MaximumTextureSide || (long)width * height > MaximumTexturePixels)
-            { reject?.Invoke(); continue; }
+            { reject?.Invoke(node); continue; }
             var origin = visual.World.Apply(left, top);
             result.Add(new(node, new(node.Text, width, height, left, top, node.Bounds.Height, node.ImageId is not null || node.Kind == ScreenNodeKind.Text), (int)origin.X, (int)origin.Y));
         }
@@ -104,5 +127,6 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
         textures.Clear();
         plannedDefinition = null; planned.Clear();
         layers = null;
+        RejectedNodes = 0; DeferredNodes = 0; CapacityDeferredNodes = 0; rejectedLabels.Clear();
     }
 }

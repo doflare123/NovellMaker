@@ -18,7 +18,7 @@ public sealed class ReviewStage3ProbeTests
     }
 
     [TestMethod]
-    public void ReviewKeyboardActivatesButtonOutsideViewport()
+    public void ReviewKeyboardCannotActivateButtonOutsideViewport()
     {
         var root = new ScreenNode(Guid.NewGuid(), null, ScreenNodeKind.Container, new(0, 0, 1280, 720)) { ClipChildren = false };
         var button = new ScreenNode(Guid.NewGuid(), root.Id, ScreenNodeKind.Button, new(1500, 100, 200, 50), "Outside viewport");
@@ -26,7 +26,8 @@ public sealed class ReviewStage3ProbeTests
         Assert.IsFalse(definition.Visuals(root.Bounds).Any(v => v.Node.Id == button.Id));
         var stack = new ScreenStack(Guid.NewGuid()); stack.Open(Guid.NewGuid(), definition);
         stack.Route(new(ScreenInputKind.FocusNext));
-        Assert.AreEqual(button.Id, stack.Route(new(ScreenInputKind.Activate)).Activation!.NodeId);
+        Assert.IsNull(stack.Focus);
+        Assert.IsNull(stack.Route(new(ScreenInputKind.Activate)).Activation);
     }
     private sealed class Nothing : IDisposable { public void Dispose() { } }
 }
