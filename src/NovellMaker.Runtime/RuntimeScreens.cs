@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Screens;
 using NovellMaker.Core.Screens.Lua;
+using NovellMaker.Core.Execution;
 
 namespace NovellMaker.Runtime;
 
@@ -10,6 +11,9 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
 {
     private readonly Guid ownerId;
     private readonly Action<ScreenButtonBinding>? hostAction;
+    private readonly Action<ScreenInstance?, GameServiceCommand, long>? hostService;
+    private Func<long> generation = () => 0;
+    private readonly Dictionary<Guid, long> instanceGenerations = [];
     private NovelProject? project;
     private ScreenInstance? sceneInstance;
     private Guid? sceneId;
@@ -17,9 +21,10 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
     private Func<ImmutableDictionary<string, string>> snapshot = () => ImmutableDictionary<string, string>.Empty;
     private readonly Queue<string> errors = [];
 
-    public RuntimeScreens(Guid ownerId, bool enableLua = false, Action<ScreenButtonBinding>? hostAction = null)
+    public RuntimeScreens(Guid ownerId, bool enableLua = false, Action<ScreenButtonBinding>? hostAction = null,
+        Action<ScreenInstance?, GameServiceCommand, long>? hostService = null)
     {
-        this.ownerId = ownerId; this.hostAction = hostAction;
+        this.ownerId = ownerId; this.hostAction = hostAction; this.hostService = hostService;
         if (enableLua) Scripts = new(Stack);
     }
     public ScreenStack Stack { get; } = new(Guid.NewGuid());
@@ -29,11 +34,25 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
     public bool IsSceneInstance(ScreenInstance instance) => ReferenceEquals(instance, sceneInstance);
     public IEnumerable<string> Diagnostics => errors.Concat(Scripts?.Diagnostics ?? []);
     public bool HasPending => Scripts?.HasPending ?? false;
-    public bool Poll() => Scripts?.Poll() ?? false;
-
-    public void Configure(NovelProject value, Func<ImmutableDictionary<string, string>> capture)
+    public bool Poll()
     {
-        ScreenAsset.ValidateProject(value); Reset(); project = value; snapshot = capture;
+        var changed = Scripts?.Poll() ?? false;
+        foreach (var invocation in Scripts?.DrainServices() ?? [])
+            if (instanceGenerations.TryGetValue(invocation.Instance.Id, out var captured))
+                hostService?.Invoke(invocation.Instance, invocation.Command, captured);
+        foreach (var id in instanceGenerations.Keys.Where(id => !Stack.Instances.Any(i => i.Id == id)).ToArray()) instanceGenerations.Remove(id);
+        return changed;
+    }
+
+    public bool DeliverServiceResult(ScreenInstance? origin, GameServiceResult result)
+    {
+        if (origin is null || !Stack.Instances.Any(i => ReferenceEquals(i, origin)) || Scripts?.IsAvailable(origin) != true) return false;
+        return Scripts.Enqueue(origin, new("service_result") { Result = result }, snapshot()) == ScreenEventAdmission.Accepted;
+    }
+
+    public void Configure(NovelProject value, Func<ImmutableDictionary<string, string>> capture, Func<long>? captureGeneration = null)
+    {
+        ScreenAsset.ValidateProject(value); Reset(); project = value; snapshot = capture; generation = captureGeneration ?? (() => 0);
     }
     public void SyncScene(Guid id, bool afterLoad = false)
     {
@@ -52,6 +71,7 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
     }
     private void AttachHandler(ScreenAsset asset, ScreenInstance instance)
     {
+        instanceGenerations[instance.Id] = generation();
         try
         {
             if (asset.HandlerScriptId is { } id && project?.Scripts.FirstOrDefault(s => s.Id == id) is { } script)
@@ -96,6 +116,11 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
     {
         try
         {
+            if (hostService is not null && binding.ServiceCommand() is { } command)
+            {
+                hostService(instance, command, instance is not null && instanceGenerations.TryGetValue(instance.Id, out var captured) ? captured : generation());
+                return;
+            }
             switch (binding.Action)
             {
                 case ScreenButtonAction.None: break;
@@ -123,7 +148,7 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
         { Report("Команда проекта не выполнена: " + error.Message); }
     }
     public void Reset()
-    { Stack.Clear(); Scripts?.Reset(); errors.Clear(); sceneId = null; sceneInstance = null; deferredHandler = false; NavigationRequested = null; }
+    { Stack.Clear(); Scripts?.Reset(); instanceGenerations.Clear(); errors.Clear(); sceneId = null; sceneInstance = null; deferredHandler = false; NavigationRequested = null; }
     public void Dispose() { Stack.Clear(); Scripts?.Dispose(); }
     public async ValueTask DisposeAsync() { Dispose(); if (Scripts is { } scripts) await scripts.DisposeAsync(); }
 }

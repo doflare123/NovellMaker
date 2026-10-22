@@ -32,8 +32,7 @@ internal static class Program
             var arguments = RuntimeArguments.Parse(args);
             packageId = arguments.Package?.ProjectId;
             var project = new JsonProjectStore().LoadAsync(arguments.ProjectPath).GetAwaiter().GetResult();
-            if (arguments.Package is { } package && project.Id != package.ProjectId)
-                throw new InvalidDataException("Манифест и проект относятся к разным играм.");
+            arguments.Package?.ValidateProject(project);
             using var session = new GameSession(project, arguments.SceneId, arguments.Language, arguments.LineId,
                 arguments.Package is null ? PlaybackMode.AuthorPreview : PlaybackMode.Game);
             using var game = new RuntimeGame(arguments, session, project.DialogueUi.ShowNavigationControls);

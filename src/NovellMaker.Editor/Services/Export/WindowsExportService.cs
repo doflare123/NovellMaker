@@ -47,7 +47,8 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 File.Copy(path, target, overwrite: false);
             }
-            await new GamePackage(1, project.Id, startSceneId, project.DefaultLanguage, project.Name).SaveAsync(staging);
+            await new GamePackage(2, project.Id, startSceneId, project.DefaultLanguage, project.Name)
+                { StartScreenSceneId = project.StartScreenSceneId }.SaveAsync(staging);
             await File.WriteAllTextAsync(Path.Combine(staging, "Как играть.txt"),
                 $"{project.Name}\n\nЗапустите NovellMaker.Runtime.exe. Переносите всю папку целиком.\n" +
                 "Windows x64; редактор, SDK и отдельная установка .NET не нужны.\n" +

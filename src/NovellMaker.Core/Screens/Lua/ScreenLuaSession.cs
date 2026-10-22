@@ -43,6 +43,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     private readonly List<Task> retiring = [];
     private readonly Queue<string> diagnostics = [];
     private readonly Queue<ScreenLuaIssue> issues = [];
+    private readonly Queue<ScreenServiceInvocation> services = [];
     private Conversation conversation;
     private Pending? pending;
     private bool disposed;
@@ -66,6 +67,11 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     public ImmutableArray<ScreenLuaIssue> Issues => [.. issues];
     public bool IsAvailable(ScreenInstance instance) => !disposed && entries.TryGetValue(instance.Id, out var entry) &&
         ReferenceEquals(entry.Instance, instance) && entry.Error is null && !entry.Closing && Current(instance);
+
+    public ImmutableArray<ScreenServiceInvocation> DrainServices()
+    {
+        var result = services.Where(s => IsAvailable(s.Instance)).ToImmutableArray(); services.Clear(); return result;
+    }
 
     public void Attach(ScreenInstance instance, string source, ImmutableDictionary<string, Guid>? references = null,
         ImmutableDictionary<string, string>? snapshot = null)
@@ -139,8 +145,14 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                     {
                         try
                         {
+                            if (result.Batch!.Service is not null && services.Count >= MaximumQueuedEvents)
+                                throw new InvalidOperationException("Очередь сервисов экрана заполнена.");
                             stack.Commit(entry.Instance, ready.Stamp.Version, result.Batch!.Definition);
                             AppliedBatches++;
+                            if (result.Batch.Service is { } service)
+                            {
+                                services.Enqueue(new(entry.Instance, service));
+                            }
                             if (result.Batch.Close) stack.Close(entry.Instance);
                             changed = true;
                         }
@@ -233,6 +245,8 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         var request = new ScreenLuaRequest(ScreenLuaProtocol.Version, work.Kind, stamp, definition.Id,
             work.Kind == "load" ? definition.Nodes : [], work.Kind == "load" ? entry.Source : null,
             work.Kind == "load" ? entry.References : ImmutableDictionary<string, Guid>.Empty, work.Event, work.Snapshot);
+        request = await ScreenLuaProtocol.FitServiceResultAsync(request, token).ConfigureAwait(false);
+        CheckDeadline();
         exchangeStarted = true;
         var exchange = conversation.Connection.ExchangeAsync(request, token);
         ScreenLuaConnection.Observe(exchange);
@@ -288,6 +302,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     }
     private void Fail(string message)
     {
+        services.Clear();
         faulted = true;
         foreach (var entry in entries.Values) { entry.Error = message; entry.Loaded = false; }
         queue.Clear(); closes.Clear();
@@ -316,6 +331,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         ObjectDisposedException.ThrowIf(disposed, this);
         Retire();
         entries.Clear(); queue.Clear(); closes.Clear(); diagnostics.Clear(); issues.Clear();
+        services.Clear();
         Generation++; faulted = false;
         conversation = new(factory());
     }
@@ -326,6 +342,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         disposed = true;
         Retire();
         entries.Clear(); queue.Clear(); closes.Clear();
+        services.Clear();
     }
     public async ValueTask DisposeAsync()
     {

@@ -24,15 +24,6 @@ internal sealed partial class RuntimeGame
     {
         switch (command.Action)
         {
-            case NovellMaker.Core.Screens.ScreenButtonAction.NewGame:
-                if (session.NewGame(session.Generation, command.TargetScreenId)) screens.SyncScene(player.Execution.State.SceneId);
-                break;
-            case NovellMaker.Core.Screens.ScreenButtonAction.MainMenu:
-                if (session.ReturnToMenu(session.Generation)) screens.SyncScene(player.Execution.State.SceneId);
-                break;
-            case NovellMaker.Core.Screens.ScreenButtonAction.EndSession:
-                if (session.End(session.Generation)) Exit();
-                break;
             case NovellMaker.Core.Screens.ScreenButtonAction.Volume:
             case NovellMaker.Core.Screens.ScreenButtonAction.Mute:
                 if (audio is null) return;
@@ -41,8 +32,6 @@ internal sealed partial class RuntimeGame
                     ? bus with { Muted = !bus.Muted } : bus with { Volume = Math.Clamp(bus.Volume + (float)command.Amount, 0, 1) });
                 break;
             case NovellMaker.Core.Screens.ScreenButtonAction.Continue: ApplyAction(RuntimeAction.Next); break;
-            case NovellMaker.Core.Screens.ScreenButtonAction.Save: SaveGame(); break;
-            case NovellMaker.Core.Screens.ScreenButtonAction.Load: LoadGame(); break;
         }
     }
 }

@@ -8,7 +8,13 @@ namespace NovellMaker.Core.Execution;
 
 public enum GameSlotStatus { Compatible, ForeignProject, IncompatibleRevision, UnsupportedVersion, Corrupt, Unavailable }
 public sealed record GameSlotMetadata(Guid ProjectId, string Revision, DateTimeOffset SavedAtUtc,
-    string Title, Guid SceneId, string SceneName, Guid? LineId, string Phrase, double GameTime);
+    string Title, Guid SceneId, string SceneName, Guid? LineId, string Phrase, double GameTime)
+{
+    internal bool IsValid => ProjectId != Guid.Empty && SceneId != Guid.Empty && LineId != Guid.Empty &&
+        !string.IsNullOrEmpty(Revision) && Revision.Length <= 128 &&
+        Title is { Length: <= 128 } && SceneName is { Length: <= 256 } && Phrase is { Length: <= 512 } &&
+        SavedAtUtc != default && SavedAtUtc.Offset == TimeSpan.Zero && double.IsFinite(GameTime) && GameTime >= 0;
+}
 public sealed record GameSlotSnapshot(GameSlotMetadata Metadata, string SaveJson);
 public sealed record GameSlotInfo(string Id, GameSlotStatus Status, GameSlotMetadata? Metadata, string? Diagnostic, bool Legacy = false);
 public sealed record GameSlotRead(GameSlotInfo Info, GameSlotSnapshot? Snapshot);
@@ -129,9 +135,20 @@ public sealed class GameSlotStore : IGameSlotStore
 
     private List<(string Id, string Path)> Paths(CancellationToken token)
     {
-        CheckPath(directory); CheckPath(quickPath);
+        CheckPath(directory);
         var result = new List<(string, string)>();
-        if (File.Exists(quickPath)) result.Add((QuickSlotId, quickPath));
+        // A broken/inaccessible quickslot is one row, just like a broken named slot.
+        // File.Exists hides access errors and directories, so probe without swallowing them.
+        try
+        {
+            CheckPath(quickPath);
+            _ = File.GetAttributes(quickPath);
+            result.Add((QuickSlotId, quickPath));
+        }
+        catch (FileNotFoundException) { }
+        catch (DirectoryNotFoundException) { }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { result.Add((QuickSlotId, quickPath)); }
         if (Directory.Exists(directory))
             foreach (var path in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
             {
@@ -201,13 +218,9 @@ public sealed class GameSlotStore : IGameSlotStore
 
     private static void ValidateMetadata(GameSlotMetadata metadata, GameState state)
     {
-        if (metadata is null || metadata.ProjectId == Guid.Empty || metadata.ProjectId != state.ProjectId ||
-            string.IsNullOrEmpty(metadata.Revision) || metadata.Revision != state.Revision || metadata.Revision.Length > 128 ||
-            metadata.SceneId == Guid.Empty || metadata.SceneId != state.SceneId || metadata.LineId != state.LineId ||
-            metadata.GameTime != state.Time || !double.IsFinite(metadata.GameTime) || metadata.GameTime < 0 ||
-            metadata.SavedAtUtc == default || metadata.SavedAtUtc.Offset != TimeSpan.Zero ||
-            metadata.Title is null || metadata.Title.Length > 128 || metadata.SceneName is null || metadata.SceneName.Length > 256 ||
-            metadata.Phrase is null || metadata.Phrase.Length > 512)
+        if (metadata is null || !metadata.IsValid || metadata.ProjectId != state.ProjectId ||
+            metadata.Revision != state.Revision || metadata.SceneId != state.SceneId ||
+            metadata.LineId != state.LineId || metadata.GameTime != state.Time)
             throw new ArgumentException("Метаданные не соответствуют снимку сохранения.");
     }
 
@@ -216,7 +229,8 @@ public sealed class GameSlotStore : IGameSlotStore
         if (!ValidId(id)) throw new ArgumentException("ID слота: 1–64 символа a–z, 0–9, '_' или '-'; системные имена запрещены.");
         return id == QuickSlotId ? quickPath : Path.Combine(directory, id + ".json");
     }
-    private static bool ValidId(string id) => !string.IsNullOrEmpty(id) && id.Length <= 64 &&
+    private static bool ValidId(string id) => IsValidSlotId(id);
+    public static bool IsValidSlotId(string? id) => !string.IsNullOrEmpty(id) && id.Length <= 64 &&
         id.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-') &&
         id is not ("con" or "prn" or "aux" or "nul") &&
         !(id.Length == 4 && (id.StartsWith("com", StringComparison.Ordinal) || id.StartsWith("lpt", StringComparison.Ordinal)) && id[3] is >= '0' and <= '9');

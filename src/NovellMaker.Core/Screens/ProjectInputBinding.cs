@@ -18,7 +18,7 @@ public static class ProjectInput
             project.InputBindings.Any(b => b is null || !ValidKey(b.Key) ||
                 b.Action is not (ScreenButtonAction.Open or ScreenButtonAction.Toggle or ScreenButtonAction.Scene or
                     ScreenButtonAction.Back or ScreenButtonAction.Continue or ScreenButtonAction.Save or ScreenButtonAction.Load or
-                    ScreenButtonAction.NewGame or ScreenButtonAction.MainMenu or ScreenButtonAction.EndSession) ||
+                    ScreenButtonAction.NewGame or ScreenButtonAction.MainMenu or ScreenButtonAction.EndSession or ScreenButtonAction.ContinueGame or ScreenButtonAction.ListSlots) ||
                 (b.Action is ScreenButtonAction.Open or ScreenButtonAction.Toggle or ScreenButtonAction.Scene or ScreenButtonAction.NewGame
                     ? !project.Scenes.Any(s => s.Id == b.TargetSceneId) : b.TargetSceneId is not null)) ||
             project.InputBindings.Select(b => b.Key).Distinct(StringComparer.Ordinal).Count() != project.InputBindings.Length)

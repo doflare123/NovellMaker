@@ -8,6 +8,22 @@ namespace NovellMaker.Runtime.Tests;
 public sealed class RuntimeScreensTests
 {
     [TestMethod]
+    public void DirectServiceBindingUsesOriginGenerationAndClosedOriginCannotReceiveResults()
+    {
+        var scene = ScreenFixture.Create("UI").ToScene(); var script = new NovellMaker.Core.Execution.LuaScriptAsset(Guid.NewGuid(), "ui.lua", "return {on_event=function(e) end}");
+        scene = scene with { Canvas = scene.Canvas with { HandlerScriptId = script.Id, Buttons = [new(scene.Canvas.Nodes[2].Id, ScreenButtonAction.ListSlots, null)] } };
+        var project = NovelProject.Create("Сервисы") with { Scenes = [scene], Scripts = [script] };
+        long generation = 3; long received = -1; ScreenInstance? origin = null;
+        using var host = new RuntimeScreens(Guid.NewGuid(), enableLua: true, hostService: (instance, command, captured) => { origin = instance; received = captured; });
+        host.Configure(project, () => ImmutableDictionary<string, string>.Empty, () => generation); host.SyncScene(scene.Id);
+        var current = host.Stack.Instances.Single(); generation = 4;
+        host.Route(new(ScreenInputKind.FocusNext)); host.Route(new(ScreenInputKind.Activate)); Assert.AreSame(current, origin); Assert.AreEqual(3L, received);
+        host.Stack.Close(current); var queued = host.Scripts!.QueuedEvents;
+        Assert.IsFalse(host.DeliverServiceResult(origin, new(Guid.NewGuid(), NovellMaker.Core.Execution.GameServiceAction.ListSlots, true, "Список", null, [])));
+        Assert.AreEqual(queued, host.Scripts.QueuedEvents);
+    }
+
+    [TestMethod]
     public void ReplacingAndTogglingAuthorLayersPreservesUnderlyingSceneAndRoutesBackAndClose()
     {
         var a = ScreenFixture.Create("A"); var b = ScreenFixture.Create("B"); var c = ScreenFixture.Create("C");

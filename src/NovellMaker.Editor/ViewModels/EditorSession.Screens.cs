@@ -93,6 +93,12 @@ public sealed partial class EditorSession
         EditProject(candidate);
     }
 
+    public void AddGameMenusExample()
+    {
+        if (!CanEdit || project is null || ActiveScene is not { } story) return;
+        EditProject(Examples.ExampleGameMenusModule.AddTo(project, story.Id));
+    }
+
     public void DuplicateScreen()
     {
         if (!CanEdit || project is null || SelectedScreen is not { } source) return;

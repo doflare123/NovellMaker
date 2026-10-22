@@ -7,22 +7,27 @@ using NovellMaker.Core.Execution;
 namespace NovellMaker.Core.Screens.Lua;
 
 public sealed record ScreenLuaStamp(Guid RequestId, Guid SessionId, long Generation, Guid OwnerId, Guid InstanceId, long Version);
-public sealed record ScreenLuaEvent(string Kind, Guid? NodeId = null, double X = 0, double Y = 0, double Seconds = 0);
+public sealed record ScreenLuaEvent(string Kind, Guid? NodeId = null, double X = 0, double Y = 0, double Seconds = 0)
+{
+    public GameServiceResult? Result { get; init; }
+}
 public sealed record ScreenChange(string Kind, Guid? NodeId, string? Text, bool? Value)
 {
     public ScreenNodePatch? Patch { get; init; }
     public Guid? ParentId { get; init; }
     public ImmutableDictionary<Guid, Guid>? Ids { get; init; }
+    public GameServiceCommand? Service { get; init; }
 }
 internal sealed record ScreenLuaRequest(int Protocol, string Kind, ScreenLuaStamp Stamp, Guid ResourceId,
     ImmutableArray<ScreenNode> Nodes, string? Source, ImmutableDictionary<string, Guid> References,
     ScreenLuaEvent? Event, ImmutableDictionary<string, string> Snapshot);
 internal sealed record ScreenLuaResponse(int Protocol, string Kind, ScreenLuaStamp Stamp, string? Error, ImmutableArray<ScreenChange> Changes);
-internal sealed record ScreenPreparedBatch(ScreenDefinition Definition, bool Close);
+internal sealed record ScreenPreparedBatch(ScreenDefinition Definition, bool Close, GameServiceCommand? Service = null);
+public sealed record ScreenServiceInvocation(ScreenInstance Instance, GameServiceCommand Command);
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 3;
+    internal const int Version = 4;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {
@@ -53,8 +58,63 @@ internal static class ScreenLuaProtocol
         return JsonSerializer.Deserialize<T>(data, Json) ?? throw new IOException("Пустое сообщение экранного Lua.");
     }
 
+    /// <summary>Budget the whole service event, including JSON escaping and the unchanged variable snapshot.</summary>
+    internal static async Task<ScreenLuaRequest> FitServiceResultAsync(ScreenLuaRequest request, CancellationToken token)
+    {
+        if (request.Event?.Result is not { Action: GameServiceAction.ListSlots } result || result.Slots.IsEmpty)
+            return request;
+        async Task<bool> Fits(ScreenLuaRequest candidate)
+        {
+            token.ThrowIfCancellationRequested();
+            try { await WriteAsync(Stream.Null, candidate, token).ConfigureAwait(false); return true; }
+            catch (IOException) { return false; } // Only the bounded in-memory serialization can fail here.
+        }
+        if (await Fits(request).ConfigureAwait(false)) return request;
+
+        static string Clip(string text, int limit) => text.Length <= limit ? text :
+            text[..(limit > 0 && char.IsHighSurrogate(text[limit - 1]) ? limit - 1 : limit)];
+        const string notice = "Текст списка сокращён до бюджета сообщения Lua.";
+        var message = Clip(result.Message, 1024 - notice.Length - 1) + "\n" + notice;
+        ScreenLuaRequest Project(int limit) => request with
+        {
+            Event = request.Event with { Result = result with
+            {
+                Message = message,
+                Slots = result.Slots.Select(item => item with
+                {
+                    Diagnostic = item.Diagnostic is { } diagnostic ? Clip(diagnostic, limit) : null,
+                    Metadata = item.Metadata is { } metadata ? metadata with
+                    {
+                        Title = Clip(metadata.Title, limit), SceneName = Clip(metadata.SceneName, limit),
+                        Phrase = Clip(metadata.Phrase, limit),
+                    } : null,
+                }).ToImmutableArray(),
+            } },
+        };
+        // IDs, statuses, revision, timestamps and every variable remain intact. Even the maximum
+        // validated snapshot leaves room for all 128 rows with empty display strings.
+        var best = Project(0);
+        if (!await Fits(best).ConfigureAwait(false))
+            throw new ArgumentException("Список слотов и снимок превышают общий бюджет сообщения Lua.");
+        var lower = 1; var upper = 1024;
+        while (lower <= upper)
+        {
+            var middle = (lower + upper) / 2;
+            var candidate = Project(middle);
+            if (await Fits(candidate).ConfigureAwait(false)) { best = candidate; lower = middle + 1; }
+            else upper = middle - 1;
+        }
+        return best;
+    }
+
     internal static void ValidateEvent(ScreenDefinition definition, ScreenLuaEvent value, bool worker = false)
     {
+        if (value.Kind == "service_result")
+        {
+            if (value.NodeId is not null || value.X != 0 || value.Y != 0 || value.Seconds != 0 || value.Result is null)
+                throw new ArgumentException("Некорректное событие игрового сервиса.");
+            value.Result.Validate(); return;
+        }
         bool ValidClick(Guid? id)
         {
             if (id is null) return false;
@@ -72,7 +132,7 @@ internal static class ScreenLuaProtocol
                 node = map[parent];
             }
         }
-        if (value.Kind is not ("click" or "move" or "hover" or "update") ||
+        if (value.Result is not null || value.Kind is not ("click" or "move" or "hover" or "update") ||
             !double.IsFinite(value.X) || !double.IsFinite(value.Y) || Math.Abs(value.X) > 100000 || Math.Abs(value.Y) > 100000 ||
             !double.IsFinite(value.Seconds) || value.Seconds is < 0 or > 1 ||
             value.NodeId is { } node && !definition.Nodes.Any(n => n.Id == node) ||
@@ -87,11 +147,18 @@ internal static class ScreenLuaProtocol
         if (changes.IsEmpty) return new(definition, false);
         var current = definition;
         var close = false;
+        GameServiceCommand? service = null;
         var characters = 0;
         foreach (var change in changes)
         {
             if (change is null || close) throw new InvalidOperationException("Некорректный пакет экрана.");
             var extra = change.Patch is not null || change.ParentId is not null || change.Ids is not null;
+            if (change.Kind == "service" && change.Service is { } command && !extra && change.NodeId is null && change.Text is null && change.Value is null)
+            {
+                if (service is not null) throw new InvalidOperationException("Один Lua-пакет может запросить только одну операцию сервиса.");
+                command.Validate(); service = command; continue;
+            }
+            if (change.Service is not null) throw new InvalidOperationException("Лишние данные команды сервиса.");
             if (change.Kind == "close" && change.NodeId is null && change.Text is null && change.Value is null && !extra)
             { close = true; continue; }
             if (change.NodeId is not { } id || current.Nodes.FirstOrDefault(n => n.Id == id) is not { } node)
@@ -117,6 +184,7 @@ internal static class ScreenLuaProtocol
             if (updated != node) current = new(current.Id, current.Nodes.Replace(node, updated), current.RetiredNodeIds);
         }
         // Still advance protocol versions for successful no-ops, but preserve view identity.
-        return new(current.Nodes.SequenceEqual(definition.Nodes) && current.RetiredNodeIds.SetEquals(definition.RetiredNodeIds) ? definition : current, close);
+        if (close && service is not null) throw new InvalidOperationException("Нельзя закрыть экран и запросить сервис одним пакетом.");
+        return new(current.Nodes.SequenceEqual(definition.Nodes) && current.RetiredNodeIds.SetEquals(definition.RetiredNodeIds) ? definition : current, close, service);
     }
 }

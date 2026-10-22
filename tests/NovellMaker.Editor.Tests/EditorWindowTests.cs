@@ -33,6 +33,26 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task NamedSlotCommandsAndExampleAreEditableInActualInspector() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); session.AddScene(); session.AddScreenNodeAt(NovellMaker.Core.Screens.ScreenNodeKind.Button, 200, 200);
+        Dispatcher.UIThread.RunJobs(); var inspector = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single();
+        var action = Find<ComboBox>(inspector, "ScreenButtonAction"); action.SelectedIndex = 18;
+        Find<TextBox>(inspector, "ScreenSlotId").Text = "chapter-1"; Find<TextBox>(inspector, "ScreenSlotTitle").Text = "Глава 1";
+        Assert.AreEqual("chapter-1", session.SelectedScreen!.Buttons.Single().SlotId); Assert.AreEqual("Глава 1", session.SelectedScreen.Buttons.Single().SlotTitle);
+        action.SelectedIndex = 19; Assert.AreEqual(NovellMaker.Core.Screens.ScreenButtonAction.LoadSlot, session.SelectedScreen!.Buttons.Single().Action);
+        action.SelectedIndex = 20; Assert.AreEqual(NovellMaker.Core.Screens.ScreenButtonAction.DeleteSlot, session.SelectedScreen!.Buttons.Single().Action);
+        session.Undo(); Dispatcher.UIThread.RunJobs(); Assert.AreEqual(19, action.SelectedIndex);
+        action.SelectedIndex = 16; Assert.AreEqual(NovellMaker.Core.Screens.ScreenButtonAction.ContinueGame, session.SelectedScreen!.Buttons.Single().Action);
+        Assert.IsNull(session.SelectedScreen.Buttons.Single().SlotId);
+        var before = session.Project; Find<Button>(inspector, "AddGameMenusExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.AreEqual(before!.Scenes.Length + 2, session.Project!.Scenes.Length); Assert.IsNotNull(session.Project.StartScreenSceneId);
+        session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo();
+        Capture(window, "editor-game-slots.png"); window.Close();
+    });
+
+    [TestMethod]
     public Task StartupScreenAndSessionCommandsAreEditableInActualInspector() => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
@@ -46,6 +66,15 @@ public sealed class EditorWindowTests
         Find<ComboBox>(inspector, "ScreenButtonAction").SelectedIndex = 13;
         Assert.AreEqual(NovellMaker.Core.Screens.ScreenButtonAction.NewGame, session.SelectedScreen!.Buttons.Single().Action);
         Assert.IsTrue(session.Project.Scenes.Any(s => s.Id == session.SelectedScreen.Buttons.Single().TargetScreenId));
+        var target = Find<ComboBox>(inspector, "ScreenButtonTarget");
+        var previousTarget = session.SelectedScreen.Buttons.Single().TargetScreenId;
+        target.SelectedIndex = (target.SelectedIndex + 1) % target.ItemCount;
+        var changedTarget = session.SelectedScreen.Buttons.Single().TargetScreenId;
+        Assert.AreNotEqual(previousTarget, changedTarget);
+        session.Undo(); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(previousTarget, session.SelectedScreen!.Buttons.Single().TargetScreenId);
+        session.Redo(); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(changedTarget, session.SelectedScreen!.Buttons.Single().TargetScreenId);
         Find<ComboBox>(inspector, "ScreenButtonAction").SelectedIndex = 14;
         Assert.AreEqual(NovellMaker.Core.Screens.ScreenButtonAction.MainMenu, session.SelectedScreen!.Buttons.Single().Action);
         Assert.IsNull(session.SelectedScreen.Buttons.Single().TargetScreenId);

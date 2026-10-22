@@ -12,6 +12,24 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ScreenAuthoringTests
 {
     [TestMethod]
+    public async Task MenuExampleIsOneHistoryOperationAndSurvivesSaveAsPreviewAndDuplication()
+    {
+        using var folder = new Folder(); var dialogs = new Dialogs { SavePath = Path.Combine(folder.Path, "menus.novell") }; var preview = new Preview();
+        using var session = await Session(dialogs, preview: preview); session.AddScene(); session.ActiveScene!.AddLine(); var story = session.ActiveScene.Id;
+        var before = session.Project; session.AddGameMenusExample(); var after = session.Project!;
+        Assert.AreEqual(before!.Scenes.Length + 2, after.Scenes.Length); Assert.AreEqual(1, after.Scripts.Length);
+        Assert.AreEqual(story, after.Scenes.Single(s => s.Id == after.StartScreenSceneId).Canvas.Buttons.Single(b => b.Action == ScreenButtonAction.NewGame).TargetScreenId);
+        session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo(); Assert.IsTrue(after.ContentEquals(session.Project));
+        await session.SaveAsync(); Assert.IsTrue(after.ContentEquals(await new JsonProjectStore().LoadAsync(dialogs.SavePath)));
+        await session.PreviewSceneAsync(); Assert.IsTrue(after.ContentEquals(preview.Request!.Project));
+        var destination = Path.Combine(folder.Path, "copy"); Directory.CreateDirectory(destination); dialogs.SavePath = Path.Combine(destination, "copy.novell");
+        await session.SaveAsync(true); Assert.IsTrue(after.ContentEquals(await new JsonProjectStore().LoadAsync(dialogs.SavePath)));
+        Assert.IsTrue(File.Exists(Path.Combine(destination, "Scripts", after.Scripts[0].Id.ToString("N") + ".lua")));
+        var menu = after.Scenes.Single(s => s.Id == after.StartScreenSceneId); var (copy, _) = NovellMaker.Core.Scenes.SceneCopy.Create(menu);
+        Assert.AreEqual(ScreenButtonAction.ContinueGame, copy.Canvas.Buttons[1].Action); Assert.IsEmpty(dialogs.Errors);
+    }
+
+    [TestMethod]
     public async Task StartScreenAndSessionCommandsSurviveHistorySaveAsPreviewAndDeletion()
     {
         using var folder = new Folder(); var dialogs = new Dialogs { SavePath = Path.Combine(folder.Path, "session.novell") }; var preview = new Preview();

@@ -5,12 +5,29 @@ using NovellMaker.Core.Projects;
 
 namespace NovellMaker.Core.Screens;
 
-public enum ScreenButtonAction { Lua, Close, Open, Replace, Back, None, Scene, Volume, Mute, Continue, Save, Load, Toggle, NewGame, MainMenu, EndSession }
+public enum ScreenButtonAction { Lua, Close, Open, Replace, Back, None, Scene, Volume, Mute, Continue, Save, Load, Toggle, NewGame, MainMenu, EndSession, ContinueGame, ListSlots, SaveSlot, LoadSlot, DeleteSlot }
 
 public sealed record ScreenButtonBinding(Guid NodeId, ScreenButtonAction Action, Guid? TargetScreenId)
 {
     public NovellMaker.Core.Audio.AudioGroup Group { get; init; }
     public double Amount { get; init; }
+    public string? SlotId { get; init; }
+    public string? SlotTitle { get; init; }
+
+    public GameServiceCommand? ServiceCommand() => Action switch
+    {
+        ScreenButtonAction.NewGame => new(Guid.NewGuid(), GameServiceAction.NewGame, SceneId: TargetScreenId),
+        ScreenButtonAction.MainMenu => new(Guid.NewGuid(), GameServiceAction.MainMenu),
+        ScreenButtonAction.EndSession => new(Guid.NewGuid(), GameServiceAction.EndSession),
+        ScreenButtonAction.ContinueGame => new(Guid.NewGuid(), GameServiceAction.ContinueGame),
+        ScreenButtonAction.ListSlots => new(Guid.NewGuid(), GameServiceAction.ListSlots),
+        ScreenButtonAction.Save => new(Guid.NewGuid(), GameServiceAction.SaveSlot, GameSlotStore.QuickSlotId),
+        ScreenButtonAction.Load => new(Guid.NewGuid(), GameServiceAction.LoadSlot, GameSlotStore.QuickSlotId),
+        ScreenButtonAction.SaveSlot => new(Guid.NewGuid(), GameServiceAction.SaveSlot, SlotId, SlotTitle),
+        ScreenButtonAction.LoadSlot => new(Guid.NewGuid(), GameServiceAction.LoadSlot, SlotId),
+        ScreenButtonAction.DeleteSlot => new(Guid.NewGuid(), GameServiceAction.DeleteSlot, SlotId),
+        _ => null,
+    };
 }
 
 /// <summary>Authoring data; live instances and Lua closures never belong to a project snapshot.</summary>
@@ -67,6 +84,10 @@ public sealed record ScreenAsset(Guid Id, string Name, ImmutableArray<ScreenNode
                 screen.References.Any(r => !screen.Nodes.Any(n => n.Id == r.Value)))
                 throw new ArgumentException($"Экран «{screen.Name}»: refs должны ссылаться на собственные узлы.");
             if (screen.Buttons.IsDefault || screen.Buttons.Any(b => b is null || !Enum.IsDefined(b.Action) ||
+                (b.Action is ScreenButtonAction.SaveSlot or ScreenButtonAction.LoadSlot or ScreenButtonAction.DeleteSlot
+                    ? b.SlotId is not null && !GameSlotStore.IsValidSlotId(b.SlotId) || b.Action != ScreenButtonAction.SaveSlot && b.SlotId is null
+                    : b.SlotId is not null) ||
+                (b.Action == ScreenButtonAction.SaveSlot ? b.SlotTitle is { Length: > 128 } : b.SlotTitle is not null) ||
                 !screen.Nodes.Any(n => n.Id == b.NodeId && n.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area) ||
                 !Enum.IsDefined(b.Group) || !double.IsFinite(b.Amount) || Math.Abs(b.Amount) > 1 || b.Action != ScreenButtonAction.Volume && b.Amount != 0 ||
                 (b.Action is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame

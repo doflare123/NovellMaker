@@ -190,7 +190,7 @@ public sealed class GameSessionTests
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
             json.AsObject().Remove("startScreenSceneId"); var original = json.ToJsonString(); File.WriteAllText(path, original);
             var migrated = await store.LoadAsync(path); Assert.IsNull(migrated.StartScreenSceneId);
-            Assert.AreEqual(17, migrated.FormatVersion); Assert.AreEqual(original, File.ReadAllText(path));
+            Assert.AreEqual(NovelProject.CurrentFormatVersion, migrated.FormatVersion); Assert.AreEqual(original, File.ReadAllText(path));
             json["formatVersion"] = 17; File.WriteAllText(path, json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
             json["startScreenSceneId"] = Guid.NewGuid(); File.WriteAllText(path, json.ToJsonString());

@@ -52,12 +52,28 @@ internal sealed class ScreenLuaVm
         });
         Bind("close", _ => Add(new("close", null, null, null)));
         Bind("get", a => snapshot.TryGetValue(Str(a, 0), out var value) ? DynValue.NewString(value) : DynValue.Nil);
+        string? Optional(CallbackArguments a, int index) => a[index].IsNil() ? null : Str(a, index);
+        DynValue Service(GameServiceAction action, string? slot = null, string? title = null, Guid? scene = null)
+        {
+            var command = new GameServiceCommand(Guid.NewGuid(), action, slot, title, scene);
+            command.Validate(); Add(new("service", null, null, null) { Service = command });
+            return DynValue.NewString(command.RequestId.ToString("N"));
+        }
+        Bind("new_game", a => Service(GameServiceAction.NewGame, scene: Optional(a, 0) is { } id
+            ? Guid.TryParse(id, out var parsed) && parsed != Guid.Empty ? parsed : throw new ScriptRuntimeException("Ожидался ID сцены.") : null));
+        Bind("main_menu", _ => Service(GameServiceAction.MainMenu));
+        Bind("end_session", _ => Service(GameServiceAction.EndSession));
+        Bind("continue_game", _ => Service(GameServiceAction.ContinueGame));
+        Bind("list_slots", _ => Service(GameServiceAction.ListSlots));
+        Bind("save_slot", a => Service(GameServiceAction.SaveSlot, Optional(a, 0), Optional(a, 1)));
+        Bind("load_slot", a => Service(GameServiceAction.LoadSlot, Str(a, 0)));
+        Bind("delete_slot", a => Service(GameServiceAction.DeleteSlot, Str(a, 0)));
         script.Globals.Set("ui", DynValue.NewTable(ui));
         handlers = Execute(script.LoadString(source, null, "screen.lua"));
         if (handlers.Type != DataType.Table || handlers.Table.Get("on_event").Type != DataType.Function ||
             handlers.Table.Get("on_load").Type is not (DataType.Nil or DataType.Function))
             throw new InvalidOperationException("Экранный Lua должен вернуть таблицу с функцией on_event и необязательной on_load.");
-        if (changes.Count != 0) throw new InvalidOperationException("Изменения экрана разрешены только в обработчике.");
+        if (changes.Count != 0) throw new InvalidOperationException("Изменения экрана и команды сервисов разрешены только в обработчике.");
     }
 
     internal ImmutableArray<ScreenChange> Handle(ScreenLuaEvent? value, ImmutableDictionary<string, string> data)
@@ -72,6 +88,33 @@ internal sealed class ScreenLuaVm
             argument.Set("node", value.NodeId is { } node ? DynValue.NewString(new ScreenNodeHandle(Definition.Id, instanceId, node).ToString()) : DynValue.Nil);
             argument.Set("x", DynValue.NewNumber(value.X)); argument.Set("y", DynValue.NewNumber(value.Y));
             argument.Set("seconds", DynValue.NewNumber(value.Seconds));
+            if (value.Result is { } result)
+            {
+                result.Validate();
+                argument.Set("request_id", DynValue.NewString(result.RequestId.ToString("N")));
+                argument.Set("operation", DynValue.NewString(result.Action.ToString()));
+                argument.Set("success", DynValue.NewBoolean(result.Success));
+                argument.Set("message", DynValue.NewString(result.Message));
+                argument.Set("slot_id", result.SlotId is { } slot ? DynValue.NewString(slot) : DynValue.Nil);
+                var slots = new Table(script);
+                foreach (var item in result.Slots)
+                {
+                    var entry = new Table(script);
+                    entry.Set("id", DynValue.NewString(item.Id)); entry.Set("status", DynValue.NewString(item.Status.ToString()));
+                    entry.Set("compatible", DynValue.NewBoolean(item.Status == GameSlotStatus.Compatible));
+                    entry.Set("legacy", DynValue.NewBoolean(item.Legacy));
+                    entry.Set("diagnostic", item.Diagnostic is { } diagnostic ? DynValue.NewString(diagnostic) : DynValue.Nil);
+                    if (item.Metadata is { } metadata)
+                    {
+                        entry.Set("title", DynValue.NewString(metadata.Title)); entry.Set("scene", DynValue.NewString(metadata.SceneName));
+                        entry.Set("phrase", DynValue.NewString(metadata.Phrase)); entry.Set("revision", DynValue.NewString(metadata.Revision));
+                        entry.Set("saved_at", DynValue.NewString(metadata.SavedAtUtc.ToString("O")));
+                        entry.Set("game_time", DynValue.NewNumber(metadata.GameTime));
+                    }
+                    slots.Set(slots.Length + 1, DynValue.NewTable(entry));
+                }
+                argument.Set("slots", DynValue.NewTable(slots));
+            }
         }
         if (function.Type != DataType.Nil) Execute(function, DynValue.NewTable(argument));
         var batch = changes.ToImmutable();

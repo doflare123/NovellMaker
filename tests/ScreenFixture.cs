@@ -10,6 +10,7 @@ public static class ScreenFixture
     {
         if (node is System.Text.Json.Nodes.JsonObject obj)
         {
+            if (obj.ContainsKey("nodeId") && obj.ContainsKey("action")) { obj.Remove("slotId"); obj.Remove("slotTitle"); }
             if (obj.ContainsKey("bounds") && obj.ContainsKey("parentId"))
                 foreach (var key in new[] { "geometry", "clipChildren", "order", "color", "dialogue" }) obj.Remove(key);
             foreach (var value in obj.ToArray()) if (value.Value is { } child) RemoveGeometry(child);

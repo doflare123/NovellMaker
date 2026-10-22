@@ -15,6 +15,8 @@ public sealed class JsonProjectStore : IProjectStore
 {
     private static readonly JsonSerializerOptions StrictSerializerOptions =
         CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
+    private static readonly JsonSerializerOptions CurrentSerializerOptions =
+        CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow, allowSlots: true);
 
     private static readonly JsonSerializerOptions VersionProbeSerializerOptions =
         CreateSerializerOptions(JsonUnmappedMemberHandling.Skip);
@@ -48,9 +50,15 @@ public sealed class JsonProjectStore : IProjectStore
     }
     private static void RemoveGeometryFields(JsonTypeInfo info)
     {
+        RemoveSlotFields(info);
         RemoveDialogueField(info);
         if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode))
             foreach (var property in info.Properties.Where(p => p.Name is "geometry" or "clipChildren" or "order" or "color").ToArray()) info.Properties.Remove(property);
+    }
+    private static void RemoveSlotFields(JsonTypeInfo info)
+    {
+        if (info.Type == typeof(NovellMaker.Core.Screens.ScreenButtonBinding))
+            foreach (var property in info.Properties.Where(p => p.Name is "slotId" or "slotTitle").ToArray()) info.Properties.Remove(property);
     }
     private static void RemoveDialogueField(JsonTypeInfo info)
     {
@@ -189,6 +197,7 @@ public sealed class JsonProjectStore : IProjectStore
                 15 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken, Version15SerializerOptions).ConfigureAwait(false), false),
                 16 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken).ConfigureAwait(false), false),
                 17 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
+                18 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false), allowSlots: true),
                 10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
                 _ => throw new ProjectFormatException(
@@ -274,7 +283,7 @@ public sealed class JsonProjectStore : IProjectStore
                 await JsonSerializer.SerializeAsync(
                     stream,
                     document,
-                    StrictSerializerOptions,
+                    CurrentSerializerOptions,
                     cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -292,11 +301,12 @@ public sealed class JsonProjectStore : IProjectStore
     }
 
     private static JsonSerializerOptions CreateSerializerOptions(
-        JsonUnmappedMemberHandling unmappedMemberHandling, bool legacyDialogue = false)
+        JsonUnmappedMemberHandling unmappedMemberHandling, bool legacyDialogue = false, bool allowSlots = false)
     {
         var resolver = new DefaultJsonTypeInfoResolver();
         resolver.Modifiers.Add(info =>
         {
+            if (!allowSlots) RemoveSlotFields(info);
             if (legacyDialogue) RemoveDialogueField(info);
             if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode) || info.Type == typeof(NovellMaker.Core.Screens.ScreenButtonBinding) || info.Type == typeof(NovellMaker.Core.Screens.ScreenGeometry))
                 foreach (var property in info.Properties) property.IsRequired = true;
@@ -500,11 +510,14 @@ public sealed class JsonProjectStore : IProjectStore
     private static ImmutableArray<NovellMaker.Core.Screens.ProjectInputBinding> LegacyInputBindings(Guid? pause) => pause is { } id
         ? [new("P", NovellMaker.Core.Screens.ScreenButtonAction.Toggle, id)] : [];
 
-    private static NovelProject MapVersion17(Version17ProjectDocument document) =>
-        MapVersion14(document, false, allowSession: true) with { StartScreenSceneId = document.StartScreenSceneId };
+    private static NovelProject MapVersion17(Version17ProjectDocument document, bool allowSlots = false) =>
+        MapVersion14(document, false, allowSession: true, allowSlots: allowSlots) with { StartScreenSceneId = document.StartScreenSceneId };
 
-    private static NovelProject MapVersion14(Version14ProjectDocument document, bool legacyGeometry = true, bool allowSession = false)
+    private static NovelProject MapVersion14(Version14ProjectDocument document, bool legacyGeometry = true, bool allowSession = false, bool allowSlots = false)
     {
+        if (!allowSlots && (document.InputBindings?.Any(b => b is not null && (int)b.Action > 15) == true ||
+            document.Scenes?.Any(s => s?.Canvas?.Buttons.Any(b => b is not null && (int)b.Action > 15) == true) == true))
+            throw new ArgumentException("Этот формат не поддерживает команды слотов.");
         if (!allowSession && (document.InputBindings?.Any(b => b is not null && (int)b.Action > 12) == true ||
             document.Scenes?.Any(s => s?.Canvas?.Buttons.Any(b => b is not null && (int)b.Action > 12) == true) == true))
             throw new ArgumentException("Этот формат не поддерживает команды сеанса.");

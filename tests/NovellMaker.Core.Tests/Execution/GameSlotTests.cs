@@ -30,6 +30,97 @@ public sealed class GameSlotTests
     }
 
     [TestMethod]
+    [DataRow(false)] [DataRow(true)]
+    public async Task EmptyLineIdInSnapshotAndMetadataIsCorruptWithoutMetadata(bool legacy)
+    {
+        using var folder = new Folder(); var project = Project(); using var session = Session(project);
+        var store = folder.Store(project); var snapshot = GameSlotStore.Capture(session);
+        await store.SaveAsync("broken", snapshot); await store.SaveAsync("healthy", snapshot);
+        var path = System.IO.Path.Combine(folder.Slots, "broken.json");
+        var state = JsonNode.Parse(snapshot.SaveJson)!; state["State"]!["LineId"] = Guid.Empty;
+        var document = JsonNode.Parse(File.ReadAllText(path))!;
+        document["Metadata"]!["LineId"] = Guid.Empty; document["SaveJson"] = state.ToJsonString();
+        File.WriteAllText(path, legacy ? state.ToJsonString() : document.ToJsonString());
+        var read = await store.ReadAsync("broken");
+        Assert.AreEqual(GameSlotStatus.Corrupt, read.Info.Status); Assert.IsNull(read.Info.Metadata);
+        Assert.IsNull(read.Snapshot); Assert.IsFalse(string.IsNullOrEmpty(read.Info.Diagnostic));
+        var list = await store.ListAsync(); Assert.HasCount(2, list);
+        new GameServiceResult(Guid.NewGuid(), GameServiceAction.ListSlots, true, "Список", null, list).Validate();
+        Assert.AreEqual(snapshot, (await store.LatestAsync())!.Snapshot);
+    }
+
+    [TestMethod]
+    [DataRow("directory")] [DataRow("locked")] [DataRow("corrupt")] [DataRow("link")]
+    public async Task UnusableQuicksaveDoesNotHideNamedSlotsOrPreventContinue(string failure)
+    {
+        using var folder = new Folder(); var project = Project(); using var session = Session(project);
+        var store = folder.Store(project); var snapshot = GameSlotStore.Capture(session);
+        await store.SaveAsync("healthy", snapshot);
+        FileStream? locked = null;
+        try
+        {
+            if (failure == "directory") Directory.CreateDirectory(folder.Quick);
+            else if (failure == "link")
+            {
+                try { File.CreateSymbolicLink(folder.Quick, System.IO.Path.Combine(folder.Slots, "healthy.json")); }
+                catch (Exception error) when (error is UnauthorizedAccessException or IOException)
+                { Assert.Inconclusive("Symlink requires host privileges."); }
+            }
+            else
+            {
+                File.WriteAllText(folder.Quick, "broken");
+                if (failure == "locked")
+                {
+                    if (!OperatingSystem.IsWindows()) Assert.Inconclusive("Windows sharing violation fixture.");
+                    locked = new(folder.Quick, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                }
+            }
+            var list = await store.ListAsync(); Assert.HasCount(2, list);
+            var quick = list.Single(s => s.Id == GameSlotStore.QuickSlotId);
+            Assert.AreEqual(failure == "corrupt" ? GameSlotStatus.Corrupt : GameSlotStatus.Unavailable, quick.Status);
+            Assert.IsNull(quick.Metadata); Assert.IsFalse(string.IsNullOrEmpty(quick.Diagnostic));
+            Assert.AreEqual(snapshot, (await store.LatestAsync())!.Snapshot);
+            session.Player.Next();
+            await using var slots = new GameSessionSlots(session, store);
+            Assert.IsTrue(slots.Continue()); await Finish(slots);
+            Assert.IsTrue(slots.LastResult!.Success); Assert.AreEqual(snapshot.SaveJson, GameSave.Serialize(session.Player.Execution));
+        }
+        finally { locked?.Dispose(); if (failure == "link") File.Delete(folder.Quick); }
+    }
+
+    [TestMethod]
+    public async Task QuicksaveThroughJunctionDoesNotAbortNamedSlotScanOrContinue()
+    {
+        if (!OperatingSystem.IsWindows()) Assert.Inconclusive("Windows directory junction fixture.");
+        using var folder = new Folder(); var project = Project(); using var session = Session(project);
+        var target = System.IO.Path.Combine(folder.Path, "target"); Directory.CreateDirectory(target);
+        var junction = System.IO.Path.Combine(folder.Path, "junction");
+        var start = new System.Diagnostics.ProcessStartInfo("cmd.exe")
+        {
+            Arguments = $"/c mklink /J \"{junction}\" \"{target}\"", UseShellExecute = false,
+            CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        using var process = System.Diagnostics.Process.Start(start)!; await process.WaitForExitAsync();
+        Assert.AreEqual(0, process.ExitCode);
+        try
+        {
+            var snapshot = GameSlotStore.Capture(session);
+            var outside = System.IO.Path.Combine(target, "quick.json"); File.WriteAllText(outside, snapshot.SaveJson);
+            var store = new GameSlotStore(project, folder.Slots, System.IO.Path.Combine(junction, "quick.json"));
+            await store.SaveAsync("healthy", snapshot);
+            var list = await store.ListAsync(); Assert.HasCount(2, list);
+            var quick = list.Single(s => s.Id == GameSlotStore.QuickSlotId);
+            Assert.AreEqual(GameSlotStatus.Unavailable, quick.Status); Assert.IsNull(quick.Metadata);
+            Assert.AreEqual(snapshot, (await store.LatestAsync())!.Snapshot);
+            session.Player.Next(); await using var slots = new GameSessionSlots(session, store);
+            Assert.IsTrue(slots.Continue()); await Finish(slots); Assert.IsTrue(slots.LastResult!.Success);
+            Assert.AreEqual(snapshot.SaveJson, GameSave.Serialize(session.Player.Execution));
+            Assert.AreEqual(snapshot.SaveJson, File.ReadAllText(outside));
+        }
+        finally { Directory.Delete(junction); }
+    }
+
+    [TestMethod]
     public async Task SnapshotRoundTripMetadataListDeleteAndQuicksave()
     {
         using var folder = new Folder(); var project = Project(); using var session = Session(project);

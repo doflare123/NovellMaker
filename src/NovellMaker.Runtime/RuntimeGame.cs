@@ -19,6 +19,7 @@ internal sealed partial class RuntimeGame : Game
     private readonly RuntimeArguments arguments;
     private readonly GameSession session;
     private readonly GameSessionSlots slots;
+    private readonly RuntimeGameServices services;
     private ScenePlayer player => session.Player;
     private readonly bool showNavigationControls;
     private readonly Dictionary<Guid, Texture2D> assetTextures = [];
@@ -58,6 +59,7 @@ internal sealed partial class RuntimeGame : Game
     private bool pendingSmokeSuccess;
     private bool pendingSmokeSlots;
     private int pendingSlotDrawFrames;
+    private bool serviceFeedbackDelivered;
     private RenderedTexture? actionHelp;
     private string saveMessage = "";
     private string SavePath => RuntimeStorage.SavePath(player.Execution.State.ProjectId, arguments.Package is not null);
@@ -69,10 +71,13 @@ internal sealed partial class RuntimeGame : Game
         this.session = session ?? throw new ArgumentNullException(nameof(session));
         slots = new(session, new GameSlotStore(player.Execution.Project,
             RuntimeStorage.SlotsDirectory(player.Execution.Project.Id, arguments.Package is not null), SavePath));
+        services = new(session, slots);
         this.showNavigationControls = showNavigationControls;
-        screens = new(Guid.NewGuid(), enableLua: true, hostAction: ApplyProjectCommand);
+        screens = new(Guid.NewGuid(), enableLua: true, hostAction: ApplyProjectCommand, hostService: ApplyService);
+        services.IsCurrentOrigin = origin => screens.Stack.Instances.Any(i => ReferenceEquals(i, origin));
+        services.Completed += (origin, result) => serviceFeedbackDelivered = screens.DeliverServiceResult(origin, result);
         screens.Stack.Presentation = PresentComponents;
-        screens.Configure(player.Execution.Project, () => player.Execution.State.Variables);
+        screens.Configure(player.Execution.Project, () => player.Execution.State.Variables, () => session.Generation);
         session.Resetting += ResetSessionResources;
         if (arguments.SmokePlanPath is { } plan) smokePlan = JsonSerializer.Deserialize<RuntimeSmokeStep[]>(File.ReadAllText(plan)) ?? throw new ArgumentException("Пустой smoke-план.");
         graphics = new GraphicsDeviceManager(this)
@@ -245,7 +250,8 @@ internal sealed partial class RuntimeGame : Game
         if (screens.HasPending) pendingScreenLuaDrawFrames++;
         if (slots.IsBusy) pendingSlotDrawFrames++;
         if (arguments.SmokeOutputPath is not null && drawFrames >= 4 &&
-            (smokePlan is null || actionTrace.Count == smokePlan.Length) && !player.Execution.HasPendingLua && !screens.HasPending && !slots.IsBusy && !smokeWritten)
+            (smokePlan is null || actionTrace.Count == smokePlan.Length) && !player.Execution.HasPendingLua && !screens.HasPending && !slots.IsBusy &&
+            (componentTextures is null || componentTextures.DeferredNodes == componentTextures.CapacityDeferredNodes) && !smokeWritten)
         {
             WriteSmokeArtifacts(sceneTarget);
             smokeWritten = true;
@@ -257,6 +263,7 @@ internal sealed partial class RuntimeGame : Game
 
     protected override void UnloadContent()
     {
+        services.Dispose();
         slots.Dispose();
         session.Dispose();
         session.Resetting -= ResetSessionResources;
@@ -409,7 +416,7 @@ internal sealed partial class RuntimeGame : Game
 
     private bool SaveGame()
     {
-        var success = slots.Save();
+        var success = services.Request(null, new(Guid.NewGuid(), GameServiceAction.SaveSlot, GameSlotStore.QuickSlotId), session.Generation);
         saveMessage = success ? "Сохранение…" : slots.LastResult?.Message ?? "Операция слотов уже выполняется.";
         RefreshInteractions();
         return success;
@@ -417,17 +424,29 @@ internal sealed partial class RuntimeGame : Game
 
     private bool LoadGame()
     {
-        var success = slots.Load();
+        var success = services.Request(null, new(Guid.NewGuid(), GameServiceAction.LoadSlot, GameSlotStore.QuickSlotId), session.Generation);
         saveMessage = success ? "Загрузка…" : slots.LastResult?.Message ?? "Операция слотов уже выполняется.";
         RefreshInteractions();
         return success;
     }
 
-    internal ValueTask DisposeSlotsAsync() => slots.DisposeAsync();
+    internal ValueTask DisposeSlotsAsync() { services.Dispose(); return slots.DisposeAsync(); }
+    private void ApplyService(ScreenInstance? origin, GameServiceCommand command, long generation)
+    {
+        serviceFeedbackDelivered = false;
+        var accepted = services.Request(origin, command, generation);
+        saveMessage = serviceFeedbackDelivered || origin is not null && screens.Scripts?.IsAvailable(origin) == true
+            ? "" : accepted && slots.IsBusy ? "Операция слотов…" : services.LastResult?.Message ?? "";
+        if (session.Phase == GameSessionPhase.Ended) Exit();
+        else if (accepted && command.Action is GameServiceAction.NewGame or GameServiceAction.MainMenu)
+            screens.SyncScene(player.Execution.State.SceneId);
+        RefreshInteractions();
+    }
     private void PollSlots()
     {
-        if (!slots.Poll() || slots.LastResult is not { } result) return;
-        saveMessage = result.Message;
+        serviceFeedbackDelivered = false;
+        if (!services.Poll() || slots.LastResult is not { } result) return;
+        saveMessage = serviceFeedbackDelivered ? "" : result.Message;
         if (result.Success && result.Operation is GameSlotOperation.Load or GameSlotOperation.Continue)
         {
             screens.SyncScene(player.Execution.State.SceneId, afterLoad: true); SynchronizeAudio();

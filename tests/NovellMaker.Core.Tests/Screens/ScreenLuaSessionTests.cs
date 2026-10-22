@@ -61,7 +61,7 @@ public sealed class ScreenLuaSessionTests
         for (var i = 0; i < 1000 && session.HasPending; i++)
         {
             session.Poll();
-            if (session.PendingTask is { } task) { try { await task.WaitAsync(TimeSpan.FromSeconds(10)); } catch (IOException) { } }
+            if (session.PendingTask is { } task) { try { await task.WaitAsync(TimeSpan.FromSeconds(10)); } catch (Exception error) when (error is IOException or ArgumentException or InvalidOperationException) { } }
             else await Task.Delay(1);
             session.Poll();
         }

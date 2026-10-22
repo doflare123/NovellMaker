@@ -68,7 +68,10 @@ public sealed class GameSessionSlots : IDisposable, IAsyncDisposable
             if (work.Operation is GameSlotOperation.Load or GameSlotOperation.Continue)
             {
                 if (reply.Read is not { Info.Status: GameSlotStatus.Compatible, Snapshot: { } snapshot })
+                {
+                    if (reply.Read?.Info.Status == GameSlotStatus.Unavailable) throw new IOException("Файл слота недоступен.");
                     throw new InvalidOperationException(reply.Read?.Info.Diagnostic ?? "Совместимых сохранений нет.");
+                }
                 if (!session.TryLoadSave(snapshot.SaveJson, work.Generation)) return false;
             }
             LastResult = new(work.Operation, true, work.Operation switch
@@ -83,13 +86,15 @@ public sealed class GameSessionSlots : IDisposable, IAsyncDisposable
         catch (Exception error) when (Expected(error))
         {
             if (disposed || session.Generation != work.Generation || work.Cancellation.IsCancellationRequested) return false;
-            LastResult = new(work.Operation, false, error.Message);
+            LastResult = new(work.Operation, false, error is IOException or UnauthorizedAccessException
+                ? "Хранилище слотов недоступно. Проверьте доступ к файлам и свободное место." : error.Message);
             return true;
         }
         finally { work.Cancellation.Dispose(); }
     }
 
-    private void Cancel()
+    /// <summary>Invalidate a host-owned operation before Poll can apply it. A published disk write is not rolled back.</summary>
+    public void Cancel()
     {
         LastResult = null;
         if (pending is not { } work) return;

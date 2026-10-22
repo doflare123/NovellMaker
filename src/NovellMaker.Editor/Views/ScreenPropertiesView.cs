@@ -36,13 +36,17 @@ public sealed class ScreenPropertiesView : UserControl
     private readonly CheckBox clipping = new() { Name = "ScreenNodeClip", Content = "Обрезать потомков" };
     private readonly ComboBox sprite = new() { Name = "ScreenNodeSprite", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ProjectImageView spritePreview = new() { Name = "ScreenSpritePreview", Height = 80, MaximumWidth = 400, TransparentBackground = true };
-    private readonly ComboBox action = new() { Name = "ScreenButtonAction", HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = new[] { "Lua-обработчик", "Закрыть", "Открыть поверх", "Заменить слой", "Назад", "Не назначено", "Перейти к сцене", "Громкость группы", "Mute группы", "Продолжить", "Сохранить состояние", "Загрузить состояние", "Переключить слой", "Новая игра", "В главное меню", "Завершить сеанс" } };
+    private readonly ComboBox action = new() { Name = "ScreenButtonAction", HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = new[] { "Lua-обработчик", "Закрыть", "Открыть поверх", "Заменить слой", "Назад", "Не назначено", "Перейти к сцене", "Громкость группы", "Mute группы", "Продолжить реплику", "Быстро сохранить", "Быстро загрузить", "Переключить слой", "Новая игра", "В главное меню", "Завершить сеанс", "Продолжить игру · последний слот", "Запросить список слотов", "Сохранить в слот", "Загрузить слот", "Удалить слот" } };
+    private readonly TextBox slotId = new() { Name = "ScreenSlotId", IsUndoEnabled = false, PlaceholderText = "Например: chapter-1" };
+    private readonly TextBox slotTitle = new() { Name = "ScreenSlotTitle", IsUndoEnabled = false, MaxLength = 128 };
+    private readonly StackPanel slotFields = new() { Spacing = 6 };
+    private readonly Control slotTitleField;
     private readonly ComboBox target = new() { Name = "ScreenButtonTarget", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly TextBox screenName = new() { Name = "ScreenName", IsUndoEnabled = false };
     private readonly ComboBox handler = new() { Name = "ScreenHandler", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly TextBox shortcut = new() { Name = "ProjectKey", PlaceholderText = "Например: P или F9" };
-    private readonly ComboBox shortcutAction = new() { Name = "ProjectKeyAction", ItemsSource = new[] { "Переключить слой", "Открыть слой", "Перейти к сцене", "Назад", "Продолжить", "Сохранить состояние", "Загрузить состояние", "Новая игра", "В главное меню", "Завершить сеанс" }, SelectedIndex = 0 };
-    private static readonly ScreenButtonAction[] shortcutActions = [ScreenButtonAction.Toggle, ScreenButtonAction.Open, ScreenButtonAction.Scene, ScreenButtonAction.Back, ScreenButtonAction.Continue, ScreenButtonAction.Save, ScreenButtonAction.Load, ScreenButtonAction.NewGame, ScreenButtonAction.MainMenu, ScreenButtonAction.EndSession];
+    private readonly ComboBox shortcutAction = new() { Name = "ProjectKeyAction", ItemsSource = new[] { "Переключить слой", "Открыть слой", "Перейти к сцене", "Назад", "Продолжить реплику", "Быстро сохранить", "Быстро загрузить", "Новая игра", "В главное меню", "Завершить сеанс", "Продолжить игру · последний слот", "Запросить список слотов" }, SelectedIndex = 0 };
+    private static readonly ScreenButtonAction[] shortcutActions = [ScreenButtonAction.Toggle, ScreenButtonAction.Open, ScreenButtonAction.Scene, ScreenButtonAction.Back, ScreenButtonAction.Continue, ScreenButtonAction.Save, ScreenButtonAction.Load, ScreenButtonAction.NewGame, ScreenButtonAction.MainMenu, ScreenButtonAction.EndSession, ScreenButtonAction.ContinueGame, ScreenButtonAction.ListSlots];
     private readonly TextBlock shortcuts = new() { Name = "ProjectKeyBindings", TextWrapping = TextWrapping.Wrap };
     private readonly ComboBox audioGroup = new() { Name = "ScreenAudioGroup", ItemsSource = Enum.GetValues<NovellMaker.Core.Audio.AudioGroup>(), SelectedIndex = 0 };
     private readonly NumericUpDown audioAmount = Number("ScreenAudioAmount", -100, 100);
@@ -89,6 +93,9 @@ public sealed class ScreenPropertiesView : UserControl
         Button(spriteTools, "ClearScreenSprite", "Убрать", () => Edit(n => n with { ImageId = null })); body.Children.Add(spriteTools);
         Field(audioFields, "Аудиогруппа", audioGroup); Field(audioFields, "Изменение громкости, %", audioAmount); buttonFields.Children.Add(audioFields);
         Field(buttonFields, "Нажатие", action); targetField = Field(buttonFields, "Цель", target); body.Children.Add(buttonFields);
+        Field(slotFields, "ID слота", slotId, "1–64 символа a–z, 0–9, '_' или '-'. Пустое поле при сохранении создаёт новый ID. quicksave — быстрый слот.");
+        slotTitleField = Field(slotFields, "Название сохранения", slotTitle, "Необязательно. По умолчанию — название текущей сцены.");
+        buttonFields.Children.Add(slotFields);
         var order = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
         Button(order, "MoveScreenNodeUp", "Ниже", () => session?.MoveScreenNode(-1)); Button(order, "MoveScreenNodeDown", "Выше", () => session?.MoveScreenNode(1));
         Button(order, "CopyScreenNode", "Копия", () => Try(() => session?.DuplicateScreenNode()));
@@ -99,6 +106,7 @@ public sealed class ScreenPropertiesView : UserControl
         body.Children.Add(new Expander { Name = "ScreenReferencesExpander", Header = "Ссылки Lua", Content = links, HorizontalAlignment = HorizontalAlignment.Stretch });
         var settings = new StackPanel { Spacing = 7 }; Field(settings, "Название сцены", screenName);
         settings.Children.Add(startScreen);
+        Button(settings, "AddGameMenusExample", "Добавить пример главного меню и слотов", () => session?.AddGameMenusExample());
         startScreen.IsCheckedChanged += (_, _) => { if (!refreshing && session?.SelectedScreen is { } selected) Try(() => session.SetStartScreen(startScreen.IsChecked == true ? selected.Id : null)); };
         settings.Children.Add(pauseBelow); settings.Children.Add(blockBelow);
         settings.Children.Add(new HelpTip { Explanation = "Эти настройки действуют при открытии поверх другой сцены. При обычном переходе сцена исполняет собственные фразы и скрипт. Слой показывает компоненты и принимает их события; нижний сюжет сохраняет свою позицию." });
@@ -143,10 +151,23 @@ public sealed class ScreenPropertiesView : UserControl
         orderValue.PropertyChanged += (_, e) => { if (e.Property == NumericUpDown.ValueProperty) Edit(n => n with { Order = (int)(orderValue.Value ?? 0) }, "order"); };
         color.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty && ScreenTint.TryParse(color.Text, out var ignoredTint)) Edit(n => n with { Color = color.Text! }, "color"); };
         sprite.SelectionChanged += (_, _) => { if (!refreshing) Edit(n => n with { ImageId = (sprite.SelectedItem as Option)?.Id }); };
-        action.SelectionChanged += (_, _) => { if (!refreshing) ApplyButton(); };
-        target.SelectionChanged += (_, _) => { if (!refreshing && action.SelectedIndex is 2 or 3 or 6 or 12) ApplyButton(); };
+        action.SelectionChanged += (_, _) =>
+        {
+            if (refreshing) return;
+            var kind = (ScreenButtonAction)action.SelectedIndex;
+            slotFields.IsVisible = kind is ScreenButtonAction.SaveSlot or ScreenButtonAction.LoadSlot or ScreenButtonAction.DeleteSlot;
+            slotTitleField.IsVisible = kind == ScreenButtonAction.SaveSlot;
+            ApplyButton();
+        };
+        target.SelectionChanged += (_, _) =>
+        {
+            if (!refreshing && (ScreenButtonAction)action.SelectedIndex is ScreenButtonAction.Open or ScreenButtonAction.Replace or
+                ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame) ApplyButton();
+        };
         screenName.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty && !refreshing && session?.SelectedScreen is { } s && !string.IsNullOrWhiteSpace(screenName.Text)) session.UpdateScreen(s with { Name = screenName.Text }, "screen-name:" + s.Id); };
         handler.SelectionChanged += (_, _) => { if (!refreshing && session?.SelectedScreen is { } s) session.UpdateScreen(s with { HandlerScriptId = (handler.SelectedItem as Option)?.Id }); };
+        slotId.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty && !refreshing) ApplyButton(); };
+        slotTitle.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty && !refreshing) ApplyButton(); };
         audioGroup.SelectionChanged += (_, _) => { if (!refreshing) ApplyButton(); };
         audioAmount.PropertyChanged += (_, e) => { if (e.Property == NumericUpDown.ValueProperty && !refreshing) ApplyButton(); };
         pauseBelow.IsCheckedChanged += (_, _) => { if (!refreshing && session?.SelectedScreen is { } s) session.UpdateScreen(s with { PauseOnOverlay = pauseBelow.IsChecked == true }); };
@@ -177,7 +198,13 @@ public sealed class ScreenPropertiesView : UserControl
         var kind = (ScreenButtonAction)Math.Max(0, action.SelectedIndex);
         var id = kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame ? (target.SelectedItem as Option)?.Id : null;
         if (kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame && id is null) { status.Text = "Выберите целевую сцену."; return; }
-        Try(() => session.UpdateScreen(screen with { Buttons = screen.Buttons.Where(b => b.NodeId != node.Id).Append(new(node.Id, kind, id) { Group = audioGroup.SelectedItem is NovellMaker.Core.Audio.AudioGroup group ? group : default, Amount = kind == ScreenButtonAction.Volume ? (double)(audioAmount.Value ?? 0) / 100 : 0 }).ToImmutableArray() }));
+        var usesSlot = kind is ScreenButtonAction.SaveSlot or ScreenButtonAction.LoadSlot or ScreenButtonAction.DeleteSlot;
+        var selectedSlot = usesSlot && !string.IsNullOrWhiteSpace(slotId.Text) ? slotId.Text : null;
+        if (usesSlot && (selectedSlot is not null && !NovellMaker.Core.Execution.GameSlotStore.IsValidSlotId(selectedSlot) || kind != ScreenButtonAction.SaveSlot && selectedSlot is null))
+        { status.Text = "Укажите допустимый ID слота."; return; }
+        Try(() => session.UpdateScreen(screen with { Buttons = screen.Buttons.Where(b => b.NodeId != node.Id).Append(new(node.Id, kind, id) {
+            SlotId = selectedSlot, SlotTitle = kind == ScreenButtonAction.SaveSlot && !string.IsNullOrEmpty(slotTitle.Text) ? slotTitle.Text : null,
+            Group = audioGroup.SelectedItem is NovellMaker.Core.Audio.AudioGroup group ? group : default, Amount = kind == ScreenButtonAction.Volume ? (double)(audioAmount.Value ?? 0) / 100 : 0 }).ToImmutableArray() }));
     }
     private void Subscribe() { if (session is not null) { session.PropertyChanged -= Changed; session.PropertyChanged += Changed; } }
     private void Unsubscribe() { if (session is not null) session.PropertyChanged -= Changed; }
@@ -221,6 +248,9 @@ public sealed class ScreenPropertiesView : UserControl
             var screens = session?.Project?.Screens.Select(s => new Option(s.Id, s.Name)).ToArray() ?? [];
             var binding = screen?.Buttons.FirstOrDefault(b => b.NodeId == node?.Id);
             action.SelectedIndex = (int)(binding?.Action ?? ScreenButtonAction.Lua);
+            slotFields.IsVisible = binding?.Action is ScreenButtonAction.SaveSlot or ScreenButtonAction.LoadSlot or ScreenButtonAction.DeleteSlot;
+            slotTitleField.IsVisible = binding?.Action == ScreenButtonAction.SaveSlot;
+            slotId.Text = binding?.SlotId ?? ""; slotTitle.Text = binding?.SlotTitle ?? "";
             audioFields.IsVisible = binding?.Action is ScreenButtonAction.Volume or ScreenButtonAction.Mute;
             audioGroup.SelectedItem = binding?.Group ?? NovellMaker.Core.Audio.AudioGroup.Master;
             audioAmount.Value = (decimal)(binding?.Amount ?? 0) * 100; audioAmount.IsVisible = binding?.Action == ScreenButtonAction.Volume;
