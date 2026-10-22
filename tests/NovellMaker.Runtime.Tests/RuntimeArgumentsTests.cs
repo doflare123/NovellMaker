@@ -32,6 +32,9 @@ public sealed class RuntimeArgumentsTests
         Assert.AreEqual(temporaryDirectory, result.AssetsRoot);
         Assert.IsNull(result.LineId);
         Assert.AreNotEqual(RuntimeStorage.SavePath(package.ProjectId, false), RuntimeStorage.SavePath(package.ProjectId, true));
+        Assert.AreNotEqual(RuntimeStorage.SlotsDirectory(package.ProjectId, false), RuntimeStorage.SlotsDirectory(package.ProjectId, true));
+        StringAssert.Contains(RuntimeStorage.SlotsDirectory(package.ProjectId, false), Path.Combine("Saves", package.ProjectId.ToString(), "slots"));
+        Assert.AreEqual(Path.Combine(RuntimeStorage.GameDirectory(package.ProjectId), "slots"), RuntimeStorage.SlotsDirectory(package.ProjectId, true));
         StringAssert.Contains(RuntimeStorage.SavePath(package.ProjectId, true), package.ProjectId.ToString());
         await File.WriteAllTextAsync(Path.Combine(temporaryDirectory, "game.json"), "{\"Version\":99}");
         Assert.Throws<Exception>(() => RuntimeArguments.Parse([], temporaryDirectory));

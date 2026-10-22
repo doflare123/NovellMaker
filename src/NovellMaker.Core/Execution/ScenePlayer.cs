@@ -15,30 +15,35 @@ public sealed class ScenePlayer : IDisposable, IAsyncDisposable
     private readonly NovelScene scene;
     private readonly string language;
     private readonly PlaybackMode mode;
+    private readonly Func<ScriptAction, GameState, NovelProject, CancellationToken, Task<ImmutableArray<ScenarioAction>>> runLua;
     public ScenarioPlayer Execution { get; private set; }
     public bool UsesActions => scene.HasActionScript || project.Scenes.First(s => s.Id == Execution.State.SceneId).HasActionScript;
     public bool IsGamePlayback => mode == PlaybackMode.Game;
     private bool CanNavigate => !IsGamePlayback && !UsesActions && Execution.State.SceneId == scene.Id;
     public SceneFrame Frame { get; private set; } = null!;
 
-    public ScenePlayer(NovelProject project, Guid sceneId, string language, Guid? startLineId = null, PlaybackMode mode = PlaybackMode.AuthorPreview)
+    public ScenePlayer(NovelProject project, Guid sceneId, string language, Guid? startLineId = null, PlaybackMode mode = PlaybackMode.AuthorPreview, bool startImmediately = true)
+        : this(project, sceneId, language, startLineId, mode, startImmediately, LuaActionScript.RequestCommandsAsync) { }
+
+    internal ScenePlayer(NovelProject project, Guid sceneId, string language, Guid? startLineId, PlaybackMode mode, bool startImmediately,
+        Func<ScriptAction, GameState, NovelProject, CancellationToken, Task<ImmutableArray<ScenarioAction>>> runLua)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentException.ThrowIfNullOrWhiteSpace(language);
         this.project = project;
         this.language = language;
-        this.mode = mode;
+        this.mode = mode; this.runLua = runLua;
         if (mode == PlaybackMode.Game && startLineId is not null)
             throw new ArgumentException("Игра начинается со стартовой сцены; выбранная фраза относится к навигации автора.", nameof(startLineId));
         scene = project.Scenes.FirstOrDefault(s => s.Id == sceneId)
             ?? throw new ArgumentException($"Сцена {sceneId} отсутствует в проекте.", nameof(sceneId));
         if (startLineId.HasValue && !scene.Lines.Any(l => l.Id == startLineId))
             throw new ArgumentException($"Реплика {startLineId} отсутствует в сцене.", nameof(startLineId));
-        Execution = new(project, sceneId, language);
+        Execution = new(project, sceneId, language, runLua, startImmediately);
         // Arbitrary action scripts must not be replayed to seek to a dialogue line.
-        if (CanNavigate && startLineId is { } line)
+        if (startImmediately && CanNavigate && startLineId is { } line)
             while (Execution.State.LineId != line && Execution.Advance()) { }
-        ResetNavigationAudio();
+        if (startImmediately) ResetNavigationAudio();
         UpdateFrame();
     }
 
@@ -73,7 +78,7 @@ public sealed class ScenePlayer : IDisposable, IAsyncDisposable
     {
         if (!CanNavigate || !scene.Lines.Any(l => l.Id == lineId)) return false;
         Execution.Dispose();
-        Execution = new(project, scene.Id, language);
+        Execution = new(project, scene.Id, language, runLua);
         while (Execution.State.LineId != lineId && Execution.Advance()) { }
         ResetNavigationAudio();
         UpdateFrame();

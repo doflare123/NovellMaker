@@ -5,7 +5,7 @@ using NovellMaker.Core.Projects;
 
 namespace NovellMaker.Core.Screens;
 
-public enum ScreenButtonAction { Lua, Close, Open, Replace, Back, None, Scene, Volume, Mute, Continue, Save, Load, Toggle }
+public enum ScreenButtonAction { Lua, Close, Open, Replace, Back, None, Scene, Volume, Mute, Continue, Save, Load, Toggle, NewGame, MainMenu, EndSession }
 
 public sealed record ScreenButtonBinding(Guid NodeId, ScreenButtonAction Action, Guid? TargetScreenId)
 {
@@ -41,6 +41,8 @@ public sealed record ScreenAsset(Guid Id, string Name, ImmutableArray<ScreenNode
     {
         if (project.Scenes.IsDefault || project.Scenes.Any(s => s is null || s.Canvas is null))
             throw new ArgumentException("Отсутствует коллекция сцен или компонентов.");
+        if (project.StartScreenSceneId is { } start && !project.Scenes.Any(s => s.Id == start))
+            throw new ArgumentException("Стартовый экран отсутствует в проекте.");
         var ids = new HashSet<Guid> { project.Id };
         ids.UnionWith(project.Images.Select(i => i.Id));
         ids.UnionWith(project.Audio.Assets.Select(a => a.Id));
@@ -67,7 +69,7 @@ public sealed record ScreenAsset(Guid Id, string Name, ImmutableArray<ScreenNode
             if (screen.Buttons.IsDefault || screen.Buttons.Any(b => b is null || !Enum.IsDefined(b.Action) ||
                 !screen.Nodes.Any(n => n.Id == b.NodeId && n.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area) ||
                 !Enum.IsDefined(b.Group) || !double.IsFinite(b.Amount) || Math.Abs(b.Amount) > 1 || b.Action != ScreenButtonAction.Volume && b.Amount != 0 ||
-                (b.Action is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle
+                (b.Action is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame
                     ? !project.Screens.Any(s => s is not null && s.Id == b.TargetScreenId)
                     : b.TargetScreenId is not null)) || screen.Buttons.Select(b => b.NodeId).Distinct().Count() != screen.Buttons.Length)
                 throw new ArgumentException($"Экран «{screen.Name}»: неверная привязка кнопки.");

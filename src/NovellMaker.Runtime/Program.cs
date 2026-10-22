@@ -34,14 +34,15 @@ internal static class Program
             var project = new JsonProjectStore().LoadAsync(arguments.ProjectPath).GetAwaiter().GetResult();
             if (arguments.Package is { } package && project.Id != package.ProjectId)
                 throw new InvalidDataException("Манифест и проект относятся к разным играм.");
-            using var player = new ScenePlayer(project, arguments.SceneId, arguments.Language, arguments.LineId,
+            using var session = new GameSession(project, arguments.SceneId, arguments.Language, arguments.LineId,
                 arguments.Package is null ? PlaybackMode.AuthorPreview : PlaybackMode.Game);
-            using var game = new RuntimeGame(arguments, player, project.DialogueUi.ShowNavigationControls);
+            using var game = new RuntimeGame(arguments, session, project.DialogueUi.ShowNavigationControls);
             try { game.Run(); }
             finally
             {
+                game.DisposeSlotsAsync().AsTask().GetAwaiter().GetResult();
                 game.DisposeScreenLuaAsync().AsTask().GetAwaiter().GetResult();
-                player.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                session.DisposeAsync().AsTask().GetAwaiter().GetResult();
             } // Shutdown only, outside Update/Draw.
             return 0;
         }

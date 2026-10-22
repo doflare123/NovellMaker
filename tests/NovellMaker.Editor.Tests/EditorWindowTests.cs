@@ -33,6 +33,28 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task StartupScreenAndSessionCommandsAreEditableInActualInspector() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); session.AddScene(); var story = session.ActiveScene!.Id; session.AddScene(); var menu = session.ActiveScene!.Id;
+        session.AddScreenNodeAt(NovellMaker.Core.Screens.ScreenNodeKind.Button, 200, 200); Dispatcher.UIThread.RunJobs();
+        var inspector = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single();
+        Find<CheckBox>(inspector, "ProjectStartScreen").IsChecked = true;
+        Assert.AreEqual(menu, session.Project!.StartScreenSceneId);
+        session.Undo(); Dispatcher.UIThread.RunJobs(); Assert.IsFalse(Find<CheckBox>(inspector, "ProjectStartScreen").IsChecked);
+        session.Redo(); Dispatcher.UIThread.RunJobs(); Assert.IsTrue(Find<CheckBox>(inspector, "ProjectStartScreen").IsChecked);
+        Find<ComboBox>(inspector, "ScreenButtonAction").SelectedIndex = 13;
+        Assert.AreEqual(NovellMaker.Core.Screens.ScreenButtonAction.NewGame, session.SelectedScreen!.Buttons.Single().Action);
+        Assert.IsTrue(session.Project.Scenes.Any(s => s.Id == session.SelectedScreen.Buttons.Single().TargetScreenId));
+        Find<ComboBox>(inspector, "ScreenButtonAction").SelectedIndex = 14;
+        Assert.AreEqual(NovellMaker.Core.Screens.ScreenButtonAction.MainMenu, session.SelectedScreen!.Buttons.Single().Action);
+        Assert.IsNull(session.SelectedScreen.Buttons.Single().TargetScreenId);
+        Find<ComboBox>(inspector, "ScreenButtonAction").SelectedIndex = 15;
+        Assert.AreEqual(NovellMaker.Core.Screens.ScreenButtonAction.EndSession, session.SelectedScreen!.Buttons.Single().Action);
+        Capture(window, "editor-session-startup.png"); window.Close();
+    });
+
+    [TestMethod]
     public Task DialoguePaletteInspectorAndCanvasGestureUseOneHistoryAndSharedRasterizer() => WithUi(async () =>
     {
         using var session = CreateSession(out var dialogs, out _); dialogs.AcceptDeletion = true;

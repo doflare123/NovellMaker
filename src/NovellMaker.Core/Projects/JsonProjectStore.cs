@@ -188,6 +188,7 @@ public sealed class JsonProjectStore : IProjectStore
                 14 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken, Version14SerializerOptions).ConfigureAwait(false)),
                 15 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken, Version15SerializerOptions).ConfigureAwait(false), false),
                 16 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken).ConfigureAwait(false), false),
+                17 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
                 _ => throw new ProjectFormatException(
@@ -499,8 +500,14 @@ public sealed class JsonProjectStore : IProjectStore
     private static ImmutableArray<NovellMaker.Core.Screens.ProjectInputBinding> LegacyInputBindings(Guid? pause) => pause is { } id
         ? [new("P", NovellMaker.Core.Screens.ScreenButtonAction.Toggle, id)] : [];
 
-    private static NovelProject MapVersion14(Version14ProjectDocument document, bool legacyGeometry = true)
+    private static NovelProject MapVersion17(Version17ProjectDocument document) =>
+        MapVersion14(document, false, allowSession: true) with { StartScreenSceneId = document.StartScreenSceneId };
+
+    private static NovelProject MapVersion14(Version14ProjectDocument document, bool legacyGeometry = true, bool allowSession = false)
     {
+        if (!allowSession && (document.InputBindings?.Any(b => b is not null && (int)b.Action > 12) == true ||
+            document.Scenes?.Any(s => s?.Canvas?.Buttons.Any(b => b is not null && (int)b.Action > 12) == true) == true))
+            throw new ArgumentException("Этот формат не поддерживает команды сеанса.");
         if (legacyGeometry && document.Scenes?.Any(s => s?.Canvas is { } canvas && !canvas.Nodes.IsDefault && canvas.Nodes.Any(n => n is not null && (int)n.Kind > 4)) == true)
             throw new ArgumentException("Формат 14 не поддерживает этот вид компонента.");
         return MapVersion13(new Version13ProjectDocument
@@ -713,8 +720,9 @@ public sealed class JsonProjectStore : IProjectStore
         };
     }
 
-    private static Version14ProjectDocument MapForSave(NovelProject project) => new()
+    private static Version17ProjectDocument MapForSave(NovelProject project) => new()
     {
+        StartScreenSceneId = project.StartScreenSceneId,
         InputBindings = project.InputBindings,
         Scripts = project.Scripts,
         Audio = project.Audio,
@@ -955,10 +963,15 @@ public sealed class JsonProjectStore : IProjectStore
         [JsonRequired] public Guid? PauseScreenId { get; init; }
     }
 
-    private sealed class Version14ProjectDocument : Version10ProjectDocument
+    private class Version14ProjectDocument : Version10ProjectDocument
     {
         [JsonRequired] public new List<Version13SceneDocument?>? Scenes { get; init; }
         [JsonRequired] public ImmutableArray<NovellMaker.Core.Screens.ProjectInputBinding>? InputBindings { get; init; }
+    }
+
+    private sealed class Version17ProjectDocument : Version14ProjectDocument
+    {
+        [JsonRequired] public Guid? StartScreenSceneId { get; init; }
     }
 
     private class Version5ProjectDocument

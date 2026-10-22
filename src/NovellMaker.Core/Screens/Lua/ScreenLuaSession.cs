@@ -296,6 +296,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     }
     private void Retire()
     {
+        retiring.RemoveAll(task => task.IsCompleted);
         conversation.Cancellation.Cancel();
         if (pending is { } old) { retiring.Add(old.Task); ScreenLuaConnection.Observe(old.Task); pending = null; }
         var previous = conversation;

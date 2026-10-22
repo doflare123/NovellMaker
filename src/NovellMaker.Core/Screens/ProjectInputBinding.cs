@@ -17,8 +17,9 @@ public static class ProjectInput
         if (project.InputBindings.IsDefault || project.InputBindings.Length > 64 ||
             project.InputBindings.Any(b => b is null || !ValidKey(b.Key) ||
                 b.Action is not (ScreenButtonAction.Open or ScreenButtonAction.Toggle or ScreenButtonAction.Scene or
-                    ScreenButtonAction.Back or ScreenButtonAction.Continue or ScreenButtonAction.Save or ScreenButtonAction.Load) ||
-                (b.Action is ScreenButtonAction.Open or ScreenButtonAction.Toggle or ScreenButtonAction.Scene
+                    ScreenButtonAction.Back or ScreenButtonAction.Continue or ScreenButtonAction.Save or ScreenButtonAction.Load or
+                    ScreenButtonAction.NewGame or ScreenButtonAction.MainMenu or ScreenButtonAction.EndSession) ||
+                (b.Action is ScreenButtonAction.Open or ScreenButtonAction.Toggle or ScreenButtonAction.Scene or ScreenButtonAction.NewGame
                     ? !project.Scenes.Any(s => s.Id == b.TargetSceneId) : b.TargetSceneId is not null)) ||
             project.InputBindings.Select(b => b.Key).Distinct(StringComparer.Ordinal).Count() != project.InputBindings.Length)
             throw new ArgumentException("Некорректные назначения клавиш проекта (до 64 уникальных клавиш). ");

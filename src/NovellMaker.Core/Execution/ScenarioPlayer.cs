@@ -31,7 +31,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         : this(project, sceneId, language, LuaActionScript.RequestCommandsAsync) { }
 
     internal ScenarioPlayer(NovelProject project, Guid sceneId, string language,
-        Func<ScriptAction, GameState, NovelProject, CancellationToken, Task<ImmutableArray<ScenarioAction>>> runLua)
+        Func<ScriptAction, GameState, NovelProject, CancellationToken, Task<ImmutableArray<ScenarioAction>>> runLua, bool startImmediately = true)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentException.ThrowIfNullOrWhiteSpace(language);
@@ -41,8 +41,8 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         programs = project.Scenes.ToDictionary(s => s.Id, ScenarioProgram.Compile);
         if (!programs.TryGetValue(sceneId, out var actions)) throw new ArgumentException($"Сцена {sceneId} отсутствует.", nameof(sceneId));
         State = new GameState { ProjectId = project.Id, Revision = ScenarioProgram.Fingerprint(project), SceneId = sceneId, NextActionId = actions.FirstOrDefault()?.Id };
-        Audio(AudioEventKind.Scene);
-        Pump();
+        if (startImmediately) { Audio(AudioEventKind.Scene); Pump(); }
+        else { State = State with { NextActionId = null }; IsPaused = true; }
     }
 
     public bool Advance()

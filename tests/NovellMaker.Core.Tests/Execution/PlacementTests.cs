@@ -115,7 +115,7 @@ public sealed class PlacementTests
             await store.SaveAsync(path, project);
             Assert.IsTrue(project.ContentEquals(await store.LoadAsync(path)));
             var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
-            json["formatVersion"] = 4; json.AsObject().Remove("inputBindings"); json.AsObject().Remove("screens"); json.AsObject().Remove("pauseScreenId"); json.AsObject().Remove("inputBindings"); if (json["scenes"] is JsonArray oldScenes) foreach (var oldScene in oldScenes) oldScene!.AsObject().Remove("canvas"); json.AsObject().Remove("audio"); json.AsObject().Remove("scripts");
+            json["formatVersion"] = 4; json.AsObject().Remove("startScreenSceneId"); json.AsObject().Remove("inputBindings"); json.AsObject().Remove("screens"); json.AsObject().Remove("pauseScreenId"); json.AsObject().Remove("inputBindings"); if (json["scenes"] is JsonArray oldScenes) foreach (var oldScene in oldScenes) oldScene!.AsObject().Remove("canvas"); json.AsObject().Remove("audio"); json.AsObject().Remove("scripts");
             json.AsObject().Remove("explorerShowsFiles");
             foreach (var oldScene in json["scenes"]!.AsArray()) { oldScene!.AsObject().Remove("actions"); oldScene.AsObject().Remove("useActions"); oldScene.AsObject().Remove("scriptBlocks"); }
             foreach (var line in json["scenes"]![0]!["lines"]!.AsArray()) line!.AsObject().Remove("placements");

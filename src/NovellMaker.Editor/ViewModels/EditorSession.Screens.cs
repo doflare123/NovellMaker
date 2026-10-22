@@ -85,6 +85,14 @@ public sealed partial class EditorSession
         if (CanEdit && project is not null) EditProject(project with { InputBindings = project.InputBindings.Where(b => b.Key != key).ToImmutableArray() });
     }
 
+    public void SetStartScreen(Guid? sceneId)
+    {
+        if (!CanEdit || project is null || project.StartScreenSceneId == sceneId) return;
+        var candidate = project with { StartScreenSceneId = sceneId };
+        ScreenAsset.ValidateProject(candidate);
+        EditProject(candidate);
+    }
+
     public void DuplicateScreen()
     {
         if (!CanEdit || project is null || SelectedScreen is not { } source) return;

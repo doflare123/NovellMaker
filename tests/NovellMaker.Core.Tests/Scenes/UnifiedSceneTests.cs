@@ -28,7 +28,7 @@ public sealed class UnifiedSceneTests
             var oldMenu = JsonSerializer.SerializeToNode(menu, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })!;
             oldMenu.AsObject().Remove("pauseOnOverlay"); oldMenu.AsObject().Remove("blockInputOnOverlay");
             if (version == 11) foreach (var node in oldMenu["nodes"]!.AsArray()) { node!.AsObject().Remove("name"); node.AsObject().Remove("imageId"); }
-            json["formatVersion"] = version; json.AsObject().Remove("inputBindings"); json["pauseScreenId"] = menu.Id;
+            json["formatVersion"] = version; json.AsObject().Remove("startScreenSceneId"); json.AsObject().Remove("inputBindings"); json["pauseScreenId"] = menu.Id;
             foreach (var binding in oldMenu["buttons"]!.AsArray()) { binding!.AsObject().Remove("group"); binding.AsObject().Remove("amount"); } json["screens"] = new JsonArray(oldMenu);
             json["scenes"]!.AsArray().RemoveAt(1); json["scenes"]![0]!.AsObject().Remove("canvas");
             ScreenFixture.RemoveGeometry(json);

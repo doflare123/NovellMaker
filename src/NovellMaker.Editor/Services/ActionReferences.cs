@@ -41,6 +41,6 @@ internal static class ActionReferences
             int Count(NovelProject p) => p.Scenes.Sum(s => s.Actions.Length + s.ScriptBlocks.Length);
             removed = Count(source) != Count(project);
         } while (removed);
-        return project with { Audio = project.Audio.Prune(project), InputBindings = project.InputBindings.Where(b => b.TargetSceneId is null || project.Scenes.Any(s => s.Id == b.TargetSceneId)).ToImmutableArray() };
+        return project with { StartScreenSceneId = project.Scenes.Any(s => s.Id == project.StartScreenSceneId) ? project.StartScreenSceneId : null, Audio = project.Audio.Prune(project), InputBindings = project.InputBindings.Where(b => b.TargetSceneId is null || project.Scenes.Any(s => s.Id == b.TargetSceneId)).ToImmutableArray() };
     }
 }

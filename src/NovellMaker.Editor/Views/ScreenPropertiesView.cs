@@ -36,17 +36,18 @@ public sealed class ScreenPropertiesView : UserControl
     private readonly CheckBox clipping = new() { Name = "ScreenNodeClip", Content = "Обрезать потомков" };
     private readonly ComboBox sprite = new() { Name = "ScreenNodeSprite", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ProjectImageView spritePreview = new() { Name = "ScreenSpritePreview", Height = 80, MaximumWidth = 400, TransparentBackground = true };
-    private readonly ComboBox action = new() { Name = "ScreenButtonAction", HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = new[] { "Lua-обработчик", "Закрыть", "Открыть поверх", "Заменить слой", "Назад", "Не назначено", "Перейти к сцене", "Громкость группы", "Mute группы", "Продолжить", "Сохранить состояние", "Загрузить состояние", "Переключить слой" } };
+    private readonly ComboBox action = new() { Name = "ScreenButtonAction", HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = new[] { "Lua-обработчик", "Закрыть", "Открыть поверх", "Заменить слой", "Назад", "Не назначено", "Перейти к сцене", "Громкость группы", "Mute группы", "Продолжить", "Сохранить состояние", "Загрузить состояние", "Переключить слой", "Новая игра", "В главное меню", "Завершить сеанс" } };
     private readonly ComboBox target = new() { Name = "ScreenButtonTarget", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly TextBox screenName = new() { Name = "ScreenName", IsUndoEnabled = false };
     private readonly ComboBox handler = new() { Name = "ScreenHandler", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly TextBox shortcut = new() { Name = "ProjectKey", PlaceholderText = "Например: P или F9" };
-    private readonly ComboBox shortcutAction = new() { Name = "ProjectKeyAction", ItemsSource = new[] { "Переключить слой", "Открыть слой", "Перейти к сцене", "Назад", "Продолжить", "Сохранить состояние", "Загрузить состояние" }, SelectedIndex = 0 };
-    private static readonly ScreenButtonAction[] shortcutActions = [ScreenButtonAction.Toggle, ScreenButtonAction.Open, ScreenButtonAction.Scene, ScreenButtonAction.Back, ScreenButtonAction.Continue, ScreenButtonAction.Save, ScreenButtonAction.Load];
+    private readonly ComboBox shortcutAction = new() { Name = "ProjectKeyAction", ItemsSource = new[] { "Переключить слой", "Открыть слой", "Перейти к сцене", "Назад", "Продолжить", "Сохранить состояние", "Загрузить состояние", "Новая игра", "В главное меню", "Завершить сеанс" }, SelectedIndex = 0 };
+    private static readonly ScreenButtonAction[] shortcutActions = [ScreenButtonAction.Toggle, ScreenButtonAction.Open, ScreenButtonAction.Scene, ScreenButtonAction.Back, ScreenButtonAction.Continue, ScreenButtonAction.Save, ScreenButtonAction.Load, ScreenButtonAction.NewGame, ScreenButtonAction.MainMenu, ScreenButtonAction.EndSession];
     private readonly TextBlock shortcuts = new() { Name = "ProjectKeyBindings", TextWrapping = TextWrapping.Wrap };
     private readonly ComboBox audioGroup = new() { Name = "ScreenAudioGroup", ItemsSource = Enum.GetValues<NovellMaker.Core.Audio.AudioGroup>(), SelectedIndex = 0 };
     private readonly NumericUpDown audioAmount = Number("ScreenAudioAmount", -100, 100);
     private readonly StackPanel audioFields = new() { Spacing = 6 };
+    private readonly CheckBox startScreen = new() { Name = "ProjectStartScreen", Content = "Стартовый экран проекта (без запуска сюжета)" };
     private readonly CheckBox pauseBelow = new() { Name = "ScenePauseOnOverlay", Content = "Приостановить сцену под этим слоем" };
     private readonly CheckBox blockBelow = new() { Name = "SceneBlockInputOnOverlay", Content = "Блокировать ввод нижних слоёв" };
     private readonly TextBox alias = new() { Name = "ScreenReferenceName", PlaceholderText = "Имя в Lua" };
@@ -97,6 +98,8 @@ public sealed class ScreenPropertiesView : UserControl
         Button(links, "RemoveScreenReference", "Удалить ссылку", () => { if (session?.SelectedScreen is { } s) session.UpdateScreen(s with { References = s.References.Remove(alias.Text ?? "") }); }); links.Children.Add(refs);
         body.Children.Add(new Expander { Name = "ScreenReferencesExpander", Header = "Ссылки Lua", Content = links, HorizontalAlignment = HorizontalAlignment.Stretch });
         var settings = new StackPanel { Spacing = 7 }; Field(settings, "Название сцены", screenName);
+        settings.Children.Add(startScreen);
+        startScreen.IsCheckedChanged += (_, _) => { if (!refreshing && session?.SelectedScreen is { } selected) Try(() => session.SetStartScreen(startScreen.IsChecked == true ? selected.Id : null)); };
         settings.Children.Add(pauseBelow); settings.Children.Add(blockBelow);
         settings.Children.Add(new HelpTip { Explanation = "Эти настройки действуют при открытии поверх другой сцены. При обычном переходе сцена исполняет собственные фразы и скрипт. Слой показывает компоненты и принимает их события; нижний сюжет сохраняет свою позицию." });
         var keys = new StackPanel { Spacing = 6 };
@@ -104,7 +107,7 @@ public sealed class ScreenPropertiesView : UserControl
         Button(keys, "SetProjectKey", "Назначить", () => { if (session?.SelectedScreen is { } selected) Try(() =>
         {
             var kind = shortcutActions[Math.Max(0, shortcutAction.SelectedIndex)];
-            session.SetInputBinding(new(shortcut.Text ?? "", kind, kind is ScreenButtonAction.Open or ScreenButtonAction.Toggle or ScreenButtonAction.Scene ? selected.Id : null));
+            session.SetInputBinding(new(shortcut.Text ?? "", kind, kind is ScreenButtonAction.Open or ScreenButtonAction.Toggle or ScreenButtonAction.Scene or ScreenButtonAction.NewGame ? selected.Id : null));
         }); });
         Button(keys, "RemoveProjectKey", "Удалить назначение", () => session?.RemoveInputBinding(shortcut.Text ?? ""));
         keys.Children.Add(shortcuts);
@@ -172,8 +175,8 @@ public sealed class ScreenPropertiesView : UserControl
     {
         if (session?.SelectedScreen is not { } screen || session.SelectedScreenNode is not { Kind: ScreenNodeKind.Button or ScreenNodeKind.Area } node) return;
         var kind = (ScreenButtonAction)Math.Max(0, action.SelectedIndex);
-        var id = kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle ? (target.SelectedItem as Option)?.Id : null;
-        if (kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle && id is null) { status.Text = "Выберите целевую сцену."; return; }
+        var id = kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame ? (target.SelectedItem as Option)?.Id : null;
+        if (kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame && id is null) { status.Text = "Выберите целевую сцену."; return; }
         Try(() => session.UpdateScreen(screen with { Buttons = screen.Buttons.Where(b => b.NodeId != node.Id).Append(new(node.Id, kind, id) { Group = audioGroup.SelectedItem is NovellMaker.Core.Audio.AudioGroup group ? group : default, Amount = kind == ScreenButtonAction.Volume ? (double)(audioAmount.Value ?? 0) / 100 : 0 }).ToImmutableArray() }));
     }
     private void Subscribe() { if (session is not null) { session.PropertyChanged -= Changed; session.PropertyChanged += Changed; } }
@@ -222,7 +225,8 @@ public sealed class ScreenPropertiesView : UserControl
             audioGroup.SelectedItem = binding?.Group ?? NovellMaker.Core.Audio.AudioGroup.Master;
             audioAmount.Value = (decimal)(binding?.Amount ?? 0) * 100; audioAmount.IsVisible = binding?.Action == ScreenButtonAction.Volume;
             var previous = (target.SelectedItem as Option)?.Id;
-            target.ItemsSource = screens; target.SelectedItem = screens.FirstOrDefault(s => s.Id == binding?.TargetScreenId) ?? screens.FirstOrDefault(s => s.Id == previous) ?? screens.FirstOrDefault(); target.IsEnabled = action.SelectedIndex is 2 or 3 or 6 or 12; targetField.IsVisible = target.IsEnabled;
+            target.ItemsSource = screens; target.SelectedItem = screens.FirstOrDefault(s => s.Id == binding?.TargetScreenId) ?? screens.FirstOrDefault(s => s.Id == previous) ?? screens.FirstOrDefault(); target.IsEnabled = action.SelectedIndex is 2 or 3 or 6 or 12 or 13; targetField.IsVisible = target.IsEnabled;
+            startScreen.IsChecked = screen is not null && session?.Project?.StartScreenSceneId == screen.Id;
             screenName.Text = screen?.Name ?? "";
             pauseBelow.IsChecked = screen?.PauseOnOverlay == true; blockBelow.IsChecked = screen?.BlockInputOnOverlay == true;
             var handlers = new[] { new Option(null, "Без обработчика") }.Concat(session?.Project?.Scripts.Select(s => new Option(s.Id, s.Name)) ?? []).ToArray(); handler.ItemsSource = handlers; handler.SelectedItem = handlers.FirstOrDefault(s => s.Id == screen?.HandlerScriptId);

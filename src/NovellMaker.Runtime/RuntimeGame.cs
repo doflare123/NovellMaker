@@ -17,7 +17,9 @@ internal sealed partial class RuntimeGame : Game
 
     private readonly GraphicsDeviceManager graphics;
     private readonly RuntimeArguments arguments;
-    private readonly ScenePlayer player;
+    private readonly GameSession session;
+    private readonly GameSessionSlots slots;
+    private ScenePlayer player => session.Player;
     private readonly bool showNavigationControls;
     private readonly Dictionary<Guid, Texture2D> assetTextures = [];
     private readonly HashSet<Guid> screenBudgetRejected = [];
@@ -54,19 +56,24 @@ internal sealed partial class RuntimeGame : Game
     private readonly List<RuntimeActionTrace> actionTrace = [];
     private RuntimeSmokeStep? pendingSmokeStep;
     private bool pendingSmokeSuccess;
+    private bool pendingSmokeSlots;
+    private int pendingSlotDrawFrames;
     private RenderedTexture? actionHelp;
     private string saveMessage = "";
     private string SavePath => RuntimeStorage.SavePath(player.Execution.State.ProjectId, arguments.Package is not null);
     private bool UsesGameState => player.UsesActions || player.IsGamePlayback;
 
-    public RuntimeGame(RuntimeArguments arguments, ScenePlayer player, bool showNavigationControls)
+    public RuntimeGame(RuntimeArguments arguments, GameSession session, bool showNavigationControls)
     {
         this.arguments = arguments ?? throw new ArgumentNullException(nameof(arguments));
-        this.player = player ?? throw new ArgumentNullException(nameof(player));
+        this.session = session ?? throw new ArgumentNullException(nameof(session));
+        slots = new(session, new GameSlotStore(player.Execution.Project,
+            RuntimeStorage.SlotsDirectory(player.Execution.Project.Id, arguments.Package is not null), SavePath));
         this.showNavigationControls = showNavigationControls;
         screens = new(Guid.NewGuid(), enableLua: true, hostAction: ApplyProjectCommand);
         screens.Stack.Presentation = PresentComponents;
         screens.Configure(player.Execution.Project, () => player.Execution.State.Variables);
+        session.Resetting += ResetSessionResources;
         if (arguments.SmokePlanPath is { } plan) smokePlan = JsonSerializer.Deserialize<RuntimeSmokeStep[]>(File.ReadAllText(plan)) ?? throw new ArgumentException("Пустой smoke-план.");
         graphics = new GraphicsDeviceManager(this)
         {
@@ -107,11 +114,12 @@ internal sealed partial class RuntimeGame : Game
 
     protected override void Update(GameTime gameTime)
     {
+        PollSlots();
         screens.SyncScene(player.Execution.State.SceneId);
         screens.Poll();
         var hostActive = arguments.SmokeOutputPath is not null || IsActive;
         screens.Stack.SetActive(hostActive);
-        var paused = screens.Stack.PausesScenario || !hostActive;
+        var paused = session.Phase != GameSessionPhase.Playing || screens.Stack.PausesScenario || !hostActive;
         player.Execution.IsPaused = paused;
         SynchronizeAudio();
         var scenarioTime = player.Execution.State.Time;
@@ -184,12 +192,13 @@ internal sealed partial class RuntimeGame : Game
         else { previousKeyboard = Keyboard.GetState(); previousMouse = Mouse.GetState(); }
 
         inputActive = IsActive;
+        if (session.Phase == GameSessionPhase.Ended) { base.Update(gameTime); return; }
         screens.SyncScene(player.Execution.State.SceneId);
         screens.Poll();
         RefreshFrameResources();
         var menuDiagnostics = string.Join("\n", screens.Diagnostics.Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values));
         if (menuDiagnostics != lastMenuDiagnostics) { lastMenuDiagnostics = menuDiagnostics; RefreshTextTextures(); }
-        player.Execution.IsPaused = screens.Stack.PausesScenario || !hostActive;
+        player.Execution.IsPaused = session.Phase != GameSessionPhase.Playing || screens.Stack.PausesScenario || !hostActive;
         SynchronizeAudio();
         base.Update(gameTime);
     }
@@ -234,8 +243,9 @@ internal sealed partial class RuntimeGame : Game
         drawFrames++;
         if (player.Execution.HasPendingLua) pendingLuaDrawFrames++;
         if (screens.HasPending) pendingScreenLuaDrawFrames++;
+        if (slots.IsBusy) pendingSlotDrawFrames++;
         if (arguments.SmokeOutputPath is not null && drawFrames >= 4 &&
-            (smokePlan is null || actionTrace.Count == smokePlan.Length) && !player.Execution.HasPendingLua && !screens.HasPending && !smokeWritten)
+            (smokePlan is null || actionTrace.Count == smokePlan.Length) && !player.Execution.HasPendingLua && !screens.HasPending && !slots.IsBusy && !smokeWritten)
         {
             WriteSmokeArtifacts(sceneTarget);
             smokeWritten = true;
@@ -247,7 +257,9 @@ internal sealed partial class RuntimeGame : Game
 
     protected override void UnloadContent()
     {
-        player.Dispose();
+        slots.Dispose();
+        session.Dispose();
+        session.Resetting -= ResetSessionResources;
         screens.Dispose();
         componentTextures?.Dispose();
         componentEffect?.Dispose();
@@ -298,11 +310,13 @@ internal sealed partial class RuntimeGame : Game
 
     private void AdvanceActionSmoke()
     {
-        if (player.Execution.HasPendingLua || screens.HasPending) return;
+        var immediate = pendingSmokeStep is null && actionTrace.Count < smokePlan!.Length && smokePlan[actionTrace.Count].Kind.EndsWith("_now", StringComparison.Ordinal);
+        if (!immediate && (player.Execution.HasPendingLua || screens.HasPending || slots.IsBusy)) return;
         if (pendingSmokeStep is { } finished)
         {
-            actionTrace.Add(CaptureTrace(finished.Kind, pendingSmokeSuccess));
+            actionTrace.Add(CaptureTrace(finished.Kind, pendingSmokeSlots ? slots.LastResult?.Success == true : pendingSmokeSuccess));
             pendingSmokeStep = null;
+            pendingSmokeSlots = false;
             return;
         }
         var index = actionTrace.Count;
@@ -314,6 +328,7 @@ internal sealed partial class RuntimeGame : Game
         {
             case "tick": player.Tick(TimeSpan.FromSeconds(step.Seconds)); break;
             case "next": success = ApplyAction(RuntimeAction.Next); break;
+            case "click_now":
             case "click":
                 var consumed = RouteScreen(new(ScreenInputKind.PointerDown, step.X, step.Y));
                 success = RouteScreen(new(ScreenInputKind.PointerUp, step.X, step.Y)) || consumed;
@@ -328,24 +343,31 @@ internal sealed partial class RuntimeGame : Game
                 { RouteScreen(new(ScreenInputKind.PointerDown, mapped.X, mapped.Y)); success = RouteScreen(new(ScreenInputKind.PointerUp, mapped.X, mapped.Y)); }
                 else success = false;
                 break;
+            case "key_now":
             case "key": success = RouteProjectKey(step.Key ?? ""); break;
+            case "probe_now": break;
             case "back": success = RouteScreen(new(ScreenInputKind.Back)); break;
             case "activate": success = RouteScreen(new(ScreenInputKind.Activate)); break;
             case "tab": success = RouteScreen(new(ScreenInputKind.FocusNext)); break;
             case "save": GameSave.SaveAsync(path, player.Execution).GetAwaiter().GetResult(); break;
-            case "load": player.LoadSave(File.ReadAllText(path)); screens.Reset(); screens.SyncScene(player.Execution.State.SceneId, afterLoad: true); SynchronizeAudio(); break;
+            case "load": session.LoadSave(File.ReadAllText(path)); screens.SyncScene(player.Execution.State.SceneId, afterLoad: true); SynchronizeAudio(); break;
+            case "quicksave_now":
             case "quicksave": success = SaveGame(); break;
+            case "quickload_now":
             case "quickload": success = LoadGame(); break;
+            case "continue": success = slots.Continue(); break;
+            case "slots": success = slots.List(); break;
             default: throw new ArgumentException("Неизвестный шаг smoke-плана.");
         }
         RefreshFrameResources(); RefreshTextTextures(); RefreshInteractions();
-        if (player.Execution.HasPendingLua || screens.HasPending) { pendingSmokeStep = step; pendingSmokeSuccess = success; }
+        if (!immediate && (player.Execution.HasPendingLua || screens.HasPending || slots.IsBusy))
+        { pendingSmokeStep = step; pendingSmokeSuccess = success; pendingSmokeSlots = slots.IsBusy; }
         else actionTrace.Add(CaptureTrace(step.Kind, success));
     }
 
     private RuntimeActionTrace CaptureTrace(string kind, bool success)
     {
-        player.Execution.IsPaused = screens.Stack.PausesScenario;
+        player.Execution.IsPaused = session.Phase != GameSessionPhase.Playing || screens.Stack.PausesScenario;
         SynchronizeAudio();
         return new(kind, success, player.Execution.State, player.Frame.Text)
         {
@@ -355,11 +377,16 @@ internal sealed partial class RuntimeGame : Game
             AudioSources = audio?.ActiveSources ?? 0,
             AudioOpenedSources = audioBackend.OpenedSources,
             AudioSubmittedBytes = audioBackend.SubmittedBytes,
+            SessionPhase = session.Phase.ToString(), SessionGeneration = session.Generation,
+            PendingLua = player.Execution.HasPendingLua, PendingScreenLua = screens.HasPending,
+            PendingSlots = slots.IsBusy, SlotMessage = slots.LastResult?.Message ?? "",
+            Slots = slots.LastResult?.Slots.IsDefault == false ? slots.LastResult.Slots : [],
         };
     }
 
     private bool ApplyAction(RuntimeAction action)
     {
+        if (session.Phase != GameSessionPhase.Playing) return false;
         var changed = action switch
         {
             RuntimeAction.Next => player.Next(),
@@ -382,34 +409,31 @@ internal sealed partial class RuntimeGame : Game
 
     private bool SaveGame()
     {
-        var success = true;
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(SavePath)!);
-            GameSave.SaveAsync(SavePath, player.Execution).GetAwaiter().GetResult();
-            saveMessage = "Игра сохранена";
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
-        { saveMessage = "Не удалось сохранить: " + error.Message; success = false; }
+        var success = slots.Save();
+        saveMessage = success ? "Сохранение…" : slots.LastResult?.Message ?? "Операция слотов уже выполняется.";
         RefreshInteractions();
         return success;
     }
 
     private bool LoadGame()
     {
-        var success = true;
-        try
-        {
-            player.LoadSave(File.ReadAllText(SavePath));
-            screens.Reset(); screens.SyncScene(player.Execution.State.SceneId, afterLoad: true); SynchronizeAudio();
-            saveMessage = "Игра загружена";
-            lineElapsed = TimeSpan.Zero;
-            RefreshFrameResources(); RefreshTextTextures();
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
-        { saveMessage = "Не удалось загрузить: " + error.Message; success = false; }
+        var success = slots.Load();
+        saveMessage = success ? "Загрузка…" : slots.LastResult?.Message ?? "Операция слотов уже выполняется.";
         RefreshInteractions();
         return success;
+    }
+
+    internal ValueTask DisposeSlotsAsync() => slots.DisposeAsync();
+    private void PollSlots()
+    {
+        if (!slots.Poll() || slots.LastResult is not { } result) return;
+        saveMessage = result.Message;
+        if (result.Success && result.Operation is GameSlotOperation.Load or GameSlotOperation.Continue)
+        {
+            screens.SyncScene(player.Execution.State.SceneId, afterLoad: true); SynchronizeAudio();
+            lineElapsed = TimeSpan.Zero; RefreshFrameResources(); RefreshTextTextures();
+        }
+        RefreshInteractions();
     }
 
     private void RefreshInteractions()
@@ -523,7 +547,7 @@ internal sealed partial class RuntimeGame : Game
 
     private IReadOnlyList<string> CurrentDiagnostics() =>
         player.Frame.Diagnostics.Concat(assetDiagnostics.Values.Order(StringComparer.Ordinal)).Concat(audio?.Diagnostics ?? [])
-            .Concat(screens.Diagnostics).Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values).ToArray();
+            .Concat(screens.Diagnostics).Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values).Concat(session.CleanupDiagnostics).ToArray();
 
     private void DrawBackground(SpriteBatch batch, ImageAsset? background)
     {
@@ -650,6 +674,7 @@ internal sealed partial class RuntimeGame : Game
             Diagnostics: CurrentDiagnostics()) { ActionTrace = actionTrace, SavePath = SavePath,
                 PendingLuaDrawFrames = pendingLuaDrawFrames,
                 PendingScreenLuaDrawFrames = pendingScreenLuaDrawFrames,
+                PendingSlotDrawFrames = pendingSlotDrawFrames,
                 ScreenLuaAppliedBatches = screens.Scripts?.AppliedBatches ?? 0,
                 ScreenLuaDiagnostics = screens.Scripts?.Diagnostics ?? [],
                 Packaged = arguments.Package is not null, WindowTitle = Window.Title,
@@ -687,6 +712,7 @@ internal sealed record RuntimeSmokeReport(
     public IReadOnlyList<RuntimeActionTrace> ActionTrace { get; init; } = [];
     public int PendingLuaDrawFrames { get; init; }
     public int PendingScreenLuaDrawFrames { get; init; }
+    public int PendingSlotDrawFrames { get; init; }
     public int ScreenLuaAppliedBatches { get; init; }
     public IReadOnlyList<string> ScreenLuaDiagnostics { get; init; } = [];
     public string? SavePath { get; init; }
@@ -703,6 +729,13 @@ internal sealed record RuntimeSmokeReport(
 internal sealed record RuntimeSmokeStep(string Kind, double Seconds = 0, int X = 0, int Y = 0, string? Key = null);
 internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState State, string Text)
 {
+    public string SessionPhase { get; init; } = "";
+    public long SessionGeneration { get; init; }
+    public bool PendingLua { get; init; }
+    public bool PendingScreenLua { get; init; }
+    public bool PendingSlots { get; init; }
+    public string SlotMessage { get; init; } = "";
+    public IReadOnlyList<GameSlotInfo> Slots { get; init; } = [];
     public int ScreenCount { get; init; }
     public IReadOnlyList<string> ScreenTexts { get; init; } = [];
     public int PausedAudioSources { get; init; }

@@ -10,7 +10,7 @@ namespace NovellMaker.Core.Projects;
 /// </summary>
 public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
 {
-    public const int CurrentFormatVersion = 16;
+    public const int CurrentFormatVersion = 17;
 
     public int FormatVersion { get; init; } = ValidateFormatVersion(FormatVersion);
 
@@ -21,6 +21,8 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
     public NovellMaker.Core.Audio.AudioProject Audio { get; init; } = new();
 
     public ImmutableArray<NovelScene> Scenes { get; init; } = [];
+
+    public Guid? StartScreenSceneId { get; init; }
 
     public ImmutableArray<ImageAsset> Images { get; init; } = [];
 
@@ -69,6 +71,7 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
     {
         if (other is null ||
             FormatVersion != other.FormatVersion ||
+            StartScreenSceneId != other.StartScreenSceneId ||
             !NovellMaker.Core.Audio.AudioContent.Equals(Audio, other.Audio) ||
             Id != other.Id ||
             !string.Equals(Name, other.Name, StringComparison.Ordinal) ||

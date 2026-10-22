@@ -14,6 +14,16 @@ internal sealed partial class RuntimeGame
     private readonly Dictionary<Guid, (ScreenDefinition Source, NovellMaker.Core.Execution.SceneFrame Frame, TimeSpan Elapsed, ScreenDefinition Presented)> dialoguePresentations = [];
     internal ValueTask DisposeScreenLuaAsync() => screens.DisposeAsync();
 
+    private void ResetSessionResources()
+    {
+        screens.Reset(); audio?.Stop();
+        lineElapsed = TimeSpan.Zero; saveMessage = "";
+        dialoguePresentations.Clear(); dialogueDiagnostics.Clear();
+        renderedFrameKey = null; interactionKey = "";
+        foreach (var button in interactionButtons) button.Texture.Dispose();
+        interactionButtons.Clear(); actionHelp?.Dispose(); actionHelp = null;
+    }
+
     private bool RouteScreen(ScreenInput input)
     {
         var result = screens.Route(input, player.Execution.State.SceneId);
@@ -34,7 +44,9 @@ internal sealed partial class RuntimeGame
         if (screens.NavigationRequested is { } scene)
         {
             screens.Reset(); player.Execution.IsPaused = false;
-            player.EnterScene(scene); screens.SyncScene(player.Execution.State.SceneId);
+            if (session.Phase == NovellMaker.Core.Execution.GameSessionPhase.Menu) session.NavigateMenu(scene);
+            else if (session.Phase == NovellMaker.Core.Execution.GameSessionPhase.Playing) player.EnterScene(scene);
+            screens.SyncScene(player.Execution.State.SceneId);
             lineElapsed = TimeSpan.Zero; RefreshTextTextures(); RefreshInteractions();
         }
     }

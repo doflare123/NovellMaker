@@ -23,12 +23,16 @@ public static class GameSave
     }
 
     public static void Load(ScenarioPlayer player, string json)
+        => player.Restore(ReadState(json));
+
+    /// <summary>Parse without a live player, commands or Lua. Project validation is a separate step.</summary>
+    public static GameState ReadState(string json)
     {
         try
         {
             var document = JsonSerializer.Deserialize<Document>(json, Options) ?? throw new ArgumentException("Пустое сохранение.");
             if (document.Version != CurrentVersion) throw new ArgumentException($"Версия сохранения {document.Version} не поддерживается.");
-            player.Restore(document.State);
+            return document.State;
         }
         catch (JsonException error) { throw new ArgumentException("Некорректный формат сохранения.", error); }
     }

@@ -125,7 +125,7 @@ public sealed class ScriptAssetTests
         {
             var store = new JsonProjectStore(); await store.SaveAsync(path, project);
             var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
-            json["formatVersion"] = 9; json.AsObject().Remove("inputBindings"); json.AsObject().Remove("screens"); json.AsObject().Remove("pauseScreenId"); json.AsObject().Remove("inputBindings"); if (json["scenes"] is JsonArray oldScenes) foreach (var oldScene in oldScenes) oldScene!.AsObject().Remove("canvas");
+            json["formatVersion"] = 9; json.AsObject().Remove("startScreenSceneId"); json.AsObject().Remove("inputBindings"); json.AsObject().Remove("screens"); json.AsObject().Remove("pauseScreenId"); json.AsObject().Remove("inputBindings"); if (json["scenes"] is JsonArray oldScenes) foreach (var oldScene in oldScenes) oldScene!.AsObject().Remove("canvas");
             await File.WriteAllTextAsync(path, json.ToJsonString());
             await Assert.ThrowsExactlyAsync<ProjectFormatException>(() => store.LoadAsync(path));
             json.Remove("scripts"); await File.WriteAllTextAsync(path, json.ToJsonString());

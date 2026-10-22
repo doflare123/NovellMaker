@@ -12,6 +12,29 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ScreenAuthoringTests
 {
     [TestMethod]
+    public async Task StartScreenAndSessionCommandsSurviveHistorySaveAsPreviewAndDeletion()
+    {
+        using var folder = new Folder(); var dialogs = new Dialogs { SavePath = Path.Combine(folder.Path, "session.novell") }; var preview = new Preview();
+        using var session = await Session(dialogs, preview: preview); session.AddScene(); var story = session.ActiveScene!.Id;
+        session.ActiveScene.AddLine(); session.AddScene(); var menu = session.ActiveScene!.Id;
+        session.AddScreenNodeAt(ScreenNodeKind.Button, 200, 200); var button = session.SelectedScreenNode!;
+        session.SetStartScreen(menu); session.Undo(); Assert.IsNull(session.Project!.StartScreenSceneId);
+        session.Redo(); Assert.AreEqual(menu, session.Project!.StartScreenSceneId);
+        session.UpdateScreen(session.SelectedScreen! with { Buttons = [new(button.Id, ScreenButtonAction.NewGame, story)] });
+        session.SetInputBinding(new("F2", ScreenButtonAction.MainMenu, null));
+        var before = session.Project; Assert.Throws<ArgumentException>(() => session.SetStartScreen(Guid.NewGuid())); Assert.AreSame(before, session.Project);
+        await session.SaveAsync(); Assert.IsTrue(session.Project!.ContentEquals(await new JsonProjectStore().LoadAsync(dialogs.SavePath)));
+        await session.PreviewSceneAsync(); Assert.AreEqual(menu, preview.Request!.Project.StartScreenSceneId);
+        session.DuplicateScreen(); Assert.AreEqual(menu, session.Project!.StartScreenSceneId, "Copy does not replace the startup designation.");
+        await session.DeleteScreenAsync(menu); Assert.IsNull(session.Project!.StartScreenSceneId);
+        session.Undo(); Assert.AreEqual(menu, session.Project!.StartScreenSceneId);
+        await session.DeleteScreenAsync(story); Assert.IsEmpty(session.Project!.Scenes.Single(s => s.Id == menu).Canvas.Buttons);
+        session.Undo(); Assert.AreEqual(story, session.Project!.Scenes.Single(s => s.Id == menu).Canvas.Buttons.Single().TargetScreenId);
+        var destination = Path.Combine(folder.Path, "copy"); Directory.CreateDirectory(destination); dialogs.SavePath = Path.Combine(destination, "copy.novell");
+        await session.SaveAsync(true); Assert.IsTrue(session.Project!.ContentEquals(await new JsonProjectStore().LoadAsync(dialogs.SavePath))); Assert.IsEmpty(dialogs.Errors);
+    }
+
+    [TestMethod]
     public async Task DialogueCompositionStyleAndBindingsSurviveHistorySaveAsAndPreviewSnapshot()
     {
         using var folder = new Folder(); var dialogs = new Dialogs { SavePath = Path.Combine(folder.Path, "dialogue.novell") }; var preview = new Preview();
