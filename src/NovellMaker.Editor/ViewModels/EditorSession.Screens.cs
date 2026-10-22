@@ -99,6 +99,12 @@ public sealed partial class EditorSession
         EditProject(Examples.ExampleGameMenusModule.AddTo(project, story.Id));
     }
 
+    public void AddPlayerSettingsExample()
+    {
+        if (!CanEdit || project is null) return;
+        EditProject(Examples.ExamplePlayerSettingsModule.AddTo(project));
+    }
+
     public void DuplicateScreen()
     {
         if (!CanEdit || project is null || SelectedScreen is not { } source) return;

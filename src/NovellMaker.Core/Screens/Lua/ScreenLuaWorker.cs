@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using MoonSharp.Interpreter;
 using NovellMaker.Core.Execution;
+using NovellMaker.Core.Profiles;
 
 namespace NovellMaker.Core.Screens.Lua;
 
@@ -53,9 +54,9 @@ internal sealed class ScreenLuaVm
         Bind("close", _ => Add(new("close", null, null, null)));
         Bind("get", a => snapshot.TryGetValue(Str(a, 0), out var value) ? DynValue.NewString(value) : DynValue.Nil);
         string? Optional(CallbackArguments a, int index) => a[index].IsNil() ? null : Str(a, index);
-        DynValue Service(GameServiceAction action, string? slot = null, string? title = null, Guid? scene = null)
+        DynValue Service(GameServiceAction action, string? slot = null, string? title = null, Guid? scene = null, PlayerSettingChange? setting = null)
         {
-            var command = new GameServiceCommand(Guid.NewGuid(), action, slot, title, scene);
+            var command = new GameServiceCommand(Guid.NewGuid(), action, slot, title, scene) { Setting = setting };
             command.Validate(); Add(new("service", null, null, null) { Service = command });
             return DynValue.NewString(command.RequestId.ToString("N"));
         }
@@ -68,6 +69,14 @@ internal sealed class ScreenLuaVm
         Bind("save_slot", a => Service(GameServiceAction.SaveSlot, Optional(a, 0), Optional(a, 1)));
         Bind("load_slot", a => Service(GameServiceAction.LoadSlot, Str(a, 0)));
         Bind("delete_slot", a => Service(GameServiceAction.DeleteSlot, Str(a, 0)));
+        Bind("get_settings", _ => Service(GameServiceAction.GetSettings));
+        Bind("set_setting", a =>
+        {
+            var value = a[1];
+            if (value.Type is not (DataType.Number or DataType.Boolean)) throw new ScriptRuntimeException("Настройка ожидает число или boolean.");
+            return Service(GameServiceAction.SetSetting, setting: new(Str(a, 0),
+                value.Type == DataType.Number ? value.Number : null, value.Type == DataType.Boolean ? value.Boolean : null));
+        });
         script.Globals.Set("ui", DynValue.NewTable(ui));
         handlers = Execute(script.LoadString(source, null, "screen.lua"));
         if (handlers.Type != DataType.Table || handlers.Table.Get("on_event").Type != DataType.Function ||
@@ -96,6 +105,15 @@ internal sealed class ScreenLuaVm
                 argument.Set("success", DynValue.NewBoolean(result.Success));
                 argument.Set("message", DynValue.NewString(result.Message));
                 argument.Set("slot_id", result.SlotId is { } slot ? DynValue.NewString(slot) : DynValue.Nil);
+                if (result.Settings is { } settings)
+                {
+                    var values = new Table(script);
+                    void Audio(string key, PlayerAudioSettings bus)
+                    { values.Set(key + "_volume", DynValue.NewNumber(bus.Volume)); values.Set(key + "_muted", DynValue.NewBoolean(bus.Muted)); }
+                    Audio("master", settings.Master); Audio("sound", settings.Sound); Audio("effect", settings.Effect); Audio("voice", settings.Voice);
+                    values.Set("fullscreen", DynValue.NewBoolean(settings.Fullscreen));
+                    argument.Set("settings", DynValue.NewTable(values));
+                }
                 var slots = new Table(script);
                 foreach (var item in result.Slots)
                 {

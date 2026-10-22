@@ -5,12 +5,24 @@ using NovellMaker.Core.Projects;
 using NovellMaker.Core.Scenes;
 using NovellMaker.Core.Screens;
 using NovellMaker.Core.Screens.Lua;
+using NovellMaker.Core.Profiles;
 
 namespace NovellMaker.Core.Tests.Screens;
 
 [TestClass]
 public sealed class GameServiceLuaTests
 {
+    [TestMethod]
+    [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)]
+    public void SettingsWireExplicitlyRejectsEveryEarlierProtocol(int protocol)
+    {
+        var worker = new ScreenLuaWorkerService();
+        var request = ScreenLuaProtocolTests.Request("handshake") with { Protocol = protocol };
+        var response = worker.Process(request);
+        Assert.AreEqual("error", response.Kind); Assert.AreEqual(5, response.Protocol);
+        Assert.IsEmpty(response.Changes);
+    }
+
     private sealed class FramedWorker(bool realWorker) : IScreenLuaConnection
     {
         private readonly ScreenLuaWorkerService worker = new();
@@ -115,6 +127,9 @@ public sealed class GameServiceLuaTests
     [DataRow("ui.save_slot()", GameServiceAction.SaveSlot)]
     [DataRow("ui.load_slot('chapter-1')", GameServiceAction.LoadSlot)]
     [DataRow("ui.delete_slot('chapter-1')", GameServiceAction.DeleteSlot)]
+    [DataRow("ui.get_settings()", GameServiceAction.GetSettings)]
+    [DataRow("ui.set_setting('master_volume',0.5)", GameServiceAction.SetSetting)]
+    [DataRow("ui.set_setting('fullscreen',true)", GameServiceAction.SetSetting)]
     public void LuaReturnsQueuedCommandAndRequestIdWithoutExecutingHost(string expression, GameServiceAction action)
     {
         var definition = ScreenLuaProtocolTests.Definition();
@@ -131,11 +146,52 @@ public sealed class GameServiceLuaTests
     [TestMethod]
     [DataRow("ui.load_slot('../outside')")] [DataRow("ui.save_slot('CON')")]
     [DataRow("ui.delete_slot('')")] [DataRow("ui.new_game('not-a-scene')")]
+    [DataRow("ui.set_setting('unknown',true)")] [DataRow("ui.set_setting('master_volume',2)")]
+    [DataRow("ui.set_setting('master_volume','0.5')")] [DataRow("ui.set_setting('fullscreen',1)")]
+    [DataRow("ui.set_setting('sound_volume',0/0)")] [DataRow("ui.set_setting('voice_volume',true)")]
     public void InvalidLuaArgumentsAreRejectedBeforeCommandCanReachHost(string expression)
     {
         var vm = new ScreenLuaVm(ScreenLuaProtocolTests.Definition(), Guid.NewGuid(),
             "return {on_event=function(e) " + expression + " end}", ImmutableDictionary<string, Guid>.Empty);
         Assert.Throws<Exception>(() => vm.Handle(new("update"), ImmutableDictionary<string, string>.Empty));
+    }
+
+    [TestMethod]
+    public async Task SettingsTravelThroughRealWorkerAndOnlyValidatedAtomicBatchesReachHost()
+    {
+        var (stack, instance) = ScreenLuaSessionTests.Fixture();
+        var worker = new FramedWorker(true); await using var session = new ScreenLuaSession(stack, () => worker);
+        var references = ImmutableDictionary<string, Guid>.Empty.Add("label", instance.Definition.Nodes[2].Id);
+        session.Attach(instance, """
+            return {on_load=function() ui.get_settings() end,on_event=function(e)
+              if e.kind=='service_result' then
+                ui.set_text(refs.label,e.settings.voice_muted and 'muted' or 'audible')
+                ui.set_setting('sound_volume',e.settings.master_volume)
+              end
+            end}
+            """, references);
+        await ScreenLuaSessionTests.Drain(session); var request = session.DrainServices().Single().Command;
+        Assert.AreEqual(GameServiceAction.GetSettings, request.Action);
+        var value = PlayerSettings.Defaults(new()) with { Master = new(.25f, false), Voice = new(1, true) };
+        var result = new GameServiceResult(request.RequestId, request.Action, true, "", null, []) { Settings = value };
+        Assert.AreEqual(ScreenEventAdmission.Accepted, session.Enqueue(instance, new("service_result") { Result = result }, ImmutableDictionary<string, string>.Empty));
+        await ScreenLuaSessionTests.Drain(session); Assert.IsEmpty(session.Diagnostics);
+        Assert.AreEqual("muted", instance.Definition.Nodes[2].Text);
+        var command = session.DrainServices().Single().Command;
+        Assert.AreEqual(new("sound_volume", .25, null), command.Setting);
+        Assert.Throws<ArgumentException>(() => (command with { Setting = null }).Validate());
+        Assert.Throws<ArgumentException>(() => (command with { Action = GameServiceAction.GetSettings }).Validate());
+        Assert.Throws<ArgumentException>(() => (result with { Settings = null }).Validate());
+        Assert.Throws<ArgumentException>(() => (result with { Action = GameServiceAction.NewGame }).Validate());
+        Assert.Throws<ArgumentException>(() => (result with { Settings = value with { Effect = new(-1, false) } }).Validate());
+        var definition = ScreenLuaProtocolTests.Definition();
+        foreach (var code in new[] { "ui.set_setting('fullscreen',true); ui.close()", "ui.get_settings(); ui.get_settings()",
+            "ui.set_setting('fullscreen',true); ui.set_text(refs.label,'changed'); ui.set_setting('bad',true)" })
+        {
+            var vm = new ScreenLuaVm(definition, Guid.NewGuid(), "return {on_event=function(e) " + code + " end}", references);
+            Assert.Throws<Exception>(() => ScreenLuaProtocol.Prepare(definition, vm.Handle(new("update"), ImmutableDictionary<string, string>.Empty)));
+            Assert.AreNotEqual("changed", definition.Nodes[2].Text);
+        }
     }
 
     [TestMethod]

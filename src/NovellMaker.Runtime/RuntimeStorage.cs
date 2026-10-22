@@ -2,6 +2,9 @@ namespace NovellMaker.Runtime;
 
 internal static class RuntimeStorage
 {
+    internal static string ProfilePath(Guid projectId, bool packaged) => packaged
+        ? Path.Combine(GameDirectory(projectId), "profile.json")
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovellMaker", "Saves", projectId.ToString(), "profile.json");
     internal static string SlotsDirectory(Guid projectId, bool packaged) => packaged
         ? Path.Combine(GameDirectory(projectId), "slots")
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovellMaker", "Saves", projectId.ToString(), "slots");

@@ -7,6 +7,7 @@ using Microsoft.Xna.Framework.Input;
 using NovellMaker.Core.Assets;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Screens;
+using NovellMaker.Core.Profiles;
 
 namespace NovellMaker.Runtime;
 
@@ -20,6 +21,9 @@ internal sealed partial class RuntimeGame : Game
     private readonly GameSession session;
     private readonly GameSessionSlots slots;
     private readonly RuntimeGameServices services;
+    private readonly PlayerSettingsSession settings;
+    private readonly RuntimeSettingsServices settingsServices;
+    private string windowSettingsDiagnostic = "";
     private ScenePlayer player => session.Player;
     private readonly bool showNavigationControls;
     private readonly Dictionary<Guid, Texture2D> assetTextures = [];
@@ -65,10 +69,11 @@ internal sealed partial class RuntimeGame : Game
     private string SavePath => RuntimeStorage.SavePath(player.Execution.State.ProjectId, arguments.Package is not null);
     private bool UsesGameState => player.UsesActions || player.IsGamePlayback;
 
-    public RuntimeGame(RuntimeArguments arguments, GameSession session, bool showNavigationControls)
+    public RuntimeGame(RuntimeArguments arguments, GameSession session, bool showNavigationControls, PlayerSettingsSession settings)
     {
         this.arguments = arguments ?? throw new ArgumentNullException(nameof(arguments));
         this.session = session ?? throw new ArgumentNullException(nameof(session));
+        this.settings = settings;
         slots = new(session, new GameSlotStore(player.Execution.Project,
             RuntimeStorage.SlotsDirectory(player.Execution.Project.Id, arguments.Package is not null), SavePath));
         services = new(session, slots);
@@ -76,6 +81,9 @@ internal sealed partial class RuntimeGame : Game
         screens = new(Guid.NewGuid(), enableLua: true, hostAction: ApplyProjectCommand, hostService: ApplyService);
         services.IsCurrentOrigin = origin => screens.Stack.Instances.Any(i => ReferenceEquals(i, origin));
         services.Completed += (origin, result) => serviceFeedbackDelivered = screens.DeliverServiceResult(origin, result);
+        settingsServices = new(session, settings, ApplyPlayerSettings);
+        settingsServices.IsCurrentOrigin = services.IsCurrentOrigin;
+        settingsServices.Completed += (origin, result) => serviceFeedbackDelivered = screens.DeliverServiceResult(origin, result);
         screens.Stack.Presentation = PresentComponents;
         screens.Configure(player.Execution.Project, () => player.Execution.State.Variables, () => session.Generation);
         session.Resetting += ResetSessionResources;
@@ -85,6 +93,7 @@ internal sealed partial class RuntimeGame : Game
             PreferredBackBufferWidth = LogicalWidth,
             PreferredBackBufferHeight = LogicalHeight,
             SynchronizeWithVerticalRetrace = arguments.SmokeOutputPath is null,
+            HardwareModeSwitch = false,
         };
         IsFixedTimeStep = arguments.SmokeOutputPath is null;
         IsMouseVisible = true;
@@ -96,6 +105,13 @@ internal sealed partial class RuntimeGame : Game
     protected override void LoadContent()
     {
         InitializeAudio();
+        try { ApplyPlayerSettings(settings.Current); }
+        catch (InvalidOperationException)
+        {
+            settings.UseStartupFallback(settings.Current with { Fullscreen = graphics.IsFullScreen });
+            foreach (var group in Enum.GetValues<NovellMaker.Core.Audio.AudioGroup>()) audio!.SetBus(group, settings.Current.Bus(group).ToBus());
+            windowSettingsDiagnostic = "Не удалось восстановить режим окна; используется оконный режим.";
+        }
         spriteBatch = new SpriteBatch(GraphicsDevice);
         sceneTarget = new RenderTarget2D(
             GraphicsDevice,
@@ -119,6 +135,7 @@ internal sealed partial class RuntimeGame : Game
 
     protected override void Update(GameTime gameTime)
     {
+        if (settingsServices.Poll()) RefreshTextTextures();
         PollSlots();
         screens.SyncScene(player.Execution.State.SceneId);
         screens.Poll();
@@ -318,7 +335,7 @@ internal sealed partial class RuntimeGame : Game
     private void AdvanceActionSmoke()
     {
         var immediate = pendingSmokeStep is null && actionTrace.Count < smokePlan!.Length && smokePlan[actionTrace.Count].Kind.EndsWith("_now", StringComparison.Ordinal);
-        if (!immediate && (player.Execution.HasPendingLua || screens.HasPending || slots.IsBusy)) return;
+        if (!immediate && (player.Execution.HasPendingLua || screens.HasPending || slots.IsBusy || settings.IsBusy)) return;
         if (pendingSmokeStep is { } finished)
         {
             actionTrace.Add(CaptureTrace(finished.Kind, pendingSmokeSlots ? slots.LastResult?.Success == true : pendingSmokeSuccess));
@@ -367,7 +384,7 @@ internal sealed partial class RuntimeGame : Game
             default: throw new ArgumentException("Неизвестный шаг smoke-плана.");
         }
         RefreshFrameResources(); RefreshTextTextures(); RefreshInteractions();
-        if (!immediate && (player.Execution.HasPendingLua || screens.HasPending || slots.IsBusy))
+        if (!immediate && (player.Execution.HasPendingLua || screens.HasPending || slots.IsBusy || settings.IsBusy))
         { pendingSmokeStep = step; pendingSmokeSuccess = success; pendingSmokeSlots = slots.IsBusy; }
         else actionTrace.Add(CaptureTrace(step.Kind, success));
     }
@@ -388,6 +405,7 @@ internal sealed partial class RuntimeGame : Game
             PendingLua = player.Execution.HasPendingLua, PendingScreenLua = screens.HasPending,
             PendingSlots = slots.IsBusy, SlotMessage = slots.LastResult?.Message ?? "",
             Slots = slots.LastResult?.Slots.IsDefault == false ? slots.LastResult.Slots : [],
+            PlayerSettings = settings.Current, Fullscreen = graphics.IsFullScreen,
         };
     }
 
@@ -434,6 +452,12 @@ internal sealed partial class RuntimeGame : Game
     private void ApplyService(ScreenInstance? origin, GameServiceCommand command, long generation)
     {
         serviceFeedbackDelivered = false;
+        if (command.Action is GameServiceAction.GetSettings or GameServiceAction.SetSetting)
+        {
+            settingsServices.Request(origin, command, generation);
+            saveMessage = serviceFeedbackDelivered ? "" : settingsServices.LastResult?.Message ?? "";
+            RefreshInteractions(); return;
+        }
         var accepted = services.Request(origin, command, generation);
         saveMessage = serviceFeedbackDelivered || origin is not null && screens.Scripts?.IsAvailable(origin) == true
             ? "" : accepted && slots.IsBusy ? "Операция слотов…" : services.LastResult?.Message ?? "";
@@ -566,7 +590,8 @@ internal sealed partial class RuntimeGame : Game
 
     private IReadOnlyList<string> CurrentDiagnostics() =>
         player.Frame.Diagnostics.Concat(assetDiagnostics.Values.Order(StringComparer.Ordinal)).Concat(audio?.Diagnostics ?? [])
-            .Concat(screens.Diagnostics).Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values).Concat(session.CleanupDiagnostics).ToArray();
+            .Concat(screens.Diagnostics).Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values).Concat(session.CleanupDiagnostics)
+            .Concat(new[] { settings.Diagnostic, windowSettingsDiagnostic }.Where(message => message.Length > 0)).ToArray();
 
     private void DrawBackground(SpriteBatch batch, ImageAsset? background)
     {
@@ -755,6 +780,8 @@ internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState S
     public bool PendingSlots { get; init; }
     public string SlotMessage { get; init; } = "";
     public IReadOnlyList<GameSlotInfo> Slots { get; init; } = [];
+    public PlayerSettings? PlayerSettings { get; init; }
+    public bool Fullscreen { get; init; }
     public int ScreenCount { get; init; }
     public IReadOnlyList<string> ScreenTexts { get; init; } = [];
     public int PausedAudioSources { get; init; }

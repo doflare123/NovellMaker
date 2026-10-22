@@ -374,7 +374,7 @@ public sealed class NativeRuntimeSmokeTests
         };
         var project = new NovelProject(
             NovelProject.CurrentFormatVersion,
-            Guid.Parse("60000000-0000-0000-0000-000000000001"),
+            Guid.NewGuid(), // Each fixture owns a fresh player profile, including repeated native runs.
             "Runtime smoke")
         {
             Images =

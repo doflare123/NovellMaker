@@ -12,6 +12,25 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ScreenAuthoringTests
 {
     [TestMethod]
+    public async Task PlayerSettingsExampleHasHistoryExternalLuaAndSurvivesSaveAsAndPreview()
+    {
+        using var folder = new Folder(); var dialogs = new Dialogs { SavePath = Path.Combine(folder.Path, "settings.novell") }; var preview = new Preview();
+        using var session = await Session(dialogs, preview: preview); session.AddScene(); session.ActiveScene!.AddLine();
+        var before = session.Project!; var active = session.ActiveScene.Id; session.AddPlayerSettingsExample(); var after = session.Project!;
+        Assert.AreEqual(before.Scenes.Length + 1, after.Scenes.Length); Assert.AreEqual(before.Scripts.Length + 1, after.Scripts.Length);
+        Assert.IsNull(after.StartScreenSceneId); Assert.AreEqual(active, session.ActiveScene.Id);
+        var example = after.Scenes.Last(); Assert.AreEqual(example.Id, after.InputBindings.Single(b => b.Key == "F9").TargetSceneId);
+        Assert.AreEqual(after.Scripts.Last().Id, example.Canvas.HandlerScriptId);
+        session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo(); Assert.IsTrue(after.ContentEquals(session.Project));
+        await session.SaveAsync(); Assert.IsTrue(after.ContentEquals(await new JsonProjectStore().LoadAsync(dialogs.SavePath)));
+        var copy = Path.Combine(folder.Path, "copy"); Directory.CreateDirectory(copy); dialogs.SavePath = Path.Combine(copy, "settings.novell");
+        await session.SaveAsync(true); await session.PreviewSceneAsync();
+        Assert.IsTrue(after.ContentEquals(preview.Request!.Project));
+        var script = Path.Combine(copy, "Scripts", after.Scripts.Last().Id.ToString("N") + ".lua");
+        Assert.AreEqual(after.Scripts.Last().Source, File.ReadAllText(script)); Assert.IsEmpty(dialogs.Errors);
+    }
+
+    [TestMethod]
     public async Task MenuExampleIsOneHistoryOperationAndSurvivesSaveAsPreviewAndDuplication()
     {
         using var folder = new Folder(); var dialogs = new Dialogs { SavePath = Path.Combine(folder.Path, "menus.novell") }; var preview = new Preview();

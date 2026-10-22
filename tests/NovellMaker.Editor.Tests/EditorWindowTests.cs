@@ -33,6 +33,20 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task SettingsExampleCanBeAddedThroughInspectorAndEditedOnCanvas() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); session.AddScene(); session.OpenScreenLibrary(); Dispatcher.UIThread.RunJobs();
+        var inspector = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single(); var before = session.Project!;
+        Find<Button>(inspector, "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.AreEqual(before.Scenes.Length + 1, session.Project!.Scenes.Length);
+        session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo();
+        session.OpenScreenLibrary(session.Project!.Scenes.Last().Id); Dispatcher.UIThread.RunJobs();
+        Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == "Настройки"));
+        Capture(window, "editor-player-settings.png"); window.Close();
+    });
+
+    [TestMethod]
     public Task NamedSlotCommandsAndExampleAreEditableInActualInspector() => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();

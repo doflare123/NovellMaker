@@ -1,5 +1,6 @@
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Projects;
+using NovellMaker.Core.Profiles;
 using System.Runtime.InteropServices;
 
 namespace NovellMaker.Runtime;
@@ -35,10 +36,13 @@ internal static class Program
             arguments.Package?.ValidateProject(project);
             using var session = new GameSession(project, arguments.SceneId, arguments.Language, arguments.LineId,
                 arguments.Package is null ? PlaybackMode.AuthorPreview : PlaybackMode.Game);
-            using var game = new RuntimeGame(arguments, session, project.DialogueUi.ShowNavigationControls);
+            var profile = new PlayerProfileStore(project.Id, RuntimeStorage.ProfilePath(project.Id, arguments.Package is not null));
+            var settings = new PlayerSettingsSession(profile, profile.ReadAsync(PlayerSettings.Defaults(project.Audio)).GetAwaiter().GetResult());
+            using var game = new RuntimeGame(arguments, session, project.DialogueUi.ShowNavigationControls, settings);
             try { game.Run(); }
             finally
             {
+                settings.FlushAsync().GetAwaiter().GetResult();
                 game.DisposeSlotsAsync().AsTask().GetAwaiter().GetResult();
                 game.DisposeScreenLuaAsync().AsTask().GetAwaiter().GetResult();
                 session.DisposeAsync().AsTask().GetAwaiter().GetResult();
