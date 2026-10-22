@@ -116,7 +116,8 @@ public sealed class PhraseScriptTests
             json["formatVersion"] = 7; json.AsObject().Remove("inputBindings"); json.AsObject().Remove("screens"); json.AsObject().Remove("pauseScreenId"); json.AsObject().Remove("inputBindings"); if (json["scenes"] is JsonArray oldScenes) foreach (var oldScene in oldScenes) oldScene!.AsObject().Remove("canvas"); json.AsObject().Remove("audio"); json.AsObject().Remove("scripts"); json["scenes"]![0]!.AsObject().Remove("scriptBlocks");
             var script = json["scenes"]![0]!["actions"]![0]!.AsObject(); script.Remove("references");
             await File.WriteAllTextAsync(path, json.ToJsonString()); var bytes = await File.ReadAllBytesAsync(path);
-            var migrated = await store.LoadAsync(path); Assert.IsTrue(project.ContentEquals(migrated));
+            var migrated = await store.LoadAsync(path); Assert.IsTrue(project.ContentEquals(migrated with { Scenes = [migrated.Scenes[0] with { Canvas = scene.Canvas }] }));
+            Assert.AreEqual(NovellMaker.Core.Screens.DialogueBinding.CssPanel, migrated.Scenes[0].Canvas.Nodes[1].Dialogue);
             Assert.AreEqual("yes", new ScenarioPlayer(migrated, scene.Id, "ru").Settled().State.Variables["old"]);
             CollectionAssert.AreEqual(bytes, await File.ReadAllBytesAsync(path));
             script["references"] = new JsonObject { ["actor"] = actor.Id.ToString() };

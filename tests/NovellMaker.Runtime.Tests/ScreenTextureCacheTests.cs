@@ -5,6 +5,27 @@ namespace NovellMaker.Runtime.Tests;
 [TestClass]
 public sealed class ScreenTextureCacheTests
 {
+    [TestMethod]
+    public void LargeDialogueTilesShareFrameAndCacheBudgetsAndTextOnlyUpdatesKeepPanelRaster()
+    {
+        var scene = NovellMaker.Core.Scenes.NovelScene.Create("Сцена"); var root = scene.Canvas.Nodes[0];
+        var panel = new ScreenNode(Guid.NewGuid(), root.Id, ScreenNodeKind.Panel, new(0, 0, 1280, 720)) { Dialogue = DialogueBinding.Panel };
+        var text = new ScreenNode(Guid.NewGuid(), panel.Id, ScreenNodeKind.Text, new(20, 20, 1200, 680), "Реплика") { Dialogue = DialogueBinding.Text };
+        var stack = new ScreenStack(Guid.NewGuid()); var instance = stack.Open(Guid.NewGuid(), new(scene.Id, [root, panel, text]));
+        var style = NovellMaker.Core.Styling.DialogueCssParser.Parse(NovellMaker.Core.Styling.DialogueCssParser.DefaultCss);
+        var allocations = 0; using var cache = new ScreenTextureCache<Texture>(_ => { allocations++; return new(); });
+        var plan = ScreenTextureCache<Texture>.Plan(instance.Definition, Viewport);
+        Assert.IsTrue(plan.All(n => n.Raster.Width * n.Raster.Height <= ScreenTextureCache<Texture>.MaximumTexturePixels));
+        Assert.AreEqual(1280 * 720 + 1200 * 680, plan.Sum(n => n.Raster.Width * n.Raster.Height));
+        for (var frame = 0; frame < 12; frame++) cache.UpdateLayers(stack.Instances, Viewport, style: style);
+        Assert.AreEqual(0, cache.RejectedNodes); Assert.AreEqual(0, cache.DeferredNodes); Assert.AreEqual(plan.Count, allocations);
+        var count = allocations;
+        var changed = new ScreenDefinition(scene.Id, [root, panel, text with { Text = "Другая реплика" }]);
+        for (var frame = 0; frame < 6; frame++) cache.UpdateLayers(stack.Instances, Viewport, _ => changed, style);
+        Assert.AreEqual(count + plan.Count(n => n.Node.Id == text.Id), allocations);
+        cache.Update(null, Viewport); Assert.AreEqual(0, cache.CachedPixels);
+    }
+
     private static readonly ScreenDefinition Fixture = ScreenFixture.Create("Тест").Definition();
     [TestMethod]
     public void ReducedOversizedButtonReportsRejectedRasterWithoutAllocatingAndDiagnosticsClearOnRecovery()

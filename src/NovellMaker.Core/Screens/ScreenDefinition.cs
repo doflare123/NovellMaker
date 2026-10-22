@@ -4,6 +4,9 @@ namespace NovellMaker.Core.Screens;
 
 public enum ScreenNodeKind { Container, Panel, Text, Button, Image, Area }
 
+/// <summary>Read-only presentation bindings; they never execute or advance the scenario.</summary>
+public enum DialogueBinding { None, Panel, Text, Speaker, CssPanel }
+
 /// <summary>Logical pixels; child rectangles are relative to their parent anchor.</summary>
 public readonly record struct ScreenRect(double X, double Y, double Width, double Height)
 {
@@ -18,6 +21,7 @@ public sealed record ScreenNode(Guid Id, Guid? ParentId, ScreenNodeKind Kind, Sc
 {
     public Guid? ImageId { get; init; }
     public string Name { get; init; } = "";
+    [System.Text.Json.Serialization.JsonRequired] public DialogueBinding Dialogue { get; init; }
     [System.Text.Json.Serialization.JsonRequired] public ScreenGeometry Geometry { get; init; } = new();
     [System.Text.Json.Serialization.JsonRequired] public bool ClipChildren { get; init; } = true;
     [System.Text.Json.Serialization.JsonRequired] public int Order { get; init; }
@@ -32,6 +36,9 @@ public sealed class ScreenDefinition
     public const int MaxDepth = 32;
     public const int MaxTextCharacters = 131072;
     public const int MaxNodeIdentities = 4096;
+    // v15 could already fill every authoring slot. Migration reserves only the three
+    // standard bindings and, when necessary, a viewport wrapper around the old root.
+    public const int LegacyDialogueReserve = 4;
     private readonly ImmutableDictionary<Guid, ImmutableArray<ScreenNode>> children;
     private readonly ScreenNode root;
     private readonly ImmutableArray<ScreenVisual> visuals;
@@ -39,19 +46,24 @@ public sealed class ScreenDefinition
 
     public ScreenDefinition(Guid id, ImmutableArray<ScreenNode> nodes) : this(id, nodes, []) { }
 
-    internal ScreenDefinition(Guid id, ImmutableArray<ScreenNode> nodes, ImmutableHashSet<Guid> retired)
+    internal ScreenDefinition(Guid id, ImmutableArray<ScreenNode> nodes, ImmutableHashSet<Guid> retired, bool presentation = false)
     {
-        if (id == Guid.Empty || nodes.IsDefaultOrEmpty || nodes.Length > MaxNodes || nodes.Length + retired.Count > MaxNodeIdentities || nodes.Any(n => n is not null && retired.Contains(n.Id)))
+        var legacyDialogue = !nodes.IsDefault && nodes.Count(n => n is not null && n.Dialogue != DialogueBinding.None) == 3 &&
+            nodes.Any(n => n?.Dialogue == DialogueBinding.CssPanel) && nodes.Any(n => n?.Dialogue == DialogueBinding.Speaker) && nodes.Any(n => n?.Dialogue == DialogueBinding.Text);
+        var reserve = legacyDialogue ? LegacyDialogueReserve : 0;
+        if (id == Guid.Empty || nodes.IsDefaultOrEmpty || nodes.Length > MaxNodes + reserve || nodes.Length + retired.Count > MaxNodeIdentities || nodes.Any(n => n is not null && retired.Contains(n.Id)))
             throw new ArgumentException("Экран должен иметь ID и от 1 до 1024 узлов.");
         var map = new Dictionary<Guid, ScreenNode>();
         var characters = 0;
         foreach (var node in nodes)
         {
             if (node is null || node.Id == Guid.Empty || !map.TryAdd(node.Id, node) ||
-                !Enum.IsDefined(node.Kind) || node.ImageId == Guid.Empty || node.Name is null || node.Name.Length > 128 || !node.Bounds.IsValid || node.Text is null || node.Text.Length > 8192 ||
-                node.Geometry is null || !node.Geometry.IsValid || !ScreenTint.TryParse(node.Color, out _) || Math.Abs((long)node.Order) > 100000)
+                !Enum.IsDefined(node.Kind) || node.ImageId == Guid.Empty || node.Name is null || node.Name.Length > 128 || !node.Bounds.IsValid || node.Text is null || node.Text.Length > 8192 && !(presentation && node.Dialogue is DialogueBinding.Text or DialogueBinding.Speaker) ||
+                node.Geometry is null || !node.Geometry.IsValid || !ScreenTint.TryParse(node.Color, out _) || Math.Abs((long)node.Order) > 100000 ||
+                !Enum.IsDefined(node.Dialogue) || node.Dialogue != DialogueBinding.None &&
+                (node.ParentId is null || (node.Dialogue is DialogueBinding.Panel or DialogueBinding.CssPanel ? node.Kind != ScreenNodeKind.Panel : node.Kind != ScreenNodeKind.Text)))
                 throw new ArgumentException("Недопустимый узел экрана.");
-            characters += node.Text.Length;
+            if (!presentation || node.Dialogue == DialogueBinding.None) characters += node.Text.Length;
         }
         if (characters > MaxTextCharacters || nodes.Count(n => n.ParentId is null) != 1)
             throw new ArgumentException("Экран должен иметь один корень и ограниченный объём текста.");
@@ -61,7 +73,7 @@ public sealed class ScreenDefinition
             var depth = 1;
             while (current.ParentId is { } parent)
             {
-                if (++depth > MaxDepth || !map.TryGetValue(parent, out var ancestor) ||
+                if (++depth > MaxDepth + (legacyDialogue ? 1 : 0) || !map.TryGetValue(parent, out var ancestor) ||
                     ancestor.Kind is not (ScreenNodeKind.Container or ScreenNodeKind.Panel))
                     throw new ArgumentException("Неверный родитель, цикл или глубина дерева экрана.");
                 current = ancestor;
@@ -129,7 +141,7 @@ public sealed class ScreenDefinition
     }
 
     public ScreenNode? PointerTarget(double x, double y) => CanvasViewport.Contains(x, y) ? visuals.Reverse()
-        .FirstOrDefault(v => v.Enabled && v.Node.Kind != ScreenNodeKind.Container && Contains(v, x, y))?.Node : null;
+        .FirstOrDefault(v => v.Enabled && v.Node.Dialogue == DialogueBinding.None && v.Node.Kind != ScreenNodeKind.Container && Contains(v, x, y))?.Node : null;
 
     private bool Contains(ScreenVisual visual, double x, double y)
     {

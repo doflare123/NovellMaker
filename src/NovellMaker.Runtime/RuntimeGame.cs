@@ -1,4 +1,4 @@
-﻿using System.Text.Encodings.Web;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Unicode;
 using Microsoft.Xna.Framework;
@@ -25,7 +25,6 @@ internal sealed partial class RuntimeGame : Game
     private SpriteBatch? spriteBatch;
     private RenderTarget2D? sceneTarget;
     private Texture2D? pixel;
-    private RenderedTexture? dialogueTexture;
     private RenderedTexture? diagnosticsTexture;
     private RenderedTexture? navigationTexture;
     private FrameRenderKey? renderedFrameKey;
@@ -66,6 +65,7 @@ internal sealed partial class RuntimeGame : Game
         this.player = player ?? throw new ArgumentNullException(nameof(player));
         this.showNavigationControls = showNavigationControls;
         screens = new(Guid.NewGuid(), enableLua: true, hostAction: ApplyProjectCommand);
+        screens.Stack.Presentation = PresentComponents;
         screens.Configure(player.Execution.Project, () => player.Execution.State.Variables);
         if (arguments.SmokePlanPath is { } plan) smokePlan = JsonSerializer.Deserialize<RuntimeSmokeStep[]>(File.ReadAllText(plan)) ?? throw new ArgumentException("Пустой smoke-план.");
         graphics = new GraphicsDeviceManager(this)
@@ -187,7 +187,7 @@ internal sealed partial class RuntimeGame : Game
         screens.SyncScene(player.Execution.State.SceneId);
         screens.Poll();
         RefreshFrameResources();
-        var menuDiagnostics = string.Join("\n", screens.Diagnostics.Concat(componentTextures?.Diagnostics ?? []));
+        var menuDiagnostics = string.Join("\n", screens.Diagnostics.Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values));
         if (menuDiagnostics != lastMenuDiagnostics) { lastMenuDiagnostics = menuDiagnostics; RefreshTextTextures(); }
         player.Execution.IsPaused = screens.Stack.PausesScenario || !hostActive;
         SynchronizeAudio();
@@ -211,11 +211,10 @@ internal sealed partial class RuntimeGame : Game
             RasterizerState.CullNone);
         DrawBackground(spriteBatch, player.Frame.Background);
         DrawCharacters(spriteBatch, player.Frame.Characters);
-        DrawDialogue(spriteBatch, player.Frame);
+        DrawComponents(spriteBatch);
         DrawNavigationControls(spriteBatch);
         foreach (var button in interactionButtons) spriteBatch.Draw(button.Texture.Texture, button.Bounds, Color.White);
         if (actionHelp is not null) spriteBatch.Draw(actionHelp.Texture, new Vector2(16, 16), Color.White);
-        DrawComponents(spriteBatch);
         DrawDiagnostics(spriteBatch);
         spriteBatch.End();
 
@@ -256,7 +255,6 @@ internal sealed partial class RuntimeGame : Game
         actionHelp?.Dispose();
         foreach (var button in interactionButtons) button.Texture.Dispose();
         diagnosticsTexture?.Dispose();
-        dialogueTexture?.Dispose();
         navigationTexture?.Dispose();
         foreach (var texture in assetTextures.Values)
         {
@@ -501,12 +499,6 @@ internal sealed partial class RuntimeGame : Game
         var frameKey = new FrameRenderKey(frame.LineId, frame.SpeakerName, frame.Text, frame.Style, frame.CanNext, frame.CanPrevious);
         if (frameKey != renderedFrameKey)
         {
-            dialogueTexture?.Dispose();
-            dialogueTexture = DialogueTextureRenderer.RenderDialogue(
-                GraphicsDevice,
-                frame.Style,
-                frame.SpeakerName,
-                frame.Text);
             renderedFrameKey = frameKey;
 
             if (showNavigationControls)
@@ -531,7 +523,7 @@ internal sealed partial class RuntimeGame : Game
 
     private IReadOnlyList<string> CurrentDiagnostics() =>
         player.Frame.Diagnostics.Concat(assetDiagnostics.Values.Order(StringComparer.Ordinal)).Concat(audio?.Diagnostics ?? [])
-            .Concat(screens.Diagnostics).Concat(componentTextures?.Diagnostics ?? []).ToArray();
+            .Concat(screens.Diagnostics).Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values).ToArray();
 
     private void DrawBackground(SpriteBatch batch, ImageAsset? background)
     {
@@ -576,29 +568,6 @@ internal sealed partial class RuntimeGame : Game
                 SpriteEffects.None,
                 layerDepth: 0);
         }
-    }
-
-    private void DrawDialogue(SpriteBatch batch, SceneFrame frame)
-    {
-        if (dialogueTexture is null || frame.LineId is null)
-        {
-            return;
-        }
-
-        var sample = frame.Style.Sample(UsesGameState ? TimeSpan.FromSeconds(player.Execution.State.Time - player.Execution.State.TextStartedAt) : lineElapsed);
-        var center = new Vector2(
-            (float)frame.Style.Left + (dialogueTexture.Width / 2f) + (float)sample.TranslateX,
-            LogicalHeight - (float)frame.Style.Bottom - (dialogueTexture.Height / 2f) + (float)sample.TranslateY);
-        batch.Draw(
-            dialogueTexture.Texture,
-            center,
-            sourceRectangle: null,
-            Color.White * (float)Math.Clamp(sample.Opacity, 0, 1),
-            rotation: 0,
-            new Vector2(dialogueTexture.Width / 2f, dialogueTexture.Height / 2f),
-            new Vector2((float)Math.Max(0, sample.Scale)),
-            SpriteEffects.None,
-            layerDepth: 0);
     }
 
     private void DrawDiagnostics(SpriteBatch batch)

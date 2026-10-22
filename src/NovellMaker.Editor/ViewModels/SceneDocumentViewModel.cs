@@ -166,7 +166,15 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         if (!Session.CanEdit || !IsEditingLanguageValid) return;
         var line = DialogueLine.Create(editingLanguage);
         var position = SelectedIndex < 0 ? scene.Lines.Length : SelectedIndex + 1;
-        Session.UpdateScene(scene with { Lines = scene.Lines.Insert(position, line) });
+        var canvas = scene.Canvas;
+        if (scene.Lines.IsEmpty && !canvas.Nodes.Any(n => n.Dialogue != NovellMaker.Core.Screens.DialogueBinding.None))
+        {
+            var nodes = DialogueCanvas.Add(canvas.Nodes, scene.Id, style, legacy: true);
+            try { _ = new NovellMaker.Core.Screens.ScreenDefinition(scene.Id, nodes); }
+            catch (ArgumentException error) { Session.ReportScreenError("Фраза и диалог не добавлены: " + error.Message); return; }
+            canvas = canvas with { Nodes = nodes };
+        }
+        Session.UpdateScene(scene with { Lines = scene.Lines.Insert(position, line), Canvas = canvas });
         SelectLine(line.Id);
     }
 

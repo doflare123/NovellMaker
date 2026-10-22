@@ -15,6 +15,15 @@ public sealed class ScreenPropertiesView : UserControl
     private sealed record Option(Guid? Id, string Label) { public override string ToString() => Label; }
     private EditorSession? session;
     private bool refreshing;
+    private sealed record BindingOption(DialogueBinding Value, string Label) { public override string ToString() => Label; }
+    private readonly ComboBox dialogueBinding = new() { Name = "DialogueBinding", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly NumericUpDown dialogueFontSize = Number("DialogueFontSize", 8, 160);
+    private readonly TextBox dialogueTextColor = new() { Name = "DialogueTextColor" };
+    private readonly TextBox dialogueBackground = new() { Name = "DialogueBackground" };
+    private readonly TextBox dialogueBorder = new() { Name = "DialogueBorderColor" };
+    private readonly NumericUpDown dialogueBorderWidth = Number("DialogueBorderWidth", 0, 8192);
+    private readonly NumericUpDown dialogueRadius = Number("DialogueRadius", 0, 8192);
+    private readonly StackPanel dialogueFields = new() { Spacing = 6 };
     private readonly TextBox name = new() { Name = "ScreenNodeName", IsUndoEnabled = false };
     private readonly TextBox text = new() { Name = "ScreenNodeText", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 65, IsUndoEnabled = false };
     private readonly NumericUpDown[] geometry = [Number("ScreenNodeX", -100000, 100000), Number("ScreenNodeY", -100000, 100000), Number("ScreenNodeWidth", 1, 100000), Number("ScreenNodeHeight", 1, 100000)];
@@ -51,6 +60,13 @@ public sealed class ScreenPropertiesView : UserControl
     public ScreenPropertiesView()
     {
         body.Children.Add(title); Field(body, "Название", name); textField = Field(body, "Текст", text);
+        Field(body, "Источник диалога", dialogueBinding, "Текст и имя берутся из текущей фразы. Их содержание редактируется во вкладке «Фразы». Привязка не выполняет сценарий.");
+        Button(dialogueFields, "MaterializeDialogue", "Размещать компонентами", () => session?.UseCanvasDialogueLayout());
+        Field(dialogueFields, "Размер шрифта", dialogueFontSize); Field(dialogueFields, "Цвет текста", dialogueTextColor);
+        Field(dialogueFields, "Фон", dialogueBackground); Field(dialogueFields, "Цвет границы", dialogueBorder);
+        Field(dialogueFields, "Толщина границы", dialogueBorderWidth); Field(dialogueFields, "Радиус углов", dialogueRadius);
+        dialogueFields.Children.Add(new HelpTip { Explanation = "Оформление общее для компонентов диалога сцены. Изменение создаёт собственный CSS сцены; шрифт, выравнивание, отступы и анимация также доступны на вкладке оформления. CSS-панель наследует размер и положение; ручное размещение фиксирует текущую компоновку." });
+        body.Children.Add(new Expander { Name = "DialogueStyleInspector", Header = "Оформление диалога", IsExpanded = true, Content = dialogueFields });
         var grid = new Grid { ColumnDefinitions = new("*,8,*"), RowDefinitions = new("Auto,Auto"), RowSpacing = 6 };
         var labels = new[] { "X", "Y", "Ширина", "Высота" };
         for (var i = 0; i < 4; i++) { var cell = new StackPanel { Spacing = 3 }; Field(cell, labels[i], geometry[i]); Grid.SetRow(cell, i / 2); Grid.SetColumn(cell, i % 2 * 2); grid.Children.Add(cell); }
@@ -100,6 +116,14 @@ public sealed class ScreenPropertiesView : UserControl
         body.Children.Add(new Expander { Name = "ScreenSettingsExpander", Header = "Сцена", IsExpanded = true, Content = settings, HorizontalAlignment = HorizontalAlignment.Stretch });
         body.Children.Add(status); Content = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
         name.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) Edit(n => n with { Name = name.Text ?? "" }, "name"); };
+        dialogueBinding.SelectionChanged += (_, _) => { if (!refreshing && dialogueBinding.SelectedItem is BindingOption option) Edit(n => n with { Dialogue = option.Value }); };
+        void Style(string property, string value) { if (!refreshing) Try(() => session?.SetDialogueStyleProperty(property, value)); }
+        dialogueFontSize.PropertyChanged += (_, e) => { if (e.Property == NumericUpDown.ValueProperty && dialogueFontSize.Value is { } value) Style("font-size", value.ToString(System.Globalization.CultureInfo.InvariantCulture) + "px"); };
+        dialogueBorderWidth.PropertyChanged += (_, e) => { if (e.Property == NumericUpDown.ValueProperty && dialogueBorderWidth.Value is { } value) Style("border-width", value.ToString(System.Globalization.CultureInfo.InvariantCulture) + "px"); };
+        dialogueRadius.PropertyChanged += (_, e) => { if (e.Property == NumericUpDown.ValueProperty && dialogueRadius.Value is { } value) Style("border-radius", value.ToString(System.Globalization.CultureInfo.InvariantCulture) + "px"); };
+        dialogueTextColor.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) Style("color", dialogueTextColor.Text ?? ""); };
+        dialogueBackground.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) Style("background-color", dialogueBackground.Text ?? ""); };
+        dialogueBorder.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) Style("border-color", dialogueBorder.Text ?? ""); };
         text.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) Edit(n => n with { Text = text.Text ?? "" }, "text"); };
         foreach (var number in geometry) number.PropertyChanged += (_, e) => { if (e.Property == NumericUpDown.ValueProperty && !refreshing && geometry.All(n => n.Value is not null)) Edit(n => n with { Bounds = new((double)geometry[0].Value!.Value, (double)geometry[1].Value!.Value, (double)geometry[2].Value!.Value, (double)geometry[3].Value!.Value) }, number.Name); };
         visible.IsCheckedChanged += (_, _) => Edit(n => n with { Visible = visible.IsChecked == true });
@@ -138,7 +162,7 @@ public sealed class ScreenPropertiesView : UserControl
     }
     private static void Button(StackPanel panel, string name, string label, Action action) { var b = new Button { Name = name, Content = label }; b.Click += (_, _) => action(); panel.Children.Add(b); }
     private static void Async(StackPanel panel, string name, string label, Func<Task> action) { var b = new Button { Name = name, Content = label }; b.Click += async (_, _) => await action(); panel.Children.Add(b); }
-    private void Try(Action action) { try { action(); status.Text = ""; } catch (ArgumentException error) { status.Text = error.Message; } }
+    private void Try(Action action) { try { action(); status.Text = ""; } catch (Exception error) when (error is ArgumentException or NovellMaker.Core.Styling.DialogueCssException) { status.Text = error.Message; } }
     private void Edit(Func<ScreenNode, ScreenNode> update, string? field = null)
     {
         if (refreshing || session?.SelectedScreenNode is not { } node) return;
@@ -161,10 +185,23 @@ public sealed class ScreenPropertiesView : UserControl
         refreshing = true;
         try
         {
-            var node = session?.SelectedScreenNode; var screen = session?.SelectedScreen;
+            var rawNode = session?.SelectedScreenNode;
+            var node = rawNode is null ? null : session?.ScreenPresentation?.Nodes.FirstOrDefault(n => n.Id == rawNode.Id) ?? rawNode; var screen = session?.SelectedScreen;
             body.IsEnabled = session?.CanEdit == true && screen is not null;
             title.Text = node is null ? "Экран" : ComponentName(node.Kind); name.Text = node?.Name ?? ""; text.Text = node?.Text ?? "";
             textField.IsVisible = node?.Kind is ScreenNodeKind.Text or ScreenNodeKind.Button; buttonFields.IsVisible = node?.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area;
+            text.IsReadOnly = node?.Dialogue != DialogueBinding.None;
+            var bindings = new List<BindingOption> { new(DialogueBinding.None, "Обычный компонент") };
+            if (node?.ParentId is not null && node.Kind == ScreenNodeKind.Panel) bindings.AddRange([new(DialogueBinding.Panel, "Панель диалога"), new(DialogueBinding.CssPanel, "Панель · размещение из CSS")]);
+            if (node?.Kind == ScreenNodeKind.Text) bindings.AddRange([new(DialogueBinding.Text, "Текст текущей реплики"), new(DialogueBinding.Speaker, "Имя говорящего")]);
+            dialogueBinding.ItemsSource = bindings; dialogueBinding.SelectedItem = bindings.FirstOrDefault(b => b.Value == node?.Dialogue);
+            dialogueBinding.IsEnabled = node?.ParentId is not null; dialogueFields.IsVisible = node is { Dialogue: not DialogueBinding.None };
+            if (session?.ActiveScene?.Style is { } style)
+            {
+                dialogueFontSize.Value = (decimal)style.FontSize; dialogueTextColor.Text = style.TextColor;
+                dialogueBackground.Text = style.BackgroundColor; dialogueBorder.Text = style.BorderColor;
+                dialogueBorderWidth.Value = (decimal)style.BorderWidth; dialogueRadius.Value = (decimal)style.BorderRadius;
+            }
             var values = new[] { node?.Bounds.X ?? 0, node?.Bounds.Y ?? 0, node?.Bounds.Width ?? 1, node?.Bounds.Height ?? 1 }; for (var i = 0; i < 4; i++) geometry[i].Value = (decimal)values[i];
             visible.IsChecked = node?.Visible == true; enabled.IsChecked = node?.Enabled == true;
             clipping.IsChecked = node?.ClipChildren == true; color.Text = node?.Color ?? "#FFFFFF"; orderValue.Value = node?.Order ?? 0;

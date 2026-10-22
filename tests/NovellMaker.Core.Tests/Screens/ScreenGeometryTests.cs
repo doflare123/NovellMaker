@@ -111,7 +111,7 @@ public sealed class ScreenGeometryTests
             json["formatVersion"] = 14; File.WriteAllText(path, json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
             foreach (var node in json["scenes"]![0]!["canvas"]!["nodes"]!.AsArray())
-                foreach (var key in new[] { "geometry", "clipChildren", "order", "color" }) node!.AsObject().Remove(key);
+                foreach (var key in new[] { "geometry", "clipChildren", "order", "color", "dialogue" }) node!.AsObject().Remove(key);
             File.WriteAllText(path, json.ToJsonString()); var bytes = File.ReadAllBytes(path);
             Assert.IsTrue(project.ContentEquals(await store.LoadAsync(path))); CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
             json["scenes"]![0]!["canvas"]!["nodes"]![0]!["kind"] = 5; File.WriteAllText(path, json.ToJsonString());

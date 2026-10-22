@@ -94,7 +94,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     {
         if (!IsAvailable(instance)) return ScreenEventAdmission.Unavailable;
         var entry = entries[instance.Id];
-        ScreenLuaProtocol.ValidateEvent(instance.Definition, value);
+        ScreenLuaProtocol.ValidateEvent(stack.VisualDefinition(instance), value);
         ArgumentNullException.ThrowIfNull(snapshot);
         if (!LuaLimits.ValidVariables(snapshot)) throw new ArgumentException("Превышен бюджет снимка события.");
         var work = new Work(entry, "event", value, snapshot, clock.GetTimestamp());
@@ -177,7 +177,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             Expire(work, "Превышен срок ожидания события экрана (5 секунд): событие не исполнено.");
             return;
         }
-        if (work.Event is { Kind: "click" } click && !entry.Instance.Definition.Buttons.Any(n => n.Id == click.NodeId))
+        if (work.Event is { Kind: "click" } click && !stack.VisualDefinition(entry.Instance).Buttons.Any(n => n.Id == click.NodeId))
         {
             Report("Устаревшее нажатие экрана пропущено.", ScreenLuaIssueKind.StaleEvent, entry.Instance.Id);
             return;
@@ -188,13 +188,14 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         var context = conversation;
         var captured = work;
         var definition = entry.Instance.Definition;
-        var task = Task.Run(() => PrepareAsync(context, captured, stamp, definition, clock));
+        var eventDefinition = work.Event is null ? definition : stack.VisualDefinition(entry.Instance);
+        var task = Task.Run(() => PrepareAsync(context, captured, stamp, definition, eventDefinition, clock));
         ScreenLuaConnection.Observe(task);
         pending = new(work, stamp, task);
     }
 
     private static async Task<Prepared> PrepareAsync(Conversation conversation, Work work, ScreenLuaStamp stamp,
-        ScreenDefinition definition, TimeProvider clock)
+        ScreenDefinition definition, ScreenDefinition eventDefinition, TimeProvider clock)
     {
         var remaining = TimeSpan.FromSeconds(5) - clock.GetElapsedTime(work.Submitted);
         // Task scheduling is part of queue time. No exchange has touched the conversation yet.
@@ -228,7 +229,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             if (response.Error is not null) throw new IOException(response.Error);
             conversation.Ready = true;
         }
-        if (work.Event is not null) ScreenLuaProtocol.ValidateEvent(definition, work.Event);
+        if (work.Event is not null) ScreenLuaProtocol.ValidateEvent(eventDefinition, work.Event);
         var request = new ScreenLuaRequest(ScreenLuaProtocol.Version, work.Kind, stamp, definition.Id,
             work.Kind == "load" ? definition.Nodes : [], work.Kind == "load" ? entry.Source : null,
             work.Kind == "load" ? entry.References : ImmutableDictionary<string, Guid>.Empty, work.Event, work.Snapshot);

@@ -34,7 +34,8 @@ public sealed class UnifiedSceneTests
             ScreenFixture.RemoveGeometry(json);
             File.WriteAllText(path, json.ToJsonString()); var original = File.ReadAllBytes(path);
             var migrated = await store.LoadAsync(path);
-            Assert.HasCount(2, migrated.Scenes); Assert.IsTrue(story.ContentEquals(migrated.Scenes[0]));
+            Assert.HasCount(2, migrated.Scenes); Assert.IsTrue(story.ContentEquals(migrated.Scenes[0] with { Canvas = story.Canvas }));
+            Assert.AreEqual(DialogueBinding.CssPanel, migrated.Scenes[0].Canvas.Nodes[1].Dialogue);
             Assert.IsTrue(menu.ContentEquals(migrated.Scenes[1].AsScreen()));
             Assert.AreEqual(menu.Id, migrated.InputBindings.FirstOrDefault(b => b.Key == "P")?.TargetSceneId);
             Assert.AreEqual(ScenarioProgram.Fingerprint(migrated), ScenarioProgram.Fingerprint(await store.LoadAsync(path)));

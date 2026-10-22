@@ -163,6 +163,12 @@ public sealed partial class EditorSession
     public void UpdateScreenNode(ScreenNode node, string? group = null)
     {
         if (SelectedScreen is not { } screen || !screen.Nodes.Any(n => n.Id == node.Id)) return;
+        var original = screen.Nodes.Single(n => n.Id == node.Id);
+        if (node.Bounds != original.Bounds && node.Dialogue != DialogueBinding.None && ScreenPresentation is { } presentation)
+        {
+            screen = screen with { Nodes = DialogueCanvas.Materialize(screen.Definition(), presentation) };
+            if (node.Dialogue == DialogueBinding.CssPanel) node = node with { Dialogue = DialogueBinding.Panel };
+        }
         var buttons = node.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area ? screen.Buttons : screen.Buttons.Where(b => b.NodeId != node.Id).ToImmutableArray();
         UpdateScreen(screen with { Nodes = screen.Nodes.SetItem(screen.Nodes.IndexOf(screen.Nodes.Single(n => n.Id == node.Id)), node), Buttons = buttons }, group);
     }
@@ -198,6 +204,8 @@ public sealed partial class EditorSession
     public void ReparentScreenNode(Guid parent)
     {
         if (SelectedScreen is not { } screen || SelectedScreenNode is not { } node) return;
+        if (node.Dialogue != DialogueBinding.None && ScreenPresentation is { } presentation)
+            screen = screen with { Nodes = DialogueCanvas.Materialize(screen.Definition(), presentation) };
         UpdateScreen(screen with { Nodes = ScreenTree.Reparent(screen.Definition(), node.Id, parent).Nodes });
     }
 

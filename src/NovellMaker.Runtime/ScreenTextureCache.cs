@@ -2,7 +2,12 @@ using NovellMaker.Core.Screens;
 
 namespace NovellMaker.Runtime;
 
-internal sealed record ScreenRaster(string Text, int Width, int Height, int OffsetX, int OffsetY, double LogicalHeight, bool Transparent = false);
+internal sealed record ScreenRaster(string Text, int Width, int Height, int OffsetX, int OffsetY, double LogicalHeight, bool Transparent = false)
+{
+    public DialogueBinding Dialogue { get; init; }
+    public NovellMaker.Core.Styling.DialogueStyle? Style { get; init; }
+    public double LogicalWidth { get; init; }
+}
 internal sealed record ScreenRasterNode(ScreenNode Node, ScreenRaster Raster, int X, int Y)
 {
     public Guid InstanceId { get; init; }
@@ -16,7 +21,7 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
     internal const int MaximumCachedPixels = 4 * 1024 * 1024;
     internal const int MaximumFramePixels = 256 * 1024;
     internal const int MaximumFrameTextures = 4;
-    private readonly Dictionary<(Guid Instance, Guid Node), (ScreenRaster Raster, T Texture)> textures = [];
+    private readonly Dictionary<(Guid Instance, Guid Node, int X, int Y), (ScreenRaster Raster, T Texture)> textures = [];
     private (Guid Id, ScreenDefinition Definition)[]? layers;
     private ScreenDefinition? plannedDefinition;
     private ScreenRect plannedViewport;
@@ -55,15 +60,18 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
         return Upload();
     }
 
-    internal IReadOnlyList<(ScreenRasterNode Region, T Texture)> UpdateLayers(IReadOnlyList<ScreenInstance> instances, ScreenRect viewport)
+    internal IReadOnlyList<(ScreenRasterNode Region, T Texture)> UpdateLayers(IReadOnlyList<ScreenInstance> instances, ScreenRect viewport,
+        Func<ScreenInstance, ScreenDefinition>? presentation = null, NovellMaker.Core.Styling.DialogueStyle? style = null)
     {
+        var definitions = instances.Select(i => (i.Id, Definition: presentation?.Invoke(i) ?? i.Definition)).ToArray();
         if (layers is null || plannedViewport != viewport || layers.Length != instances.Count ||
-            layers.Where((layer, index) => layer.Id != instances[index].Id || !ReferenceEquals(layer.Definition, instances[index].Definition)).Any())
+            layers.Where((layer, index) => layer.Id != definitions[index].Id || !ReferenceEquals(layer.Definition, definitions[index].Definition)).Any() ||
+            planned.Any(n => n.Raster.Dialogue != DialogueBinding.None && n.Raster.Style != style))
         {
-            layers = instances.Select(i => (i.Id, i.Definition)).ToArray(); plannedViewport = viewport;
+            layers = definitions; plannedViewport = viewport;
             RejectedNodes = 0; rejectedLabels.Clear();
             planned = layers.SelectMany(layer => PlanCore(layer.Definition, viewport, Reject)
-                .Select(node => node with { InstanceId = layer.Id })).ToList();
+                .Select(node => node with { InstanceId = layer.Id, Raster = node.Raster with { Style = node.Raster.Dialogue == DialogueBinding.None ? null : style } })).ToList();
         }
         return Upload();
     }
@@ -72,7 +80,7 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
     {
         var desired = planned;
         DeferredNodes = 0; CapacityDeferredNodes = 0;
-        var keys = desired.ToDictionary(n => (n.InstanceId, n.Node.Id));
+        var keys = desired.ToDictionary(n => (n.InstanceId, n.Node.Id, n.Raster.OffsetX, n.Raster.OffsetY));
         foreach (var id in textures.Keys.ToArray())
             if (!keys.TryGetValue(id, out var node) || textures[id].Raster != node.Raster)
             { textures[id].Texture.Dispose(); textures.Remove(id); }
@@ -82,7 +90,7 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
         var result = new List<(ScreenRasterNode, T)>();
         foreach (var node in desired)
         {
-            var key = (node.InstanceId, node.Node.Id);
+            var key = (node.InstanceId, node.Node.Id, node.Raster.OffsetX, node.Raster.OffsetY);
             if (!textures.TryGetValue(key, out var item))
             {
                 var area = node.Raster.Width * node.Raster.Height;
@@ -105,7 +113,7 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
     private static List<ScreenRasterNode> PlanCore(ScreenDefinition definition, ScreenRect viewport, Action<ScreenNode>? reject)
     {
         var result = new List<ScreenRasterNode>();
-        foreach (var visual in definition.Visuals(viewport).Where(v => v.Node.Kind is ScreenNodeKind.Text or ScreenNodeKind.Button))
+        foreach (var visual in definition.Visuals(viewport).Where(v => v.Node.Kind is ScreenNodeKind.Text or ScreenNodeKind.Button || v.Node.Dialogue is DialogueBinding.Panel or DialogueBinding.CssPanel))
         {
             var node = visual.Node;
             var local = ScreenPolygon.Bounds(ScreenPolygon.Transform(visual.Polygon, visual.Inverse));
@@ -113,10 +121,15 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
             var width = (int)Math.Ceiling(Math.Min(node.Bounds.Width, local.X + local.Width) - 1e-8) - left;
             var height = (int)Math.Ceiling(Math.Min(node.Bounds.Height, local.Y + local.Height) - 1e-8) - top;
             if (width <= 0 || height <= 0) continue;
-            if (width > MaximumTextureSide || height > MaximumTextureSide || (long)width * height > MaximumTexturePixels)
+            if (width > MaximumTextureSide || height > MaximumTextureSide || node.Dialogue == DialogueBinding.None && (long)width * height > MaximumTexturePixels)
             { reject?.Invoke(node); continue; }
-            var origin = visual.World.Apply(left, top);
-            result.Add(new(node, new(node.Text, width, height, left, top, node.Bounds.Height, node.ImageId is not null || node.Kind == ScreenNodeKind.Text), (int)origin.X, (int)origin.Y));
+            var stripHeight = node.Dialogue == DialogueBinding.None ? height : Math.Max(1, MaximumTexturePixels / width);
+            for (var y = top; y < top + height; y += stripHeight)
+            {
+                var origin = visual.World.Apply(left, y);
+                result.Add(new(node, new(node.Text, width, Math.Min(stripHeight, top + height - y), left, y, node.Bounds.Height, node.ImageId is not null || node.Kind == ScreenNodeKind.Text)
+                    { Dialogue = node.Dialogue, LogicalWidth = node.Dialogue == DialogueBinding.None ? 0 : node.Bounds.Width }, (int)origin.X, (int)origin.Y));
+            }
         }
         return result;
     }

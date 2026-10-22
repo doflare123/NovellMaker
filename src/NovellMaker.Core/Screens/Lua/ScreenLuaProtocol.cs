@@ -22,7 +22,7 @@ internal sealed record ScreenPreparedBatch(ScreenDefinition Definition, bool Clo
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 2;
+    internal const int Version = 3;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {
@@ -53,13 +53,30 @@ internal static class ScreenLuaProtocol
         return JsonSerializer.Deserialize<T>(data, Json) ?? throw new IOException("Пустое сообщение экранного Lua.");
     }
 
-    internal static void ValidateEvent(ScreenDefinition definition, ScreenLuaEvent value)
+    internal static void ValidateEvent(ScreenDefinition definition, ScreenLuaEvent value, bool worker = false)
     {
+        bool ValidClick(Guid? id)
+        {
+            if (id is null) return false;
+            if (definition.Buttons.Any(n => n.Id == id)) return true;
+            // The worker has authoring nodes, not host font metrics/current phrase/animation time.
+            // Only the host admits rendered clicks. Worker still checks kind, flags and ancestry.
+            if (!worker || definition.Nodes.FirstOrDefault(n => n.Id == id) is not { Kind: ScreenNodeKind.Button or ScreenNodeKind.Area } node) return false;
+            var dialogue = false;
+            var map = definition.Nodes.ToDictionary(n => n.Id);
+            while (true)
+            {
+                if (!node.Enabled || !node.Visible || node.Geometry.Opacity <= 0) return false;
+                dialogue |= node.Dialogue is DialogueBinding.Panel or DialogueBinding.CssPanel;
+                if (node.ParentId is not { } parent) return dialogue;
+                node = map[parent];
+            }
+        }
         if (value.Kind is not ("click" or "move" or "hover" or "update") ||
             !double.IsFinite(value.X) || !double.IsFinite(value.Y) || Math.Abs(value.X) > 100000 || Math.Abs(value.Y) > 100000 ||
             !double.IsFinite(value.Seconds) || value.Seconds is < 0 or > 1 ||
             value.NodeId is { } node && !definition.Nodes.Any(n => n.Id == node) ||
-            value.Kind == "click" && (value.NodeId is null || !definition.Buttons.Any(n => n.Id == value.NodeId)))
+            value.Kind == "click" && !ValidClick(value.NodeId))
             throw new ArgumentException("Недопустимое событие экрана.");
     }
 

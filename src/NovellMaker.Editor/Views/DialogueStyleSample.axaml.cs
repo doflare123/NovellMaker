@@ -148,7 +148,7 @@ public sealed partial class DialogueStyleSample : UserControl
 
     private void ApplyText()
     {
-        DialoguePlate.IsVisible = !CanvasOnly || SampleFrame?.LineId is not null;
+        DialoguePlate.IsVisible = !CanvasOnly;
         var runs = NovellMaker.Core.Text.DialogueText.Parse(SampleText);
         DialogueText.Inlines?.Clear();
         if (runs.Count == 1 && runs[0].Color is null) DialogueText.Text = runs[0].Text;

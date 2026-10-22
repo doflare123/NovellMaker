@@ -36,6 +36,8 @@ public sealed class ComponentToolbox : UserControl
         title.Children.Add(new TextBlock { Text = "Компоненты", FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         title.Children.Add(new HelpTip { Explanation = "Перетащите компонент на холст. Двойной щелчок добавляет его в центр. Изображения ниже — файлы этого проекта." });
         body.Children.Add(title);
+        var dialogue = new Button { Name = "ToolboxDialogue", Content = "Диалог · панель, имя и реплика", HorizontalAlignment = HorizontalAlignment.Stretch };
+        dialogue.Click += (_, _) => session?.AddDialogueComponent(); body.Children.Add(dialogue);
         layers.SelectionChanged += (_, _) => { if (!refreshing) session?.SelectScreenNode(((layers.SelectedItem as TreeViewItem)?.DataContext as ScreenNode)?.Id); };
         foreach (var (kind, label, glyph) in new[] {
             (ScreenNodeKind.Text, "Текст", "T"), (ScreenNodeKind.Button, "Кнопка", "▭"), (ScreenNodeKind.Image, "Изображение", "▧"),

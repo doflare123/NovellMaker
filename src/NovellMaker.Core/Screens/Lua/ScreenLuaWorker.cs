@@ -166,7 +166,7 @@ internal sealed class ScreenLuaWorkerService
         if (request.Kind == "close" && request.Event is null && request.Snapshot.IsEmpty)
         { entries.Remove(stamp.InstanceId); return Reply("closed", []); }
         if (request.Kind != "event" || request.Event is null) throw new ArgumentException("Неизвестное сообщение экрана.");
-        ScreenLuaProtocol.ValidateEvent(entry.Vm.Definition, request.Event);
+        ScreenLuaProtocol.ValidateEvent(entry.Vm.Definition, request.Event, worker: true);
         try
         {
             var before = entry.Vm.Definition;

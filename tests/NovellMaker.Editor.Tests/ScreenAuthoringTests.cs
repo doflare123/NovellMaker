@@ -12,6 +12,30 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ScreenAuthoringTests
 {
     [TestMethod]
+    public async Task DialogueCompositionStyleAndBindingsSurviveHistorySaveAsAndPreviewSnapshot()
+    {
+        using var folder = new Folder(); var dialogs = new Dialogs { SavePath = Path.Combine(folder.Path, "dialogue.novell") }; var preview = new Preview();
+        using var session = await Session(dialogs, preview: preview); session.AddScene(); session.ActiveScene!.AddLine(); session.ActiveScene.LineText = "Реплика";
+        var panel = session.SelectedScreen!.Nodes.Single(n => n.Dialogue == DialogueBinding.CssPanel); session.SelectScreenNode(panel.Id);
+        var before = session.Project; var shown = session.ScreenPresentation!.Nodes.Single(n => n.Id == panel.Id);
+        session.UpdateScreenNode(panel with { Bounds = shown.Bounds with { X = 120, Y = 100, Width = 600, Height = 240 }, Geometry = new() { Rotation = 8, Opacity = .8 }, ClipChildren = false });
+        var moved = session.Project; Assert.AreEqual(DialogueBinding.Panel, session.SelectedScreenNode!.Dialogue);
+        session.Undo(); Assert.IsTrue(before!.ContentEquals(session.Project)); session.Redo(); Assert.IsTrue(moved!.ContentEquals(session.Project));
+        session.SetDialogueStyleProperty("font-size", "30px"); Assert.AreEqual(30d, session.ActiveScene.Style!.FontSize);
+        session.SetDialogueStyleProperty("background-color", "#224466"); session.EndEditGroup();
+        var afterStyle = session.Project;
+        Assert.Throws<NovellMaker.Core.Styling.DialogueCssException>(() => session.SetDialogueStyleProperty("font-size", "ошибка")); Assert.AreSame(afterStyle, session.Project);
+        session.DuplicateScreenNode(); var copied = session.SelectedScreenNode!; Assert.AreEqual(DialogueBinding.Panel, copied.Dialogue);
+        Assert.AreEqual(panel.Geometry with { Rotation = 8, Opacity = .8 }, copied.Geometry);
+        var child = session.SelectedScreen!.Nodes.First(n => n.ParentId == copied.Id); session.SelectScreenNode(child.Id);
+        var root = session.SelectedScreen.Nodes.Single(n => n.ParentId is null); session.ReparentScreenNode(root.Id);
+        Assert.AreEqual(root.Id, session.SelectedScreenNode!.ParentId); Assert.AreEqual(child.Dialogue, session.SelectedScreenNode.Dialogue);
+        await session.SaveAsync(); var destination = Path.Combine(folder.Path, "copy"); Directory.CreateDirectory(destination); dialogs.SavePath = Path.Combine(destination, "copy.novell");
+        await session.SaveAsync(true); Assert.IsTrue(session.Project!.ContentEquals(await new JsonProjectStore().LoadAsync(dialogs.SavePath)));
+        await session.PreviewSceneAsync(); Assert.IsNotNull(preview.Request); Assert.IsTrue(session.Project.ContentEquals(preview.Request.Project)); Assert.IsEmpty(dialogs.Errors);
+    }
+
+    [TestMethod]
     public async Task SubtreeCopyParentOrderAndDeleteKeepRefsAndHistoryAcrossSaveAsAndF6()
     {
         using var folder = new Folder(); var dialogs = new Dialogs { SavePath = Path.Combine(folder.Path, "tree.novell") }; var preview = new Preview();
@@ -95,11 +119,11 @@ public sealed class ScreenAuthoringTests
         Assert.AreSame(originalDocument, session.SelectedDocument); Assert.HasCount(2, session.Documents);
         session.AddScreenNodeAt(ScreenNodeKind.Button, 50, 80); var node = session.SelectedScreenNode!;
         var scene = session.Project!.Scenes.Single();
-        Assert.AreEqual(scene.Id, session.SelectedScreen!.Id); Assert.AreEqual(node.Id, scene.Canvas.Nodes[1].Id);
+        Assert.AreEqual(scene.Id, session.SelectedScreen!.Id); Assert.AreEqual(node.Id, scene.Canvas.Nodes.Single(n => n.Kind == ScreenNodeKind.Button).Id);
         Assert.AreEqual("Реплика в общей сцене", scene.Lines[0].Texts["ru"]);
         session.DuplicateScreen(); var copy = session.Project.Scenes.Last();
-        Assert.HasCount(1, copy.Lines); Assert.HasCount(2, copy.Canvas.Nodes);
-        Assert.AreNotEqual(scene.Lines[0].Id, copy.Lines[0].Id); Assert.AreNotEqual(node.Id, copy.Canvas.Nodes[1].Id);
+        Assert.HasCount(1, copy.Lines); Assert.HasCount(5, copy.Canvas.Nodes);
+        Assert.AreNotEqual(scene.Lines[0].Id, copy.Lines[0].Id); Assert.AreNotEqual(node.Id, copy.Canvas.Nodes.Single(n => n.Kind == ScreenNodeKind.Button).Id);
         session.Undo(); Assert.AreSame(originalDocument, session.SelectedDocument); Assert.HasCount(1, session.Project.Scenes);
         session.Redo(); Assert.HasCount(2, session.Project.Scenes);
         await session.DeleteSceneAsync(scene.Id); Assert.HasCount(1, session.Project.Scenes);

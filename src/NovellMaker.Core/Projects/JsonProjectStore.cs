@@ -23,6 +23,7 @@ public sealed class JsonProjectStore : IProjectStore
 
     private static readonly JsonSerializerOptions Version11SerializerOptions = CreateVersion11Options();
     private static readonly JsonSerializerOptions Version12SerializerOptions = CreateLegacyScreenOptions();
+    private static readonly JsonSerializerOptions Version15SerializerOptions = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow, true);
     private static JsonSerializerOptions CreateLegacyScreenOptions()
     {
         var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
@@ -47,8 +48,14 @@ public sealed class JsonProjectStore : IProjectStore
     }
     private static void RemoveGeometryFields(JsonTypeInfo info)
     {
+        RemoveDialogueField(info);
         if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode))
             foreach (var property in info.Properties.Where(p => p.Name is "geometry" or "clipChildren" or "order" or "color").ToArray()) info.Properties.Remove(property);
+    }
+    private static void RemoveDialogueField(JsonTypeInfo info)
+    {
+        if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode))
+            foreach (var property in info.Properties.Where(p => p.Name == "dialogue").ToArray()) info.Properties.Remove(property);
     }
     private static readonly JsonSerializerOptions Version14SerializerOptions = CreateVersion14Options();
     private static JsonSerializerOptions CreateVersion14Options()
@@ -179,12 +186,24 @@ public sealed class JsonProjectStore : IProjectStore
                 12 => MapVersion11(await DeserializeRequiredAsync<Version11ProjectDocument>(stream, cancellationToken, Version12SerializerOptions).ConfigureAwait(false)),
                 13 => MapVersion13(await DeserializeRequiredAsync<Version13ProjectDocument>(stream, cancellationToken, Version13SerializerOptions).ConfigureAwait(false)),
                 14 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken, Version14SerializerOptions).ConfigureAwait(false)),
-                15 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken).ConfigureAwait(false), false),
+                15 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken, Version15SerializerOptions).ConfigureAwait(false), false),
+                16 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken).ConfigureAwait(false), false),
                 10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
                 8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
                 _ => throw new ProjectFormatException(
                     $"Некорректная версия формата проекта: {versionProbe.FormatVersion}."),
             };
+            if (versionProbe.FormatVersion < 16)
+            {
+                project = project with { Scenes = [.. project.Scenes.Select(scene =>
+                {
+                    if (scene.Lines.IsEmpty && !scene.HasActionScript) return scene;
+                    NovellMaker.Core.Styling.DialogueStyle style;
+                    try { style = NovellMaker.Core.Styling.DialogueCssParser.Parse(scene.DialogueCssOverride ?? project.DialogueUi.Css); }
+                    catch (NovellMaker.Core.Styling.DialogueCssException) { style = NovellMaker.Core.Styling.DialogueCssParser.Parse(NovellMaker.Core.Styling.DialogueCssParser.DefaultCss); }
+                    return scene with { Canvas = scene.Canvas with { Nodes = DialogueCanvas.Add(scene.Canvas.Nodes, scene.Id, style, legacy: true, deterministic: true) } };
+                })] };
+            }
         }
         catch (ProjectFormatException)
         {
@@ -272,11 +291,12 @@ public sealed class JsonProjectStore : IProjectStore
     }
 
     private static JsonSerializerOptions CreateSerializerOptions(
-        JsonUnmappedMemberHandling unmappedMemberHandling)
+        JsonUnmappedMemberHandling unmappedMemberHandling, bool legacyDialogue = false)
     {
         var resolver = new DefaultJsonTypeInfoResolver();
         resolver.Modifiers.Add(info =>
         {
+            if (legacyDialogue) RemoveDialogueField(info);
             if (info.Type == typeof(NovellMaker.Core.Screens.ScreenNode) || info.Type == typeof(NovellMaker.Core.Screens.ScreenButtonBinding) || info.Type == typeof(NovellMaker.Core.Screens.ScreenGeometry))
                 foreach (var property in info.Properties) property.IsRequired = true;
         });

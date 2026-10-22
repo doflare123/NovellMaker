@@ -72,7 +72,11 @@ public sealed class ScreenDesignSurface : UserControl
     private ScreenDefinition? Definition()
     {
         if (session?.SelectedScreen is not { } screen) return null;
-        return temporary is { } bounds && gesture is { } g ? new(screen.Id, screen.Nodes.Replace(g.Before, g.Before with { Bounds = bounds })) : screen.Definition();
+        var presentation = session.ScreenPresentation!;
+        if (temporary is not { } bounds || gesture is not { } g) return presentation;
+        var nodes = NovellMaker.Core.Scenes.DialogueCanvas.Materialize(screen.Definition(), presentation);
+        var node = nodes.Single(n => n.Id == g.Before.Id);
+        return session.PresentScreen(screen with { Nodes = nodes.Replace(node, node with { Bounds = bounds }) });
     }
     private void Refresh()
     {
@@ -95,7 +99,7 @@ public sealed class ScreenDesignSurface : UserControl
         {
             var node = visual.Node;
             var tinted = node with { Color = $"#{(byte)(visual.Tint.R * 255):X2}{(byte)(visual.Tint.G * 255):X2}{(byte)(visual.Tint.B * 255):X2}" };
-            if (!visuals.TryGetValue(node.Id, out var item) || item.Node.Text != node.Text || item.Node.Kind != node.Kind || item.Node.ImageId != node.ImageId || item.Node.Color != tinted.Color)
+            if (!visuals.TryGetValue(node.Id, out var item) || item.Node.Text != node.Text || item.Node.Kind != node.Kind || item.Node.ImageId != node.ImageId || item.Node.Color != tinted.Color || item.Node.Dialogue != node.Dialogue)
             {
                 if (item.Clip is not null) artboard.Children.Remove(item.Clip);
                 var inner = CreateNode(tinted);
@@ -105,6 +109,9 @@ public sealed class ScreenDesignSurface : UserControl
             item.Clip.Width = 1280; item.Clip.Height = 720; item.Clip.ZIndex = z++;
             item.Clip.Clip = Polygon(visual.Polygon); item.Clip.Opacity = visual.Opacity;
             item.Visual.Width = node.Bounds.Width; item.Visual.Height = node.Bounds.Height;
+            var dialogue = item.Visual as DialogueComponentView ?? (item.Visual as Panel)?.Children.OfType<DialogueComponentView>().FirstOrDefault();
+            if (dialogue is not null && session?.ActiveScene?.Style is { } style)
+                dialogue.Update(tinted, style, ScreenPolygon.Bounds(ScreenPolygon.Transform(visual.Polygon, visual.Inverse)));
             var m = visual.World;
             item.Visual.RenderTransformOrigin = new RelativePoint(0, 0, RelativeUnit.Absolute);
             item.Visual.RenderTransform = new MatrixTransform(new Matrix(m.A, m.B, m.C, m.D, m.X, m.Y));
@@ -123,6 +130,14 @@ public sealed class ScreenDesignSurface : UserControl
     }
     private Control CreateNode(ScreenNode node)
     {
+        if (node.Dialogue != DialogueBinding.None)
+        {
+            var dialogue = new DialogueComponentView();
+            if (node.ImageId is not { } assetId || session?.Project?.Images.FirstOrDefault(i => i.Id == assetId) is not { } asset) return dialogue;
+            return new Grid { Children = {
+                new ProjectImageView { Asset = asset, ProjectDirectory = session.ProjectDirectory, Revision = session.AssetRevision,
+                    ImageStretch = Stretch.Fill, TransparentBackground = true, Tint = node.Color, IsHitTestVisible = false }, dialogue } };
+        }
         ScreenTint.TryParse(node.Color, out var tint);
         var baseColor = node.Kind == ScreenNodeKind.Button ? Color.Parse("#282D34") : Color.Parse("#14161A");
         var grid = new Grid { Background = node.Kind is ScreenNodeKind.Panel or ScreenNodeKind.Button ? new SolidColorBrush(Color.FromRgb((byte)(baseColor.R * tint.R), (byte)(baseColor.G * tint.G), (byte)(baseColor.B * tint.B))) : Brushes.Transparent };
@@ -142,7 +157,7 @@ public sealed class ScreenDesignSurface : UserControl
     private void Press(object? sender, PointerPressedEventArgs e)
     {
         if (!e.GetCurrentPoint(artboard).Properties.IsLeftButtonPressed || session?.CanEdit != true || session.SelectedScreen is not { } screen) return;
-        artboard.Focus(); var point = e.GetPosition(artboard); var definition = screen.Definition();
+        artboard.Focus(); var point = e.GetPosition(artboard); var definition = session.ScreenPresentation!;
         var resize = session.SelectedScreenNode is { ParentId: not null } current && NearCorner(point, definition.Visual(current.Id));
         var id = resize ? session.SelectedScreenNodeId : definition.PickNode(point.X, point.Y);
         session.SelectScreenNode(id);
@@ -157,11 +172,12 @@ public sealed class ScreenDesignSurface : UserControl
     private void Move(object? sender, PointerEventArgs e)
     {
         if (gesture is not { } g) return;
-        var point = e.GetPosition(artboard); var definition = session!.SelectedScreen!.Definition();
+        var point = e.GetPosition(artboard); var definition = session!.ScreenPresentation!;
         var inverse = definition.Visual(g.Resize ? g.Before.Id : g.Before.ParentId!.Value).Inverse;
         var start = inverse.Apply(g.Start.X, g.Start.Y); var end = inverse.Apply(point.X, point.Y);
-        var before = g.Before.Bounds;
-        var candidate = g.Resize ? ScreenTree.Resize(g.Before, end.X - start.X, end.Y - start.Y)
+        var displayed = definition.Nodes.Single(n => n.Id == g.Before.Id);
+        var before = displayed.Bounds;
+        var candidate = g.Resize ? ScreenTree.Resize(displayed, end.X - start.X, end.Y - start.Y)
             : before with { X = Math.Clamp(Math.Round(before.X + end.X - start.X), -100000, 100000), Y = Math.Clamp(Math.Round(before.Y + end.Y - start.Y), -100000, 100000) };
         try { _ = new ScreenDefinition(definition.Id, definition.Nodes.Replace(g.Before, g.Before with { Bounds = candidate })); temporary = candidate; }
         catch (ArgumentException) { } // Keep the last valid gesture preview; no partially applied edit.
@@ -186,7 +202,7 @@ public sealed class ScreenDesignSurface : UserControl
         if (session?.CanEdit != true || session.SelectedScreenNode is not { ParentId: not null } node) return;
         if (e.Key == Key.Delete) { await session.DeleteScreenNodeAsync(node.Id); e.Handled = true; return; }
         var step = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 10 : 1;
-        var bounds = node.Bounds;
+        var bounds = session.ScreenPresentation?.Nodes.FirstOrDefault(n => n.Id == node.Id)?.Bounds ?? node.Bounds;
         var changed = e.Key switch { Key.Left => bounds with { X = bounds.X - step }, Key.Right => bounds with { X = bounds.X + step }, Key.Up => bounds with { Y = bounds.Y - step }, Key.Down => bounds with { Y = bounds.Y + step }, _ => bounds };
         if (changed != bounds) { session.UpdateScreenNode(node with { Bounds = changed }, "screen-nudge:" + node.Id); e.Handled = true; }
     }

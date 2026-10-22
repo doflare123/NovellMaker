@@ -33,6 +33,51 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task DialoguePaletteInspectorAndCanvasGestureUseOneHistoryAndSharedRasterizer() => WithUi(async () =>
+    {
+        using var session = CreateSession(out var dialogs, out _); dialogs.AcceptDeletion = true;
+        var window = CreateWindow(session); window.Show(); await session.NewProjectAsync(); session.AddScene();
+        var document = session.ActiveScene!; document.AddLine(); document.LineText = "Диалог §#FF0000на холсте§r";
+        session.OpenScreenLibrary(); Dispatcher.UIThread.RunJobs();
+        var panel = session.SelectedScreen!.Nodes.Single(n => n.Dialogue == NovellMaker.Core.Screens.DialogueBinding.CssPanel);
+        session.SelectScreenNode(panel.Id); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(2, window.GetVisualDescendants().OfType<DialogueComponentView>().Count());
+        var canvas = window.GetVisualDescendants().OfType<ScreenDesignSurface>().Single().Artboard;
+        var shown = session.ScreenPresentation!.Nodes.Single(n => n.Id == panel.Id);
+        Point At(double x, double y) => canvas.TranslatePoint(new Point(x, y), window)!.Value;
+        var before = session.Project;
+        window.MouseDown(At(shown.Bounds.X + 5, shown.Bounds.Y + 5), MouseButton.Left);
+        window.MouseMove(At(shown.Bounds.X + 45, shown.Bounds.Y - 55));
+        Assert.AreSame(before, session.Project);
+        window.MouseUp(At(shown.Bounds.X + 45, shown.Bounds.Y - 55), MouseButton.Left); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(NovellMaker.Core.Screens.DialogueBinding.Panel, session.SelectedScreenNode!.Dialogue);
+        Assert.AreEqual(shown.Bounds.X + 40, session.SelectedScreenNode.Bounds.X, 1);
+        Assert.AreEqual(shown.Bounds.Y - 60, session.SelectedScreenNode.Bounds.Y, 1);
+        session.Undo(); Assert.IsTrue(before!.ContentEquals(session.Project)); session.Redo(); Dispatcher.UIThread.RunJobs();
+        var inspector = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single();
+        Find<NumericUpDown>(inspector, "DialogueFontSize").Value = 32;
+        Assert.AreEqual(32d, document.Style!.FontSize); Assert.IsTrue(document.UseSceneStyle);
+        var css = document.Css;
+        Find<TextBox>(inspector, "DialogueTextColor").Text = "ошибка";
+        Assert.AreEqual(css, document.Css); Assert.IsFalse(string.IsNullOrWhiteSpace(Find<TextBlock>(inspector, "ScreenEditorStatus").Text));
+        Find<TextBox>(inspector, "DialogueTextColor").Text = "#FFCC88"; Assert.AreEqual("#FFCC88", document.Style.TextColor);
+        var text = session.SelectedScreen.Nodes.Single(n => n.Dialogue == NovellMaker.Core.Screens.DialogueBinding.Text);
+        session.SelectScreenNode(text.Id); Dispatcher.UIThread.RunJobs();
+        Assert.IsTrue(Find<TextBox>(inspector, "ScreenNodeText").IsReadOnly);
+        Assert.AreEqual(document.LineText, Find<TextBox>(inspector, "ScreenNodeText").Text);
+        var bindings = Find<ComboBox>(inspector, "DialogueBinding"); bindings.SelectedIndex = 0;
+        Assert.AreEqual(NovellMaker.Core.Screens.DialogueBinding.None, session.SelectedScreenNode!.Dialogue);
+        session.Undo(); Assert.AreEqual(NovellMaker.Core.Screens.DialogueBinding.Text, session.SelectedScreenNode!.Dialogue);
+        var count = session.SelectedScreen.Nodes.Length;
+        Find<Button>(window, "ToolboxDialogue").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.AreEqual(count + 3, session.SelectedScreen.Nodes.Length);
+        await session.DeleteScreenNodeAsync(session.SelectedScreenNode!.Id); Assert.AreEqual(count, session.SelectedScreen.Nodes.Length);
+        session.Undo(); Assert.AreEqual(count + 3, session.SelectedScreen.Nodes.Length);
+        Assert.AreSame(document, session.SelectedDocument);
+        Capture(window, "editor-stage4-dialogue.png"); window.Close();
+    });
+
+    [TestMethod]
     public Task TransformedDesignerUsesLocalGesturesAndInspectorHierarchyAtTwoWindowSizes() => WithUi(async () =>
     {
         using var session = CreateSession(out var dialogs, out _); dialogs.AcceptDeletion = true;
@@ -120,7 +165,7 @@ public sealed class EditorWindowTests
         Click(window, Find<Button>(window, "AddLineButton")); TypeInto(window, Find<TextBox>(window, "LineTextBox"), "Одна сцена");
         document.SelectedSection = 6; Dispatcher.UIThread.RunJobs();
         Assert.AreSame(document, session.SelectedDocument); Assert.HasCount(2, session.Documents);
-        Assert.HasCount(1, session.Project!.Scenes); Assert.HasCount(2, session.Project.Scenes[0].Canvas.Nodes);
+        Assert.HasCount(1, session.Project!.Scenes); Assert.HasCount(5, session.Project.Scenes[0].Canvas.Nodes);
         Assert.AreEqual("Одна сцена", document.LineText);
         var sample = window.GetVisualDescendants().OfType<ScreenDesignSurface>().Single().GetVisualDescendants().OfType<DialogueStyleSample>().Single();
         Assert.AreSame(session, sample.DataContext);

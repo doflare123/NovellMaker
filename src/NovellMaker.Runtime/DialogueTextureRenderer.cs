@@ -10,116 +10,14 @@ namespace NovellMaker.Runtime;
 
 internal static class DialogueTextureRenderer
 {
-    private const int LogicalWidth = 1280;
-    private const int LogicalHeight = 720;
-
-    public static RenderedTexture RenderDialogue(
-        GraphicsDevice graphicsDevice,
-        DialogueStyle style,
-        string speakerName,
-        string text)
+    internal static RenderedTexture RenderComponent(GraphicsDevice device, ScreenRaster raster)
     {
-        ArgumentNullException.ThrowIfNull(graphicsDevice);
-        ArgumentNullException.ThrowIfNull(style);
-        ArgumentNullException.ThrowIfNull(speakerName);
-        ArgumentNullException.ThrowIfNull(text);
-
-        var width = Math.Clamp((int)Math.Ceiling(style.Width), 64, LogicalWidth);
-        var fontSize = (float)Math.Clamp(style.FontSize, 8, 160);
-        using var typeface = CreateTypeface(style.FontFamily);
-        using var bodyFont = new SKFont(typeface, fontSize);
-        using var nameFont = new SKFont(typeface, Math.Max(12, fontSize * 0.82f)) { Embolden = true };
-        using var measurePaint = new SKPaint { IsAntialias = true };
-
-        var contentWidth = Math.Max(
-            1,
-            width - (float)Math.Clamp(style.PaddingLeft + style.PaddingRight, 0, width - 1));
-        var lines = LayoutRuns(DialogueText.Parse(text), bodyFont, measurePaint, contentWidth);
-        var bodyMetrics = bodyFont.Metrics;
-        var bodyLineHeight = Math.Max(fontSize * 1.2f, bodyMetrics.Descent - bodyMetrics.Ascent + bodyMetrics.Leading);
-        var nameMetrics = nameFont.Metrics;
-        var nameLineHeight = string.IsNullOrWhiteSpace(speakerName)
-            ? 0
-            : Math.Max(nameFont.Size * 1.25f, nameMetrics.Descent - nameMetrics.Ascent + nameMetrics.Leading) + 6;
-        var contentHeight = (float)style.PaddingTop + nameLineHeight +
-            Math.Max(bodyLineHeight, lines.Count * bodyLineHeight) + (float)style.PaddingBottom;
-        var height = Math.Clamp(
-            (int)Math.Ceiling(Math.Max(style.MinHeight, contentHeight)),
-            48,
-            LogicalHeight);
-
-        var info = new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
-        using var bitmap = new SKBitmap(info);
-        using var canvas = new SKCanvas(bitmap);
-        canvas.Clear(SKColors.Transparent);
-
-        var rect = new SKRect(0, 0, width, height);
-        var radius = (float)Math.Max(0, style.BorderRadius);
-        using (var backgroundPaint = new SKPaint
-        {
-            Color = ParseColor(style.BackgroundColor),
-            IsAntialias = true,
-            Style = SKPaintStyle.Fill,
-        })
-        {
-            canvas.DrawRoundRect(rect, radius, radius, backgroundPaint);
-        }
-
-        if (style.BorderWidth > 0)
-        {
-            var inset = (float)Math.Min(style.BorderWidth / 2, Math.Min(width, height) / 2d);
-            using var borderPaint = new SKPaint
-            {
-                Color = ParseColor(style.BorderColor),
-                IsAntialias = true,
-                Style = SKPaintStyle.Stroke,
-                StrokeWidth = (float)style.BorderWidth,
-            };
-            canvas.DrawRoundRect(
-                new SKRect(inset, inset, width - inset, height - inset),
-                Math.Max(0, radius - inset),
-                Math.Max(0, radius - inset),
-                borderPaint);
-        }
-
-        canvas.Save();
-        canvas.ClipRoundRect(new SKRoundRect(rect, radius), SKClipOperation.Intersect, antialias: true);
-        var defaultColor = ParseColor(style.TextColor);
-        var xStart = (float)style.PaddingLeft;
-        var baseline = (float)style.PaddingTop;
-        using var textPaint = new SKPaint { IsAntialias = true, Color = defaultColor };
-
-        if (!string.IsNullOrWhiteSpace(speakerName))
-        {
-            baseline -= nameMetrics.Ascent;
-            canvas.DrawText(speakerName, xStart, baseline, nameFont, textPaint);
-            baseline += nameMetrics.Descent + nameMetrics.Leading + 6;
-        }
-
-        baseline -= bodyMetrics.Ascent;
-        foreach (var line in lines)
-        {
-            var lineX = style.TextAlign switch
-            {
-                "center" => xStart + ((contentWidth - line.Width) / 2),
-                "right" => xStart + contentWidth - line.Width,
-                _ => xStart,
-            };
-
-            foreach (var piece in line.Pieces)
-            {
-                textPaint.Color = piece.Color is null ? defaultColor : ParseInlineColor(piece.Color, defaultColor);
-                canvas.DrawText(piece.Text, lineX, baseline, bodyFont, textPaint);
-                lineX += piece.Width;
-            }
-
-            baseline += bodyLineHeight;
-        }
-
-        canvas.Restore();
-        return new RenderedTexture(CreateTexture(graphicsDevice, bitmap), width, height);
+        if (raster.Dialogue == NovellMaker.Core.Screens.DialogueBinding.None || raster.Style is null)
+            return RenderButton(device, raster.Text, raster.Width, raster.Height, raster.OffsetX, raster.OffsetY, raster.LogicalHeight, raster.Transparent);
+        using var bitmap = NovellMaker.Rendering.DialogueRasterizer.Render(raster.Dialogue, raster.Style, raster.Text,
+            raster.LogicalWidth, raster.LogicalHeight, raster.Width, raster.Height, raster.OffsetX, raster.OffsetY);
+        return new(CreateTexture(device, bitmap), raster.Width, raster.Height);
     }
-
     public static RenderedTexture? RenderDiagnostics(
         GraphicsDevice graphicsDevice,
         IReadOnlyList<string> diagnostics)

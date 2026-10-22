@@ -30,6 +30,15 @@ public sealed class ScreenStack
     }
 
     public Guid SessionId { get; }
+    /// <summary>Host-only read projection for rendering/input. Does not commit nodes or change Lua versions.</summary>
+    public Func<ScreenInstance, ScreenDefinition, ScreenDefinition>? Presentation { get; set; }
+    internal ScreenDefinition VisualDefinition(ScreenInstance instance, ScreenDefinition? source = null)
+    {
+        source ??= instance.Definition;
+        var result = Presentation?.Invoke(instance, source) ?? source;
+        if (result.Id != source.Id) throw new ArgumentException("Проекция принадлежит другому ресурсу.");
+        return result;
+    }
     public ImmutableArray<ScreenInstance> Instances => instances;
     public ScreenActivation? Focus => focus;
     public bool PausesScenario => instances.Any(i => i.Policy.PauseScenario);
@@ -73,8 +82,9 @@ public sealed class ScreenStack
         if (definition.Id != instance.Definition.Id || instances.Sum(i => i.Definition.Nodes.Length) - instance.Definition.Nodes.Length + definition.Nodes.Length > MaxSessionNodes)
             throw new InvalidOperationException("Чужой ресурс или превышен бюджет узлов сеанса.");
         // Text updates must not swallow a press or reset focus on another screen.
-        if (capture?.InstanceId == instance.Id && !definition.Buttons.Any(n => n.Id == capture.NodeId)) capture = null;
-        if (focus?.InstanceId == instance.Id && !definition.Buttons.Any(n => n.Id == focus.NodeId)) focus = null;
+        var buttons = VisualDefinition(instance, definition).Buttons;
+        if (capture?.InstanceId == instance.Id && !buttons.Any(n => n.Id == capture.NodeId)) capture = null;
+        if (focus?.InstanceId == instance.Id && !buttons.Any(n => n.Id == focus.NodeId)) focus = null;
         instance.Definition = definition;
         instance.Version++;
     }
@@ -101,24 +111,25 @@ public sealed class ScreenStack
         {
             capture = null;
             var owner = instances.Single(i => i.Id == pressed.InstanceId);
-            return new(true, owner.Definition.HitTest(input.X, input.Y) == pressed.NodeId ? pressed : null);
+            return new(true, VisualDefinition(owner).HitTest(input.X, input.Y) == pressed.NodeId ? pressed : null);
         }
         if (input.Kind == ScreenInputKind.PointerDown) capture = null;
         foreach (var instance in instances.Reverse())
         {
+            var definition = VisualDefinition(instance);
             if (input.Kind is ScreenInputKind.PointerDown or ScreenInputKind.PointerUp)
             {
-                if (instance.Definition.HitTest(input.X, input.Y) is { } node)
+                if (definition.HitTest(input.X, input.Y) is { } node)
                 {
                     focus = new(instance.Id, node);
                     if (input.Kind == ScreenInputKind.PointerDown) capture = focus;
                     return new(true);
                 }
-                if (instance.Definition.PointerTarget(input.X, input.Y) is not null) return new(true);
+                if (definition.PointerTarget(input.X, input.Y) is not null) return new(true);
             }
             else
             {
-                var buttons = instance.Definition.Buttons;
+                var buttons = definition.Buttons;
                 if (!buttons.IsEmpty)
                 {
                     var index = -1;

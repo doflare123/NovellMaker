@@ -206,9 +206,9 @@ public sealed class WindowsExportTests
         StringAssert.Contains(trace[9].GetProperty("Text").GetString()!, "Ветка успеха");
         for (var i = 10; i <= 15; i++)
             Assert.AreEqual(trace[9].GetProperty("State").GetRawText(), trace[i].GetProperty("State").GetRawText(), $"Screen input reached the packaged story at {i}.");
-        Assert.AreEqual(2, trace[12].GetProperty("ScreenCount").GetInt32());
-        Assert.AreEqual(1, trace[14].GetProperty("ScreenCount").GetInt32());
-        Assert.AreEqual(0, trace[15].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(3, trace[12].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(2, trace[14].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(1, trace[15].GetProperty("ScreenCount").GetInt32());
         Assert.AreEqual(0, json.RootElement.GetProperty("Diagnostics").GetArrayLength());
         Assert.IsTrue(json.RootElement.GetProperty("Packaged").GetBoolean());
         Assert.IsGreaterThan(0L, json.RootElement.GetProperty("AudioSubmittedBytes").GetInt64());

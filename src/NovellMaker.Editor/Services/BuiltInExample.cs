@@ -61,6 +61,8 @@ public static class BuiltInExample
             Cue(3, ScriptPhase.AfterLine, EndingChoice()),
             Cue(4, ScriptPhase.AfterLine, EndingChoice()),
         ] };
+        scene = scene with { Canvas = scene.Canvas with { Nodes = DialogueCanvas.Add(scene.Canvas.Nodes, scene.Id,
+            NovellMaker.Core.Styling.DialogueCssParser.Parse(NovellMaker.Core.Styling.DialogueCssParser.DefaultCss), legacy: true) } };
         return Examples.ExampleInterfaceModule.AddTo(NovelProject.Create("Проверочный фрагмент") with { Scenes = [scene], Images = [.. images], Characters = [guide, traveller], Scripts = [terminalStart] });
     }
 

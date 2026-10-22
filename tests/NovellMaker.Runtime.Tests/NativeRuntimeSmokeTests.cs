@@ -16,6 +16,37 @@ namespace NovellMaker.Runtime.Tests;
 public sealed class NativeRuntimeSmokeTests
 {
     [TestMethod]
+    public async Task NativeDialogueGeometryOverflowReportsFallbackAndKeepsDrawing()
+    {
+        if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1") Assert.Inconclusive("Set NOVELLMAKER_NATIVE_SMOKE=1.");
+        var directory = Path.Combine(FindRepositoryRoot(), "artifacts", "screenshots", "stage4", "geometry-fallback");
+        var images = Path.Combine(directory, "Assets", "Images"); Directory.CreateDirectory(images);
+        var fixture = await CreateFixtureAsync(directory, images, false); var store = new JsonProjectStore(); var project = await store.LoadAsync(fixture.ProjectPath);
+        var scene = project.Scenes[0]; var root = scene.Canvas.Nodes.Single(n => n.ParentId is null);
+        var panel = scene.Canvas.Nodes.Single(n => n.Dialogue == NovellMaker.Core.Screens.DialogueBinding.CssPanel);
+        scene = scene with { Canvas = scene.Canvas with { Nodes = scene.Canvas.Nodes.Replace(root, root with { Geometry = new() { ScaleX = 1000, ScaleY = 1000 } })
+                .Replace(panel, panel with { Geometry = new() { ScaleX = 3 } }) },
+            DialogueCssOverride = ".dialogue { animation-name: huge; animation-duration:1s; } @keyframes huge { from { transform:scale(100); } to { transform:scale(100); } }" };
+        await store.SaveAsync(fixture.ProjectPath, project with { Scenes = [scene] });
+        var style = NovellMaker.Core.Styling.DialogueCssParser.Parse(scene.DialogueCssOverride);
+        Assert.AreEqual(100d, style.Sample(TimeSpan.Zero).Scale);
+        Assert.Throws<ArgumentException>(() => DialogueCanvas.Present(scene.AsScreen().Definition(), style, "Имя", "Текст", true, 150, 30, animate: true));
+        var png = Path.Combine(directory, "frame.png"); var report = Path.ChangeExtension(png, ".json");
+        var runtime = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
+        using var process = Process.Start(CreateStartInfo(runtime, fixture.ProjectPath, directory, fixture.SceneId, fixture.StartLineId, png, report))!;
+        var stderr = process.StandardError.ReadToEndAsync(); var stdout = process.StandardOutput.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException) { process.Kill(true); await process.WaitForExitAsync(); Assert.Fail("Dialogue geometry fallback timed out."); }
+        Assert.AreEqual(0, process.ExitCode, await stderr + await stdout);
+        using var json = JsonDocument.Parse(File.ReadAllText(report));
+        Assert.IsTrue(json.RootElement.GetProperty("Loaded").GetBoolean());
+        Assert.IsGreaterThanOrEqualTo(4, json.RootElement.GetProperty("DrawFrames").GetInt32());
+        Assert.IsTrue(json.RootElement.GetProperty("Diagnostics").EnumerateArray().Any(d => d.GetString()!.Contains("Геометрия диалога")));
+        Assert.IsTrue(File.Exists(png));
+    }
+
+    [TestMethod]
     public async Task NativeProjectHotkeyAtFullStackReportsFailureAndKeepsRendering()
     {
         if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1") Assert.Inconclusive("Set NOVELLMAKER_NATIVE_SMOKE=1.");
@@ -231,16 +262,16 @@ public sealed class NativeRuntimeSmokeTests
         Assert.IsTrue(trace.All(t => t.GetProperty("Success").GetBoolean()));
         for (var i = 1; i <= 7; i++)
             Assert.AreEqual(trace[0].GetProperty("State").GetRawText(), trace[i].GetProperty("State").GetRawText(), $"Story mutated at menu step {i}.");
-        Assert.AreEqual(authorMenu ? 3 : 2, trace[3].GetProperty("ScreenCount").GetInt32());
-        Assert.AreEqual(authorMenu ? 2 : 1, trace[5].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(3, trace[3].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(2, trace[5].GetProperty("ScreenCount").GetInt32());
         for (var i = 1; i <= 6; i++)
         {
             Assert.AreEqual(3, trace[i].GetProperty("PausedAudioSources").GetInt32());
             Assert.AreEqual(trace[1].GetProperty("AudioSubmittedBytes").GetInt64(), trace[i].GetProperty("AudioSubmittedBytes").GetInt64());
         }
-        Assert.AreEqual(authorMenu ? 1 : 0, trace[7].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(1, trace[7].GetProperty("ScreenCount").GetInt32());
         Assert.AreEqual(0, trace[7].GetProperty("PausedAudioSources").GetInt32());
-        Assert.AreEqual(authorMenu ? 1 : 0, trace[10].GetProperty("ScreenCount").GetInt32());
+        Assert.AreEqual(1, trace[10].GetProperty("ScreenCount").GetInt32());
         var state = JsonSerializer.Deserialize<GameState>(trace[11].GetProperty("State"))!;
         Assert.AreEqual(3d, state.Time); Assert.AreEqual("timer", state.Wait?.Mode);
         Assert.AreEqual(0.65, state.Placements[actor.Id].X, 1e-9);
@@ -364,6 +395,9 @@ public sealed class NativeRuntimeSmokeTests
             },
         };
         project = NovellMaker.Testing.AudioFixture.Attach(project, fixtureDirectory);
+        scene = scene with { Canvas = scene.Canvas with { Nodes = DialogueCanvas.Add(scene.Canvas.Nodes, scene.Id,
+            NovellMaker.Core.Styling.DialogueCssParser.Parse(project.DialogueUi.Css), legacy: true) } };
+        project = project with { Scenes = [scene] };
         project = project with { Audio = project.Audio with {
             Voices = project.Audio.Voices.SetItem(third.Id, project.Audio.Voices[scene.Lines[0].Id]),
             LineEffects = project.Audio.LineEffects.SetItem(third.Id, project.Audio.Assets[0].Id)
