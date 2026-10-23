@@ -15,7 +15,7 @@ public sealed class PlayerProfileTests
     private static PlayerSettings Defaults => PlayerSettings.Defaults(new());
     private sealed class Folder : IDisposable
     {
-        internal string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "nm-profile-" + Guid.NewGuid().ToString("N"));
+        internal string Path { get; } = System.IO.Path.Combine(TestPaths.TempDirectory, "nm-profile-" + Guid.NewGuid().ToString("N"));
         internal string File => System.IO.Path.Combine(Path, "profile.json");
         public void Dispose() { if (Directory.Exists(Path)) Directory.Delete(Path, true); }
     }

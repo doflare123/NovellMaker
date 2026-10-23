@@ -13,7 +13,7 @@ public sealed class RuntimeGameServicesTests
     [TestMethod]
     public async Task CorruptSlotWithEmptyLineIdIsReportedByPollAlongsideHealthySlot()
     {
-        var path = Path.Combine(Path.GetTempPath(), "slot-service-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(TestPaths.TempDirectory, "slot-service-" + Guid.NewGuid().ToString("N"));
         try
         {
             var project = Project(); using var session = new GameSession(project, project.Scenes[0].Id, "ru");

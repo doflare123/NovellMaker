@@ -15,7 +15,7 @@ public sealed class GameSlotTests
     };
     private sealed class Folder : IDisposable
     {
-        public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "slots-" + Guid.NewGuid().ToString("N"));
+        public string Path { get; } = System.IO.Path.Combine(TestPaths.TempDirectory, "slots-" + Guid.NewGuid().ToString("N"));
         public string Slots => System.IO.Path.Combine(Path, "slots");
         public string Quick => System.IO.Path.Combine(Path, "quick.json");
         public Folder() => Directory.CreateDirectory(Path);

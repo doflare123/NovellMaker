@@ -19,4 +19,5 @@
   </ItemGroup>
   <ItemGroup><Compile Include="../AudioFixture.cs" Link="AudioFixture.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../ScreenFixture.cs" Link="ScreenFixture.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../TestPaths.cs" Link="TestPaths.cs" /></ItemGroup>
 </Project>

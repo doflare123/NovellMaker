@@ -15,6 +15,7 @@
   </ItemGroup>
   <ItemGroup><Compile Include="../AudioFixture.cs" Link="AudioFixture.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../ScreenFixture.cs" Link="ScreenFixture.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../TestPaths.cs" Link="TestPaths.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../../src/NovellMaker.Editor/Examples/ExampleInterfaceModule.cs" Link="ExampleInterfaceModule.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../../src/NovellMaker.Editor/Examples/ExampleTriggersModule.cs" Link="ExampleTriggersModule.cs" /></ItemGroup>
 </Project>

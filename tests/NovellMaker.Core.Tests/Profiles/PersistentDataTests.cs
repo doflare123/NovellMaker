@@ -15,7 +15,7 @@ public sealed class PersistentDataTests
     private static ImmutableDictionary<string,string> Data(params string[] keys) => keys.ToImmutableDictionary(k=>k,_=>"true",StringComparer.Ordinal);
     private sealed class Folder : IDisposable
     {
-        internal string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(),"nm-data-"+Guid.NewGuid().ToString("N"));
+        internal string Path { get; } = System.IO.Path.Combine(TestPaths.TempDirectory,"nm-data-"+Guid.NewGuid().ToString("N"));
         internal string File => System.IO.Path.Combine(Path,"profile.json");
         public void Dispose() { if (Directory.Exists(Path)) Directory.Delete(Path,true); }
     }
