@@ -54,9 +54,14 @@ internal sealed class ScreenLuaVm
         Bind("close", _ => Add(new("close", null, null, null)));
         Bind("get", a => snapshot.TryGetValue(Str(a, 0), out var value) ? DynValue.NewString(value) : DynValue.Nil);
         string? Optional(CallbackArguments a, int index) => a[index].IsNil() ? null : Str(a, index);
-        DynValue Service(GameServiceAction action, string? slot = null, string? title = null, Guid? scene = null, PlayerSettingChange? setting = null)
+        // AsType(String) accepts numbers in MoonSharp. New author-data APIs require exact strings.
+        string ExactString(CallbackArguments a, int index) => a[index].Type == DataType.String ? a[index].String :
+            throw new ScriptRuntimeException("Ожидалась строка.");
+        string? OptionalString(CallbackArguments a, int index) => a[index].IsNil() ? null : ExactString(a, index);
+        Bind("trigger", a => Add(new("trigger", null, null, null) { Trigger = new(ExactString(a, 0), OptionalString(a, 1)) }));
+        DynValue Service(GameServiceAction action, string? slot = null, string? title = null, Guid? scene = null, PlayerSettingChange? setting = null, string? key = null, string? data = null)
         {
-            var command = new GameServiceCommand(Guid.NewGuid(), action, slot, title, scene) { Setting = setting };
+            var command = new GameServiceCommand(Guid.NewGuid(), action, slot, title, scene) { Setting = setting, Key = key, DataValue = data };
             command.Validate(); Add(new("service", null, null, null) { Service = command });
             return DynValue.NewString(command.RequestId.ToString("N"));
         }
@@ -70,6 +75,8 @@ internal sealed class ScreenLuaVm
         Bind("load_slot", a => Service(GameServiceAction.LoadSlot, Str(a, 0)));
         Bind("delete_slot", a => Service(GameServiceAction.DeleteSlot, Str(a, 0)));
         Bind("get_settings", _ => Service(GameServiceAction.GetSettings));
+        Bind("get_persistent", a => Service(GameServiceAction.GetPersistent, key: ExactString(a, 0)));
+        Bind("set_persistent", a => Service(GameServiceAction.SetPersistent, key: ExactString(a, 0), data: OptionalString(a, 1)));
         Bind("set_setting", a =>
         {
             var value = a[1];
@@ -97,6 +104,12 @@ internal sealed class ScreenLuaVm
             argument.Set("node", value.NodeId is { } node ? DynValue.NewString(new ScreenNodeHandle(Definition.Id, instanceId, node).ToString()) : DynValue.Nil);
             argument.Set("x", DynValue.NewNumber(value.X)); argument.Set("y", DynValue.NewNumber(value.Y));
             argument.Set("seconds", DynValue.NewNumber(value.Seconds));
+            if (value.Trigger is { } trigger)
+            {
+                trigger.Validate();
+                argument.Set("trigger_id", DynValue.NewString(trigger.Id));
+                argument.Set("trigger_data", trigger.Data is { } payload ? DynValue.NewString(payload) : DynValue.Nil);
+            }
             if (value.Result is { } result)
             {
                 result.Validate();
@@ -104,7 +117,10 @@ internal sealed class ScreenLuaVm
                 argument.Set("operation", DynValue.NewString(result.Action.ToString()));
                 argument.Set("success", DynValue.NewBoolean(result.Success));
                 argument.Set("message", DynValue.NewString(result.Message));
+                argument.Set("persisted", result.ProfileSaved is { } saved ? DynValue.NewBoolean(saved) : DynValue.Nil);
                 argument.Set("slot_id", result.SlotId is { } slot ? DynValue.NewString(slot) : DynValue.Nil);
+                argument.Set("key", result.Key is { } key ? DynValue.NewString(key) : DynValue.Nil);
+                argument.Set("value", result.DataValue is { } dataValue ? DynValue.NewString(dataValue) : DynValue.Nil);
                 if (result.Settings is { } settings)
                 {
                     var values = new Table(script);

@@ -18,13 +18,23 @@ internal sealed class RuntimeSettingsServices(GameSession session, PlayerSetting
     internal bool Request(ScreenInstance? origin, GameServiceCommand command, long generation)
     {
         command.Validate();
-        if (command.Action is not (GameServiceAction.GetSettings or GameServiceAction.SetSetting)) throw new ArgumentException("Ожидалась команда настроек.");
+        if (command.Action is not (GameServiceAction.GetSettings or GameServiceAction.SetSetting or GameServiceAction.GetPersistent or GameServiceAction.SetPersistent))
+            throw new ArgumentException("Ожидалась команда профиля.");
         if (!IsCurrent(origin, generation)) return false;
-        if (command.Action == GameServiceAction.GetSettings)
+        if (command.Action is GameServiceAction.GetSettings or GameServiceAction.GetPersistent)
         { Complete(origin, command, true, settings.Diagnostic); return true; }
         if (pending is { } previous && !IsCurrent(previous.Origin, previous.Generation)) pending = null;
         if (pending is not null)
-        { Complete(origin, command, false, "Запись настроек уже выполняется."); return false; }
+        { Complete(origin, command, false, "Запись профиля уже выполняется."); return false; }
+        if (command.Action == GameServiceAction.SetPersistent)
+        {
+            long revision;
+            try { revision = settings.SetPersistent(new(command.Key!, command.DataValue)); }
+            catch (ArgumentException)
+            { Complete(origin, command, false, "Превышен бюджет постоянных данных профиля."); return false; }
+            if (!settings.IsBusy) { Complete(origin, command, true, "Постоянные данные не изменились."); return true; }
+            pending = new(origin, command, generation, revision); LastResult = null; return true;
+        }
         var updated = settings.Current.Apply(command.Setting!);
         try { apply(updated); }
         catch (InvalidOperationException)
@@ -48,7 +58,14 @@ internal sealed class RuntimeSettingsServices(GameSession session, PlayerSetting
 
     private void Complete(ScreenInstance? origin, GameServiceCommand command, bool success, string message)
     {
-        var result = new GameServiceResult(command.RequestId, command.Action, success, message, null, []) { Settings = settings.Current };
+        var data = command.Action is GameServiceAction.GetPersistent or GameServiceAction.SetPersistent;
+        var result = new GameServiceResult(command.RequestId, command.Action, success, message, null, [])
+        {
+            Settings = data ? null : settings.Current,
+            ProfileSaved = settings.IsPersisted,
+            Key = command.Key,
+            DataValue = data ? settings.GetPersistent(command.Key!) : null,
+        };
         result.Validate(); LastResult = result; Completed?.Invoke(origin, result);
     }
 }

@@ -1,4 +1,4 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Screens;
 using NovellMaker.Core.Scenes;
@@ -103,6 +103,12 @@ public sealed partial class EditorSession
     {
         if (!CanEdit || project is null) return;
         EditProject(Examples.ExamplePlayerSettingsModule.AddTo(project));
+    }
+
+    public void AddTriggersExample()
+    {
+        if (!CanEdit || project is null) return;
+        EditProject(Examples.ExampleTriggersModule.AddTo(project));
     }
 
     public void DuplicateScreen()

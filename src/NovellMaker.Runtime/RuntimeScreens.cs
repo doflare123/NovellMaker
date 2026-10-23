@@ -118,6 +118,9 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
         {
             if (hostService is not null && binding.ServiceCommand() is { } command)
             {
+                if (instance is not null && Scripts?.IsAvailable(instance) == true &&
+                    Scripts.ReserveServiceReply(instance, command) != ScreenEventAdmission.Accepted)
+                { Report("Нет места для ответа игрового сервиса: команда не принята."); return; }
                 hostService(instance, command, instance is not null && instanceGenerations.TryGetValue(instance.Id, out var captured) ? captured : generation());
                 return;
             }

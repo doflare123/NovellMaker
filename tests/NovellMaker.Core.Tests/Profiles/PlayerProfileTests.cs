@@ -84,7 +84,7 @@ public sealed class PlayerProfileTests
         }
         var text = issue switch
         {
-            "duplicate" => node.ToJsonString().Replace("\"Version\":1", "\"Version\":1,\"Version\":1", StringComparison.Ordinal),
+            "duplicate" => node.ToJsonString().Replace("\"Version\":3", "\"Version\":3,\"Version\":3", StringComparison.Ordinal),
             "tooBig" => new string(' ', PlayerProfileStore.MaxFileBytes + 1),
             "invalidRoot" => "[]", _ => node.ToJsonString(),
         };
@@ -94,7 +94,7 @@ public sealed class PlayerProfileTests
     }
 
     [TestMethod]
-    [DataRow(0)] [DataRow(2)]
+    [DataRow(0)] [DataRow(4)]
     public async Task UnsupportedVersionIsNotMigratedOrOverwritten(int version)
     {
         using var folder = new Folder(); var store = new PlayerProfileStore(Guid.NewGuid(), folder.File); await store.SaveAsync(Defaults);
@@ -147,9 +147,9 @@ public sealed class PlayerProfileTests
     }
 
     [TestMethod]
-    [DataRow("missing", 0)] [DataRow("missing", 2)]
-    [DataRow("loaded", 0)] [DataRow("loaded", 2)]
-    [DataRow("corrupt", 0)] [DataRow("corrupt", 2)]
+    [DataRow("missing", 0)] [DataRow("missing", 4)]
+    [DataRow("loaded", 0)] [DataRow("loaded", 4)]
+    [DataRow("corrupt", 0)] [DataRow("corrupt", 4)]
     public async Task UnsupportedBackupVersionBlocksEveryWriteBeforeChangingEitherFile(string primaryState, int version)
     {
         using var folder = new Folder(); var store = new PlayerProfileStore(Guid.NewGuid(), folder.File);
@@ -237,8 +237,8 @@ public sealed class PlayerProfileTests
         internal readonly List<PlayerSettings> Writes = [];
         internal readonly Queue<TaskCompletionSource> Gates = new();
         public Task<PlayerProfileRead> ReadAsync(PlayerSettings defaults, CancellationToken token = default) => Task.FromResult(new PlayerProfileRead(defaults, PlayerProfileStatus.Missing, ""));
-        public Task SaveAsync(PlayerSettings settings, CancellationToken token = default)
-        { lock (Writes) { Writes.Add(settings); return Gates.Dequeue().Task; } }
+        public Task SaveAsync(PlayerProfileData profile, CancellationToken token = default)
+        { lock (Writes) { Writes.Add(profile.Settings); return Gates.Dequeue().Task; } }
         internal async Task WaitWrites(int count)
         { for (var i = 0; i < 300 && Writes.Count < count; i++) await Task.Delay(5); Assert.HasCount(count, Writes); }
     }
@@ -249,6 +249,7 @@ public sealed class PlayerProfileTests
         var store = new ControlledStore(); var written = new TaskCompletionSource(); store.Gates.Enqueue(written);
         var host = new PlayerSettingsSession(store, new(Defaults with { Fullscreen = true }, PlayerProfileStatus.Loaded, ""));
         host.UseStartupFallback(host.Current with { Fullscreen = false });
+        Assert.IsFalse(host.IsPersisted);
         Assert.IsFalse(host.Current.Fullscreen); Assert.IsFalse(host.IsBusy); Assert.IsEmpty(store.Writes);
         Assert.Throws<ArgumentException>(() => host.UseStartupFallback(Defaults with { Sound = new(2, false) }));
         host.Set(host.Current with { Voice = new(.5f, false) }); await store.WaitWrites(1);

@@ -13,13 +13,13 @@ namespace NovellMaker.Core.Tests.Screens;
 public sealed class GameServiceLuaTests
 {
     [TestMethod]
-    [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)]
+    [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)] [DataRow(5)] [DataRow(6)] [DataRow(7)]
     public void SettingsWireExplicitlyRejectsEveryEarlierProtocol(int protocol)
     {
         var worker = new ScreenLuaWorkerService();
         var request = ScreenLuaProtocolTests.Request("handshake") with { Protocol = protocol };
         var response = worker.Process(request);
-        Assert.AreEqual("error", response.Kind); Assert.AreEqual(5, response.Protocol);
+        Assert.AreEqual("error", response.Kind); Assert.AreEqual(8, response.Protocol);
         Assert.IsEmpty(response.Changes);
     }
 
@@ -73,6 +73,7 @@ public sealed class GameServiceLuaTests
         var refs = ImmutableDictionary<string, Guid>.Empty.Add("label", instance.Definition.Nodes[2].Id);
         session.Attach(instance, source, refs); session.Attach(other, source, refs);
         await ScreenLuaSessionTests.Drain(session);
+        Assert.AreEqual(ScreenEventAdmission.Accepted, session.ReserveServiceReply(instance, new(result.RequestId, result.Action)));
         Assert.AreEqual(ScreenEventAdmission.Accepted, session.Enqueue(instance, new("service_result") { Result = result }, snapshot));
         await ScreenLuaSessionTests.Drain(session);
         Assert.IsEmpty(session.Diagnostics); Assert.IsTrue(session.IsAvailable(instance)); Assert.IsTrue(session.IsAvailable(other));
@@ -173,7 +174,7 @@ public sealed class GameServiceLuaTests
         await ScreenLuaSessionTests.Drain(session); var request = session.DrainServices().Single().Command;
         Assert.AreEqual(GameServiceAction.GetSettings, request.Action);
         var value = PlayerSettings.Defaults(new()) with { Master = new(.25f, false), Voice = new(1, true) };
-        var result = new GameServiceResult(request.RequestId, request.Action, true, "", null, []) { Settings = value };
+        var result = new GameServiceResult(request.RequestId, request.Action, true, "", null, []) { Settings = value, ProfileSaved = true };
         Assert.AreEqual(ScreenEventAdmission.Accepted, session.Enqueue(instance, new("service_result") { Result = result }, ImmutableDictionary<string, string>.Empty));
         await ScreenLuaSessionTests.Drain(session); Assert.IsEmpty(session.Diagnostics);
         Assert.AreEqual("muted", instance.Definition.Nodes[2].Text);

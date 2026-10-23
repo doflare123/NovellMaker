@@ -1,4 +1,4 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
@@ -108,6 +108,7 @@ public sealed class ScreenPropertiesView : UserControl
         settings.Children.Add(startScreen);
         Button(settings, "AddGameMenusExample", "Добавить пример главного меню и слотов", () => session?.AddGameMenusExample());
         Button(settings, "AddPlayerSettingsExample", "Добавить пример настроек игрока (F9)", () => session?.AddPlayerSettingsExample());
+        Button(settings, "AddTriggersExample", "Добавить пример триггеров и данных (F8)", () => session?.AddTriggersExample());
         startScreen.IsCheckedChanged += (_, _) => { if (!refreshing && session?.SelectedScreen is { } selected) Try(() => session.SetStartScreen(startScreen.IsChecked == true ? selected.Id : null)); };
         settings.Children.Add(pauseBelow); settings.Children.Add(blockBelow);
         settings.Children.Add(new HelpTip { Explanation = "Эти настройки действуют при открытии поверх другой сцены. При обычном переходе сцена исполняет собственные фразы и скрипт. Слой показывает компоненты и принимает их события; нижний сюжет сохраняет свою позицию." });

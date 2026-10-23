@@ -1,4 +1,4 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Screens;
 using NovellMaker.Editor.Services;
@@ -12,14 +12,15 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ScreenAuthoringTests
 {
     [TestMethod]
-    public async Task PlayerSettingsExampleHasHistoryExternalLuaAndSurvivesSaveAsAndPreview()
+    [DataRow(false)] [DataRow(true)]
+    public async Task ProfileExamplesHaveHistoryExternalLuaAndSurviveSaveAsAndPreview(bool achievements)
     {
         using var folder = new Folder(); var dialogs = new Dialogs { SavePath = Path.Combine(folder.Path, "settings.novell") }; var preview = new Preview();
         using var session = await Session(dialogs, preview: preview); session.AddScene(); session.ActiveScene!.AddLine();
-        var before = session.Project!; var active = session.ActiveScene.Id; session.AddPlayerSettingsExample(); var after = session.Project!;
+        var before = session.Project!; var active = session.ActiveScene.Id; if (achievements) session.AddTriggersExample(); else session.AddPlayerSettingsExample(); var after = session.Project!;
         Assert.AreEqual(before.Scenes.Length + 1, after.Scenes.Length); Assert.AreEqual(before.Scripts.Length + 1, after.Scripts.Length);
         Assert.IsNull(after.StartScreenSceneId); Assert.AreEqual(active, session.ActiveScene.Id);
-        var example = after.Scenes.Last(); Assert.AreEqual(example.Id, after.InputBindings.Single(b => b.Key == "F9").TargetSceneId);
+        var example = after.Scenes.Last(); Assert.AreEqual(example.Id, after.InputBindings.Single(b => b.Key == (achievements ? "F8" : "F9")).TargetSceneId);
         Assert.AreEqual(after.Scripts.Last().Id, example.Canvas.HandlerScriptId);
         session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo(); Assert.IsTrue(after.ContentEquals(session.Project));
         await session.SaveAsync(); Assert.IsTrue(after.ContentEquals(await new JsonProjectStore().LoadAsync(dialogs.SavePath)));

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using NovellMaker.Core.Execution;
+using NovellMaker.Core.Triggers;
 
 namespace NovellMaker.Core.Screens.Lua;
 
@@ -25,7 +26,8 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         internal string? Error;
     }
     private sealed record Work(Entry Entry, string Kind, ScreenLuaEvent? Event,
-        ImmutableDictionary<string, string> Snapshot, long Submitted);
+        ImmutableDictionary<string, string> Snapshot, long Submitted, int ChainDepth = 0);
+    private sealed record ServiceReply(Entry Entry, GameServiceAction Action, int ChainDepth);
     private sealed class Conversation(IScreenLuaConnection connection)
     {
         internal readonly IScreenLuaConnection Connection = connection;
@@ -44,6 +46,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     private readonly Queue<string> diagnostics = [];
     private readonly Queue<ScreenLuaIssue> issues = [];
     private readonly Queue<ScreenServiceInvocation> services = [];
+    private readonly Dictionary<Guid, ServiceReply> serviceReplies = [];
     private Conversation conversation;
     private Pending? pending;
     private bool disposed;
@@ -61,6 +64,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     public long Generation { get; private set; } = 1;
     public int AppliedBatches { get; private set; }
     public int QueuedEvents => queue.Count;
+    public int ReservedServiceReplies => serviceReplies.Count;
     public bool HasPending => pending is not null || queue.Count != 0 || closes.Count != 0;
     public Task? PendingTask => pending?.Task;
     public ImmutableArray<string> Diagnostics => [.. diagnostics];
@@ -71,6 +75,18 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     public ImmutableArray<ScreenServiceInvocation> DrainServices()
     {
         var result = services.Where(s => IsAvailable(s.Instance)).ToImmutableArray(); services.Clear(); return result;
+    }
+
+    /// <summary>External project binding: reserve a bounded reply before starting its host service.</summary>
+    public ScreenEventAdmission ReserveServiceReply(ScreenInstance instance, GameServiceCommand command)
+    {
+        command.Validate();
+        Reconcile();
+        if (!IsAvailable(instance)) return ScreenEventAdmission.Unavailable;
+        if (queue.Count + serviceReplies.Count >= MaximumQueuedEvents || serviceReplies.ContainsKey(command.RequestId))
+            return ScreenEventAdmission.Busy;
+        serviceReplies.Add(command.RequestId, new(entries[instance.Id], command.Action, 1));
+        return ScreenEventAdmission.Accepted;
     }
 
     public void Attach(ScreenInstance instance, string source, ImmutableDictionary<string, Guid>? references = null,
@@ -84,7 +100,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             !LuaActionScript.ValidReferences(references) || references.Any(r => !instance.Definition.Nodes.Any(n => n.Id == r.Value)) ||
             !LuaLimits.ValidVariables(snapshot)) throw new ArgumentException("Неверный владелец, ссылки или снимок экранного Lua.");
         if (faulted) Reset();
-        if (queue.Count >= MaximumQueuedEvents) throw new InvalidOperationException("Очередь событий экрана заполнена.");
+        if (queue.Count + serviceReplies.Count >= MaximumQueuedEvents) throw new InvalidOperationException("Очередь событий экрана заполнена.");
         var entry = new Entry(instance, source, references, snapshot);
         entries.Add(instance.Id, entry);
         queue.AddLast(new Work(entry, "load", null, snapshot, clock.GetTimestamp()));
@@ -103,12 +119,28 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         ScreenLuaProtocol.ValidateEvent(stack.VisualDefinition(instance), value);
         ArgumentNullException.ThrowIfNull(snapshot);
         if (!LuaLimits.ValidVariables(snapshot)) throw new ArgumentException("Превышен бюджет снимка события.");
+        if (value.Result is { } result)
+        {
+            if (!serviceReplies.TryGetValue(result.RequestId, out var reply) || !ReferenceEquals(reply.Entry, entry) || reply.Action != result.Action)
+                return ScreenEventAdmission.Unavailable;
+            serviceReplies.Remove(result.RequestId);
+            var response = new Work(entry, "event", value, snapshot, clock.GetTimestamp(), reply.ChainDepth);
+            // Replace the reserved slot. Completed replies precede ordinary input, in reply-admission order.
+            var ordinary = queue.First;
+            // A project binding may finish before its handler has loaded. Never send its reply to an absent VM.
+            var load = queue.Last;
+            while (load is not null && load.Value.Kind != "load") load = load.Previous;
+            if (load is not null) ordinary = load.Next;
+            while (ordinary is not null && ordinary.Value.Event?.Kind == "service_result") ordinary = ordinary.Next;
+            if (ordinary is null) queue.AddLast(response); else queue.AddBefore(ordinary, response);
+            return ScreenEventAdmission.Accepted;
+        }
         var work = new Work(entry, "event", value, snapshot, clock.GetTimestamp());
         // Coalesce only adjacent motion; never move it across a significant click.
         if (value.Kind is "move" or "hover" && queue.Last is { } last &&
             ReferenceEquals(last.Value.Entry, entry) && last.Value.Event?.Kind == value.Kind && last.Value.Event.NodeId == value.NodeId)
         { last.Value = work; return ScreenEventAdmission.Coalesced; }
-        if (queue.Count >= MaximumQueuedEvents)
+        if (queue.Count + serviceReplies.Count >= MaximumQueuedEvents)
         { Report("Очередь событий экрана заполнена: событие не принято.", ScreenLuaIssueKind.Busy, instance.Id); return ScreenEventAdmission.Busy; }
         queue.AddLast(work);
         return ScreenEventAdmission.Accepted;
@@ -147,10 +179,21 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                         {
                             if (result.Batch!.Service is not null && services.Count >= MaximumQueuedEvents)
                                 throw new InvalidOperationException("Очередь сервисов экрана заполнена.");
+                            if (result.Batch.Service is { } request && (serviceReplies.ContainsKey(request.RequestId) ||
+                                queue.Count + serviceReplies.Count >= MaximumQueuedEvents))
+                                throw new InvalidOperationException("Нельзя зарезервировать ответ сервиса экрана.");
+                            if ((!result.Batch.Triggers.IsEmpty || result.Batch.Service is not null) && ready.Work.ChainDepth >= AuthorTrigger.MaximumChainDepth)
+                                throw new InvalidOperationException("Превышен бюджет глубины цепочки триггеров и сервисов.");
+                            if (!result.Batch.Triggers.IsEmpty && queue.Count + serviceReplies.Count + result.Batch.Triggers.Length > MaximumQueuedEvents)
+                                throw new InvalidOperationException("Превышен бюджет очереди или глубины цепочки триггеров.");
                             stack.Commit(entry.Instance, ready.Stamp.Version, result.Batch!.Definition);
                             AppliedBatches++;
+                            foreach (var trigger in result.Batch.Triggers)
+                                queue.AddLast(new Work(entry, "event", new("trigger") { Trigger = trigger }, ready.Work.Snapshot,
+                                    clock.GetTimestamp(), ready.Work.ChainDepth + 1));
                             if (result.Batch.Service is { } service)
                             {
+                                serviceReplies.Add(service.RequestId, new(entry, service.Action, ready.Work.ChainDepth + 1));
                                 services.Enqueue(new(entry.Instance, service));
                             }
                             if (result.Batch.Close) stack.Close(entry.Instance);
@@ -267,13 +310,18 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         if (Current(entry.Instance) && !entry.Closing)
             Report(message, ScreenLuaIssueKind.QueueExpired, entry.Instance.Id);
         // Nothing was sent: the remote VM and its version are still valid.
-        if (work.Kind == "load") { entry.Error = "Истёк срок загрузки экрана."; RemoveQueued(entry); }
+        if (work.Kind == "load" || work.Event?.Kind == "service_result")
+        {
+            entry.Error = work.Kind == "load" ? "Истёк срок загрузки экрана." : "Истёк срок обработки ответа сервиса.";
+            RemoveQueued(entry); ScheduleClose(entry);
+        }
         if (entry.Closing) ScheduleClose(entry);
     }
     private void RemoveQueued(Entry entry)
     {
         var node = queue.First;
         while (node is not null) { var next = node.Next; if (ReferenceEquals(node.Value.Entry, entry)) queue.Remove(node); node = next; }
+        foreach (var id in serviceReplies.Where(p => ReferenceEquals(p.Value.Entry, entry)).Select(p => p.Key).ToArray()) serviceReplies.Remove(id);
     }
     private void ScheduleClose(Entry entry)
     {
@@ -303,6 +351,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     private void Fail(string message)
     {
         services.Clear();
+        serviceReplies.Clear();
         faulted = true;
         foreach (var entry in entries.Values) { entry.Error = message; entry.Loaded = false; }
         queue.Clear(); closes.Clear();
@@ -332,6 +381,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         Retire();
         entries.Clear(); queue.Clear(); closes.Clear(); diagnostics.Clear(); issues.Clear();
         services.Clear();
+        serviceReplies.Clear();
         Generation++; faulted = false;
         conversation = new(factory());
     }
@@ -343,6 +393,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         Retire();
         entries.Clear(); queue.Clear(); closes.Clear();
         services.Clear();
+        serviceReplies.Clear();
     }
     public async ValueTask DisposeAsync()
     {

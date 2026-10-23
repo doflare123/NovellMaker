@@ -452,7 +452,7 @@ internal sealed partial class RuntimeGame : Game
     private void ApplyService(ScreenInstance? origin, GameServiceCommand command, long generation)
     {
         serviceFeedbackDelivered = false;
-        if (command.Action is GameServiceAction.GetSettings or GameServiceAction.SetSetting)
+        if (command.Action is GameServiceAction.GetSettings or GameServiceAction.SetSetting or GameServiceAction.GetPersistent or GameServiceAction.SetPersistent)
         {
             settingsServices.Request(origin, command, generation);
             saveMessage = serviceFeedbackDelivered ? "" : settingsServices.LastResult?.Message ?? "";

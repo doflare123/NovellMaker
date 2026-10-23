@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Profiles;
 using NovellMaker.Core.Projects;
@@ -13,8 +14,10 @@ public sealed class RuntimeSettingsServicesTests
     {
         internal TaskCompletionSource Saved = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal PlayerSettings? Written;
+        internal PlayerProfileData? Profile;
+        internal int WriteCount;
         public Task<PlayerProfileRead> ReadAsync(PlayerSettings defaults, CancellationToken token = default) => Task.FromResult(new PlayerProfileRead(defaults, PlayerProfileStatus.Missing, ""));
-        public Task SaveAsync(PlayerSettings settings, CancellationToken token = default) { Written = settings; return Saved.Task; }
+        public Task SaveAsync(PlayerProfileData profile, CancellationToken token = default) { Written = profile.Settings; Profile = profile; WriteCount++; return Saved.Task; }
     }
     private static GameSession Session()
     {
@@ -24,6 +27,66 @@ public sealed class RuntimeSettingsServicesTests
     private static PlayerSettingsSession Settings(Store store) => new(store, new(PlayerSettings.Defaults(new()), PlayerProfileStatus.Missing, ""));
     private static GameServiceCommand Set(string key, double? number = null, bool? flag = null) =>
         new(Guid.NewGuid(), GameServiceAction.SetSetting) { Setting = new(key, number, flag) };
+    private static GameServiceCommand Persistent(string id, bool unlock = true) =>
+        new(Guid.NewGuid(), unlock ? GameServiceAction.SetPersistent : GameServiceAction.GetPersistent) { Key = id, DataValue = unlock ? "value" : null };
+
+    [TestMethod]
+    public async Task PersistentStatusWaitsForDiskRetriesFailureAndSettingsPreserveTheFullProfile()
+    {
+        using var session = Session(); var store = new Store(); var profile = Settings(store);
+        var bridge = new RuntimeSettingsServices(session, profile, _ => Assert.Fail("Persistent must not apply window settings."));
+        Assert.IsTrue(bridge.Request(null, Persistent("first", false), session.Generation));
+        Assert.AreEqual(true, bridge.LastResult!.ProfileSaved);
+        Assert.IsNull(bridge.LastResult!.DataValue); Assert.IsFalse(profile.IsBusy);
+        Assert.IsTrue(bridge.Request(null, Persistent("first"), session.Generation)); Assert.IsNull(bridge.LastResult);
+        Assert.IsFalse(bridge.Request(null, Persistent("second"), session.Generation)); Assert.IsNull(profile.GetPersistent("second"));
+        Assert.IsTrue(bridge.Request(null, Persistent("first", false), session.Generation)); Assert.AreEqual("value", bridge.LastResult!.DataValue);
+        Assert.AreEqual(false, bridge.LastResult.ProfileSaved);
+        store.Saved.SetException(new IOException("private/path")); await Drain(bridge, profile);
+        Assert.IsFalse(bridge.LastResult!.Success); Assert.AreEqual("value", bridge.LastResult.DataValue);
+        Assert.AreEqual(false, bridge.LastResult.ProfileSaved);
+        store.Saved = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Assert.IsTrue(bridge.Request(null, Persistent("first"), session.Generation));
+        store.Saved.SetResult(); await Drain(bridge, profile); Assert.IsTrue(bridge.LastResult!.Success);
+        Assert.AreEqual(true, bridge.LastResult.ProfileSaved);
+        var writes = store.WriteCount; Assert.IsTrue(bridge.Request(null, Persistent("first"), session.Generation));
+        Assert.IsFalse(profile.IsBusy); Assert.AreEqual(writes, store.WriteCount); Assert.IsNull(bridge.LastResult!.Settings);
+        bridge = new(session, profile, _ => { });
+        Assert.IsTrue(bridge.Request(null, Set("master_volume", .4), session.Generation)); await Drain(bridge, profile);
+        CollectionAssert.AreEqual(new[] { "first" }, store.Profile!.Data.Keys.Order(StringComparer.Ordinal).ToArray()); Assert.AreEqual(.4f, store.Profile.Settings.Master.Volume);
+    }
+
+    [TestMethod]
+    [DataRow(false)] [DataRow(true)]
+    public async Task PersistentCommitSurvivesOwnerRetirementButOldResultCannotReachNewHandler(bool load)
+    {
+        using var session = Session(); var store = new Store(); var profile = Settings(store);
+        var stack = new ScreenStack(Guid.NewGuid()); var origin = stack.Open(Guid.NewGuid(), ScreenFixture.Create("Persistents").Definition());
+        var bridge = new RuntimeSettingsServices(session, profile, _ => { }) { IsCurrentOrigin = value => stack.Instances.Contains(value) };
+        var delivered = new List<ScreenInstance?>(); bridge.Completed += (who, _) => delivered.Add(who);
+        var oldGeneration = session.Generation;
+        Assert.IsTrue(bridge.Request(origin, Persistent("first"), oldGeneration));
+        if (load) session.LoadSave(GameSave.Serialize(session.Player.Execution)); else stack.Close(origin);
+        Assert.IsFalse(bridge.Request(origin, Persistent("stale"), load ? oldGeneration : session.Generation));
+        var next = stack.Open(Guid.NewGuid(), ScreenFixture.Create("New achievements").Definition());
+        Assert.IsTrue(bridge.Request(next, Persistent("second"), session.Generation));
+        store.Saved.SetResult(); await Drain(bridge, profile);
+        CollectionAssert.AreEqual(new[] { "first", "second" }, store.Profile!.Data.Keys.Order(StringComparer.Ordinal).ToArray());
+        Assert.HasCount(1, delivered); Assert.AreSame(next, delivered[0]); Assert.IsNull(profile.GetPersistent("stale"));
+    }
+
+    [TestMethod]
+    public void PersistentQuotaFailureIsReportedWithoutChangingGameplayOrPreferences()
+    {
+        using var session = Session(); var state = session.Player.Execution.State; var store = new Store();
+        var profile = new PlayerSettingsSession(store, new(PlayerSettings.Defaults(new()), PlayerProfileStatus.Loaded, "")
+        { Data = Enumerable.Range(0, PlayerProfileData.MaximumEntries).ToImmutableDictionary(i => "a" + i, _ => "value") });
+        var bridge = new RuntimeSettingsServices(session, profile, _ => Assert.Fail());
+        Assert.IsFalse(bridge.Request(null, Persistent("extra"), session.Generation));
+        Assert.IsFalse(bridge.LastResult!.Success); Assert.IsNull(bridge.LastResult.DataValue);
+        Assert.IsFalse(profile.IsBusy); Assert.AreSame(state, session.Player.Execution.State);
+        Assert.IsTrue(bridge.Request(null, Persistent("a0"), session.Generation)); Assert.IsTrue(bridge.LastResult!.Success);
+    }
 
     [TestMethod]
     public async Task SettingsApplyOnHostAndResultWaitsForDiskWithBusyAndCurrentSnapshot()
