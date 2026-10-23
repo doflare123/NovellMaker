@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using MoonSharp.Interpreter;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Profiles;
+using NovellMaker.Core.Scripting;
 
 namespace NovellMaker.Core.Screens.Lua;
 
@@ -13,6 +14,9 @@ internal sealed class ScreenLuaVm
     private readonly Guid instanceId;
     private ImmutableArray<ScreenChange>.Builder changes = ImmutableArray.CreateBuilder<ScreenChange>();
     private ImmutableDictionary<string, string> snapshot = ImmutableDictionary<string, string>.Empty;
+    private LuaValue state = LuaValue.Null;
+    private int stateBytes;
+    private bool handling;
     internal ScreenDefinition Definition { get; private set; }
 
     internal ScreenLuaVm(ScreenDefinition definition, Guid instanceId, string source, ImmutableDictionary<string, Guid> references)
@@ -53,6 +57,21 @@ internal sealed class ScreenLuaVm
         });
         Bind("close", _ => Add(new("close", null, null, null)));
         Bind("get", a => snapshot.TryGetValue(Str(a, 0), out var value) ? DynValue.NewString(value) : DynValue.Nil);
+        var projection = new LuaValueProjection(script);
+        ui.Set("null", projection.Null);
+        Bind("list", a => projection.Mark(a[0], true));
+        Bind("object", a => projection.Mark(a[0], false));
+        Bind("get_state", _ => handling ? projection.Write(state) : throw new ScriptRuntimeException("Состояние доступно только в обработчике."));
+        Bind("set_state", a =>
+        {
+            if (!handling) throw new ScriptRuntimeException("Состояние доступно только в обработчике.");
+            var next = projection.Read(a[0]);
+            if ((stateBytes += next.JsonByteCount) > LuaValue.MaximumJsonBytes)
+                throw new ScriptRuntimeException("Превышен бюджет состояний пакета Lua.");
+            Add(new("state", null, null, null) { State = next });
+            state = next;
+            return DynValue.Nil;
+        });
         string? Optional(CallbackArguments a, int index) => a[index].IsNil() ? null : Str(a, index);
         // AsType(String) accepts numbers in MoonSharp. New author-data APIs require exact strings.
         string ExactString(CallbackArguments a, int index) => a[index].Type == DataType.String ? a[index].String :
@@ -92,9 +111,11 @@ internal sealed class ScreenLuaVm
         if (changes.Count != 0) throw new InvalidOperationException("Изменения экрана и команды сервисов разрешены только в обработчике.");
     }
 
-    internal ImmutableArray<ScreenChange> Handle(ScreenLuaEvent? value, ImmutableDictionary<string, string> data)
+    internal ImmutableArray<ScreenChange> Handle(ScreenLuaEvent? value, ImmutableDictionary<string, string> data, LuaValue? componentState = null)
     {
         snapshot = data;
+        if (componentState is not null) state = componentState;
+        stateBytes = 0;
         changes = ImmutableArray.CreateBuilder<ScreenChange>();
         var function = handlers.Table.Get(value is null ? "on_load" : "on_event");
         var argument = new Table(script);
@@ -150,7 +171,9 @@ internal sealed class ScreenLuaVm
                 argument.Set("slots", DynValue.NewTable(slots));
             }
         }
-        if (function.Type != DataType.Nil) Execute(function, DynValue.NewTable(argument));
+        handling = true;
+        try { if (function.Type != DataType.Nil) Execute(function, DynValue.NewTable(argument)); }
+        finally { handling = false; }
         var batch = changes.ToImmutable();
         // Revalidate aggregate text/command budgets as one atomic batch on the host too.
         return batch;
@@ -214,7 +237,7 @@ internal sealed class ScreenLuaWorkerService
         if (request.Kind == "handshake")
         {
             if (identity is not null || stamp.OwnerId != Guid.Empty || stamp.InstanceId != Guid.Empty || stamp.Version != 0 ||
-                request.ResourceId != Guid.Empty || !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Event is not null || !request.Snapshot.IsEmpty)
+                request.ResourceId != Guid.Empty || !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Event is not null || !request.Snapshot.IsEmpty || request.State is not null)
                 throw new ArgumentException("Неверное приветствие экранного worker.");
             identity = (stamp.SessionId, stamp.Generation);
             return Reply("ready", []);
@@ -229,7 +252,7 @@ internal sealed class ScreenLuaWorkerService
             var definition = new ScreenDefinition(request.ResourceId, request.Nodes);
             if (request.References.Any(r => !definition.Nodes.Any(n => n.Id == r.Value))) throw new ArgumentException("Чужая именованная ссылка экрана.");
             var vm = new ScreenLuaVm(definition, stamp.InstanceId, request.Source, request.References);
-            var changes = vm.Handle(null, request.Snapshot);
+            var changes = vm.Handle(null, request.Snapshot, request.State ?? LuaValue.Null);
             _ = ScreenLuaProtocol.Prepare(definition, changes);
             if (entries.Values.Sum(e => e.Vm.Definition.Nodes.Length) + vm.Definition.Nodes.Length > ScreenStack.MaxSessionNodes)
                 throw new InvalidOperationException("Превышен бюджет узлов сеанса.");
@@ -240,14 +263,14 @@ internal sealed class ScreenLuaWorkerService
             entry.Version != stamp.Version || entry.ResourceId != request.ResourceId ||
             !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty)
             throw new ArgumentException("Устаревшие данные или чужой владелец экрана.");
-        if (request.Kind == "close" && request.Event is null && request.Snapshot.IsEmpty)
+        if (request.Kind == "close" && request.Event is null && request.Snapshot.IsEmpty && request.State is null)
         { entries.Remove(stamp.InstanceId); return Reply("closed", []); }
         if (request.Kind != "event" || request.Event is null) throw new ArgumentException("Неизвестное сообщение экрана.");
         ScreenLuaProtocol.ValidateEvent(entry.Vm.Definition, request.Event, worker: true);
         try
         {
             var before = entry.Vm.Definition;
-            var changes = entry.Vm.Handle(request.Event, request.Snapshot);
+            var changes = entry.Vm.Handle(request.Event, request.Snapshot, request.State ?? LuaValue.Null);
             _ = ScreenLuaProtocol.Prepare(before, changes);
             if (entries.Values.Sum(e => e.Vm.Definition.Nodes.Length) > ScreenStack.MaxSessionNodes)
                 throw new InvalidOperationException("Превышен бюджет узлов сеанса.");

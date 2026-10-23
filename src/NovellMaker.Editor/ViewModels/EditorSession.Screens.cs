@@ -111,6 +111,12 @@ public sealed partial class EditorSession
         EditProject(Examples.ExampleTriggersModule.AddTo(project));
     }
 
+    public void AddComponentStateExample()
+    {
+        if (!CanEdit || project is null) return;
+        EditProject(Examples.ExampleComponentStateModule.AddTo(project));
+    }
+
     public void DuplicateScreen()
     {
         if (!CanEdit || project is null || SelectedScreen is not { } source) return;

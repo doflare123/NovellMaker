@@ -392,7 +392,7 @@ public sealed class ScreenLuaSessionTests
     }
 
     [TestMethod]
-    [DataRow("foreign-node")][DataRow("wrong-stamp")][DataRow("exception")][DataRow("cancelled")][DataRow("oversized")]
+    [DataRow("foreign-node")][DataRow("wrong-stamp")][DataRow("exception")][DataRow("cancelled")][DataRow("oversized")][DataRow("json")]
     public async Task CorruptTransportOrBatchFaultsClosedAndLeavesEngineBackAvailable(string failure)
     {
         var (stack, instance) = Fixture(); var connection = new Connection();
@@ -401,6 +401,7 @@ public sealed class ScreenLuaSessionTests
         switch (failure)
         {
             case "exception": call.Completion.SetException(new IOException("broken process")); break;
+            case "json": call.Completion.SetException(new System.Text.Json.JsonException("invalid typed data")); break;
             case "cancelled": call.Completion.SetCanceled(); break;
             case "wrong-stamp": call.Completion.SetResult(ScreenLuaProtocolTests.Reply(call.Request) with { Stamp = call.Request.Stamp with { OwnerId = Guid.NewGuid() } }); break;
             case "oversized": call.Reply(new ScreenChange("text", before.Nodes[1].Id, new('x', 8193), null)); break;

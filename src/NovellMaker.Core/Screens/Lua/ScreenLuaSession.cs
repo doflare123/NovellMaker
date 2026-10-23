@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
+using System.Text.Json;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Triggers;
+using NovellMaker.Core.Scripting;
 
 namespace NovellMaker.Core.Screens.Lua;
 
@@ -24,6 +26,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         internal bool Loaded;
         internal bool Closing;
         internal string? Error;
+        internal LuaValue State = LuaValue.Null;
     }
     private sealed record Work(Entry Entry, string Kind, ScreenLuaEvent? Event,
         ImmutableDictionary<string, string> Snapshot, long Submitted, int ChainDepth = 0);
@@ -72,6 +75,15 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     public bool IsAvailable(ScreenInstance instance) => !disposed && entries.TryGetValue(instance.Id, out var entry) &&
         ReferenceEquals(entry.Instance, instance) && entry.Error is null && !entry.Closing && Current(instance);
 
+    /// <summary>Last host-committed explicit data, including after a handler failure. Never the pending VM state.</summary>
+    public LuaValue GetState(ScreenInstance instance)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (!entries.TryGetValue(instance.Id, out var entry) || !ReferenceEquals(entry.Instance, instance) || !Current(instance))
+            throw new ArgumentException("Чужой или закрытый экземпляр состояния Lua.");
+        return entry.State;
+    }
+
     public ImmutableArray<ScreenServiceInvocation> DrainServices()
     {
         var result = services.Where(s => IsAvailable(s.Instance)).ToImmutableArray(); services.Clear(); return result;
@@ -90,7 +102,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     }
 
     public void Attach(ScreenInstance instance, string source, ImmutableDictionary<string, Guid>? references = null,
-        ImmutableDictionary<string, string>? snapshot = null)
+        ImmutableDictionary<string, string>? snapshot = null, LuaValue? state = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         LuaLimits.CheckSource(source);
@@ -101,7 +113,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             !LuaLimits.ValidVariables(snapshot)) throw new ArgumentException("Неверный владелец, ссылки или снимок экранного Lua.");
         if (faulted) Reset();
         if (queue.Count + serviceReplies.Count >= MaximumQueuedEvents) throw new InvalidOperationException("Очередь событий экрана заполнена.");
-        var entry = new Entry(instance, source, references, snapshot);
+        var entry = new Entry(instance, source, references, snapshot) { State = state ?? LuaValue.Null };
         entries.Add(instance.Id, entry);
         queue.AddLast(new Work(entry, "load", null, snapshot, clock.GetTimestamp()));
     }
@@ -187,6 +199,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                             if (!result.Batch.Triggers.IsEmpty && queue.Count + serviceReplies.Count + result.Batch.Triggers.Length > MaximumQueuedEvents)
                                 throw new InvalidOperationException("Превышен бюджет очереди или глубины цепочки триггеров.");
                             stack.Commit(entry.Instance, ready.Stamp.Version, result.Batch!.Definition);
+                            if (result.Batch.State is { } state) entry.State = state;
                             AppliedBatches++;
                             foreach (var trigger in result.Batch.Triggers)
                                 queue.AddLast(new Work(entry, "event", new("trigger") { Trigger = trigger }, ready.Work.Snapshot,
@@ -210,7 +223,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                 }
             }
             catch (QueueExpiredException error) { Expire(ready.Work, error.Message); }
-            catch (Exception error) when (error is IOException or InvalidOperationException or ArgumentException or OperationCanceledException)
+            catch (Exception error) when (error is IOException or InvalidOperationException or ArgumentException or JsonException or OperationCanceledException)
             { Fail(error.Message); }
             Reconcile();
         }
@@ -243,14 +256,15 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         var context = conversation;
         var captured = work;
         var definition = entry.Instance.Definition;
+        var state = entry.State;
         var eventDefinition = work.Event is null ? definition : stack.VisualDefinition(entry.Instance);
-        var task = Task.Run(() => PrepareAsync(context, captured, stamp, definition, eventDefinition, clock));
+        var task = Task.Run(() => PrepareAsync(context, captured, stamp, definition, eventDefinition, state, clock));
         ScreenLuaConnection.Observe(task);
         pending = new(work, stamp, task);
     }
 
     private static async Task<Prepared> PrepareAsync(Conversation conversation, Work work, ScreenLuaStamp stamp,
-        ScreenDefinition definition, ScreenDefinition eventDefinition, TimeProvider clock)
+        ScreenDefinition definition, ScreenDefinition eventDefinition, LuaValue state, TimeProvider clock)
     {
         var remaining = TimeSpan.FromSeconds(5) - clock.GetElapsedTime(work.Submitted);
         // Task scheduling is part of queue time. No exchange has touched the conversation yet.
@@ -287,7 +301,8 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         if (work.Event is not null) ScreenLuaProtocol.ValidateEvent(eventDefinition, work.Event);
         var request = new ScreenLuaRequest(ScreenLuaProtocol.Version, work.Kind, stamp, definition.Id,
             work.Kind == "load" ? definition.Nodes : [], work.Kind == "load" ? entry.Source : null,
-            work.Kind == "load" ? entry.References : ImmutableDictionary<string, Guid>.Empty, work.Event, work.Snapshot);
+            work.Kind == "load" ? entry.References : ImmutableDictionary<string, Guid>.Empty, work.Event, work.Snapshot)
+        { State = work.Kind == "close" ? null : state };
         request = await ScreenLuaProtocol.FitServiceResultAsync(request, token).ConfigureAwait(false);
         CheckDeadline();
         exchangeStarted = true;

@@ -33,18 +33,18 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
-    [DataRow(false)] [DataRow(true)]
-    public Task ProfileExampleCanBeAddedThroughInspectorAndEditedOnCanvas(bool achievements) => WithUi(async () =>
+    [DataRow(0)] [DataRow(1)] [DataRow(2)]
+    public Task AuthorExampleCanBeAddedThroughInspectorAndEditedOnCanvas(int exampleKind) => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
         await session.NewProjectAsync(); session.AddScene(); session.OpenScreenLibrary(); Dispatcher.UIThread.RunJobs();
         var inspector = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single(); var before = session.Project!;
-        Find<Button>(inspector, achievements ? "AddTriggersExample" : "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Find<Button>(inspector, exampleKind == 2 ? "AddComponentStateExample" : exampleKind == 1 ? "AddTriggersExample" : "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
         Assert.AreEqual(before.Scenes.Length + 1, session.Project!.Scenes.Length);
         session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo();
         session.OpenScreenLibrary(session.Project!.Scenes.Last().Id); Dispatcher.UIThread.RunJobs();
-        Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == (achievements ? "Триггеры и постоянные данные" : "Настройки")));
-        Capture(window, achievements ? "editor-triggers.png" : "editor-player-settings.png"); window.Close();
+        Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == (exampleKind == 2 ? "Состояние компонентов" : exampleKind == 1 ? "Триггеры и постоянные данные" : "Настройки")));
+        Capture(window, exampleKind == 2 ? "editor-component-state.png" : exampleKind == 1 ? "editor-triggers.png" : "editor-player-settings.png"); window.Close();
     });
 
     [TestMethod]

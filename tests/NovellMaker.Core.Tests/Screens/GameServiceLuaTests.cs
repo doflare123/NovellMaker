@@ -13,13 +13,13 @@ namespace NovellMaker.Core.Tests.Screens;
 public sealed class GameServiceLuaTests
 {
     [TestMethod]
-    [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)] [DataRow(5)] [DataRow(6)] [DataRow(7)]
+    [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)] [DataRow(5)] [DataRow(6)] [DataRow(7)] [DataRow(8)]
     public void SettingsWireExplicitlyRejectsEveryEarlierProtocol(int protocol)
     {
         var worker = new ScreenLuaWorkerService();
         var request = ScreenLuaProtocolTests.Request("handshake") with { Protocol = protocol };
         var response = worker.Process(request);
-        Assert.AreEqual("error", response.Kind); Assert.AreEqual(8, response.Protocol);
+        Assert.AreEqual("error", response.Kind); Assert.AreEqual(9, response.Protocol);
         Assert.IsEmpty(response.Changes);
     }
 

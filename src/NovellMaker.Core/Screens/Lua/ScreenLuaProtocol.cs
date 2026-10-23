@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Triggers;
+using NovellMaker.Core.Scripting;
 
 namespace NovellMaker.Core.Screens.Lua;
 
@@ -20,20 +21,27 @@ public sealed record ScreenChange(string Kind, Guid? NodeId, string? Text, bool?
     public ImmutableDictionary<Guid, Guid>? Ids { get; init; }
     public GameServiceCommand? Service { get; init; }
     public AuthorTrigger? Trigger { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LuaValue? State { get; init; }
 }
 internal sealed record ScreenLuaRequest(int Protocol, string Kind, ScreenLuaStamp Stamp, Guid ResourceId,
     ImmutableArray<ScreenNode> Nodes, string? Source, ImmutableDictionary<string, Guid> References,
-    ScreenLuaEvent? Event, ImmutableDictionary<string, string> Snapshot);
+    ScreenLuaEvent? Event, ImmutableDictionary<string, string> Snapshot)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LuaValue? State { get; init; }
+}
 internal sealed record ScreenLuaResponse(int Protocol, string Kind, ScreenLuaStamp Stamp, string? Error, ImmutableArray<ScreenChange> Changes);
 internal sealed record ScreenPreparedBatch(ScreenDefinition Definition, bool Close, GameServiceCommand? Service = null)
 {
     public ImmutableArray<AuthorTrigger> Triggers { get; init; } = [];
+    public LuaValue? State { get; init; }
 }
 public sealed record ScreenServiceInvocation(ScreenInstance Instance, GameServiceCommand Command);
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 8;
+    internal const int Version = 9;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {
@@ -163,10 +171,19 @@ internal static class ScreenLuaProtocol
         GameServiceCommand? service = null;
         var triggers = ImmutableArray.CreateBuilder<AuthorTrigger>();
         var characters = 0;
+        var stateBytes = 0;
+        LuaValue? state = null;
         foreach (var change in changes)
         {
             if (change is null || close) throw new InvalidOperationException("Некорректный пакет экрана.");
             var extra = change.Patch is not null || change.ParentId is not null || change.Ids is not null;
+            if (change.Kind == "state" && change.State is { } data && !extra && change.NodeId is null && change.Text is null && change.Value is null && change.Service is null && change.Trigger is null)
+            {
+                if ((stateBytes += data.JsonByteCount) > LuaValue.MaximumJsonBytes)
+                    throw new InvalidOperationException("Превышен бюджет состояний пакета Lua.");
+                state = data; continue;
+            }
+            if (change.State is not null) throw new InvalidOperationException("Лишние данные состояния компонента.");
             if (change.Kind == "trigger" && change.Trigger is { } trigger && !extra && change.NodeId is null && change.Text is null && change.Value is null && change.Service is null)
             {
                 trigger.Validate();
@@ -207,6 +224,6 @@ internal static class ScreenLuaProtocol
         // Still advance protocol versions for successful no-ops, but preserve view identity.
         if (close && service is not null) throw new InvalidOperationException("Нельзя закрыть экран и запросить сервис одним пакетом.");
         if (triggers.Count != 0 && (close || service is not null)) throw new InvalidOperationException("Триггеры нельзя совмещать с закрытием или сервисом в одном пакете.");
-        return new(current.Nodes.SequenceEqual(definition.Nodes) && current.RetiredNodeIds.SetEquals(definition.RetiredNodeIds) ? definition : current, close, service) { Triggers = triggers.ToImmutable() };
+        return new(current.Nodes.SequenceEqual(definition.Nodes) && current.RetiredNodeIds.SetEquals(definition.RetiredNodeIds) ? definition : current, close, service) { Triggers = triggers.ToImmutable(), State = state };
     }
 }
