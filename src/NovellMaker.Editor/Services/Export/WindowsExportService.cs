@@ -13,6 +13,7 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
     public async Task ExportAsync(NovelProject project, string assetsRoot, Guid startSceneId, string destination)
     {
         DialogueDisplayValidation.Validate(project);
+        await Task.Run(() => NovellMaker.Core.Scripting.LuaModuleLibrary.ValidateProject(project));
         destination = Path.GetFullPath(destination);
         if (Directory.Exists(destination) || File.Exists(destination))
             throw new IOException("Каталог сборки уже существует. Выберите новое имя; готовые сборки не перезаписываются.");

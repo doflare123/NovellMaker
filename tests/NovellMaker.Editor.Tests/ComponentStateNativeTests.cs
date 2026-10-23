@@ -13,8 +13,8 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ComponentStateNativeTests
 {
     [TestMethod]
-    [DataRow(false)] [DataRow(true)]
-    public async Task EditableTypedStateExampleRunsInPreviewAndStandaloneAndResetsOnReopen(bool packaged)
+    [DataRow(false, false)] [DataRow(true, false)] [DataRow(false, true)] [DataRow(true, true)]
+    public async Task EditableTypedStateExampleRunsInPreviewAndStandaloneAndResetsOnReopen(bool packaged, bool modules)
     {
         if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1" || packaged && Environment.GetEnvironmentVariable("NOVELLMAKER_EXPORT_SMOKE") != "1")
             Assert.Inconclusive("Enable NativeRuntime and WindowsExport smoke.");
@@ -23,7 +23,8 @@ public sealed class ComponentStateNativeTests
         var directory = Path.Combine(repo!.FullName, "artifacts", "screenshots", "stage7-state", packaged ? "export" : "preview", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var story = NovelScene.Create("Сюжет") with { Lines = [DialogueLine.Create("ru", "Первая фраза"), DialogueLine.Create("ru", "Вторая фраза")] };
-        var project = ExampleComponentStateModule.AddTo(NovelProject.Create("Состояние Lua") with { Scenes = [story] });
+        var initial = NovelProject.Create("Состояние Lua") with { Scenes = [story] };
+        var project = modules ? ExampleLuaModulesModule.AddTo(initial) : ExampleComponentStateModule.AddTo(initial);
         var file = Path.Combine(directory, "state.novell"); await new JsonProjectStore().SaveAsync(file, project);
         var runtime = Path.Combine(repo.FullName, "src", "NovellMaker.Runtime", "bin", "Release", "net10.0", "NovellMaker.Runtime.exe");
         if (packaged)
@@ -53,7 +54,7 @@ public sealed class ComponentStateNativeTests
 
         async Task<JsonDocument> Run(string label, string planText)
         {
-            var plan = Path.Combine(directory, label + ".plan.json"); File.WriteAllText(plan, planText);
+            var plan = Path.Combine(directory, label + ".plan.json"); File.WriteAllText(plan, modules ? planText.Replace("F7", "F4", StringComparison.Ordinal) : planText);
             var report = Path.Combine(directory, label + ".json");
             var start = new ProcessStartInfo(runtime) { WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardError = true, RedirectStandardOutput = true, WindowStyle = ProcessWindowStyle.Hidden };

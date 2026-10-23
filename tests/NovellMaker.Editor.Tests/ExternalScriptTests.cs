@@ -140,6 +140,21 @@ public sealed partial class ExternalScriptTests
     }
 
     [TestMethod]
+    public async Task CyclicModulesCanBeSavedButBlockPreviewAndExportBeforePickingADestination()
+    {
+        using var root = new TestRoot(); var dialogs = new Dialogs(root.Path); var preview = new Preview();
+        using var session = await Session(dialogs, preview); session.AddLuaModulesExample();
+        var handler = session.Project!.Scripts.Single(s => s.Id == session.Project.Scenes.Last().Canvas.HandlerScriptId);
+        var child = session.Project.Scripts.Single(s => s.Id == handler.References["counter"]);
+        session.OpenScriptLibrary(child.Id); session.UpdateScript(child with { References = child.References.Add("back", handler.Id) });
+        await session.SaveAsync(); Assert.IsTrue(File.Exists(dialogs.ProjectPath));
+        await session.PreviewSceneAsync(); await session.ExportWindowsAsync();
+        Assert.AreEqual(0, preview.Starts); Assert.AreEqual(0, dialogs.ExportPickerCalls); Assert.HasCount(2, dialogs.Errors);
+        Assert.IsTrue(dialogs.Errors.All(e => e.Contains("Циклическая", StringComparison.Ordinal)));
+        session.Undo(); await session.PreviewSceneAsync(); Assert.AreEqual(1, preview.Starts);
+    }
+
+    [TestMethod]
     public async Task MissingAndInvalidUtf8FilesKeepSnapshotAndReportErrorsThenRecover()
     {
         using var root = new TestRoot(); var dialogs = new Dialogs(root.Path);

@@ -19,7 +19,7 @@ internal sealed class ScreenLuaVm
     private bool handling;
     internal ScreenDefinition Definition { get; private set; }
 
-    internal ScreenLuaVm(ScreenDefinition definition, Guid instanceId, string source, ImmutableDictionary<string, Guid> references)
+    internal ScreenLuaVm(ScreenDefinition definition, Guid instanceId, string source, ImmutableDictionary<string, Guid> references, LuaModuleBundle? modules = null)
     {
         Definition = definition;
         this.instanceId = instanceId;
@@ -104,7 +104,7 @@ internal sealed class ScreenLuaVm
                 value.Type == DataType.Number ? value.Number : null, value.Type == DataType.Boolean ? value.Boolean : null));
         });
         script.Globals.Set("ui", DynValue.NewTable(ui));
-        handlers = Execute(script.LoadString(source, null, "screen.lua"));
+        handlers = Execute(new LuaModuleLoader(script).Compile(source, modules, ui));
         if (handlers.Type != DataType.Table || handlers.Table.Get("on_event").Type != DataType.Function ||
             handlers.Table.Get("on_load").Type is not (DataType.Nil or DataType.Function))
             throw new InvalidOperationException("Экранный Lua должен вернуть таблицу с функцией on_event и необязательной on_load.");
@@ -237,7 +237,7 @@ internal sealed class ScreenLuaWorkerService
         if (request.Kind == "handshake")
         {
             if (identity is not null || stamp.OwnerId != Guid.Empty || stamp.InstanceId != Guid.Empty || stamp.Version != 0 ||
-                request.ResourceId != Guid.Empty || !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Event is not null || !request.Snapshot.IsEmpty || request.State is not null)
+                request.ResourceId != Guid.Empty || !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Event is not null || !request.Snapshot.IsEmpty || request.State is not null || request.Modules is not null)
                 throw new ArgumentException("Неверное приветствие экранного worker.");
             identity = (stamp.SessionId, stamp.Generation);
             return Reply("ready", []);
@@ -251,7 +251,7 @@ internal sealed class ScreenLuaWorkerService
                 throw new ArgumentException("Недопустимая загрузка или бюджет экранного worker.");
             var definition = new ScreenDefinition(request.ResourceId, request.Nodes);
             if (request.References.Any(r => !definition.Nodes.Any(n => n.Id == r.Value))) throw new ArgumentException("Чужая именованная ссылка экрана.");
-            var vm = new ScreenLuaVm(definition, stamp.InstanceId, request.Source, request.References);
+            var vm = new ScreenLuaVm(definition, stamp.InstanceId, request.Source, request.References, request.Modules);
             var changes = vm.Handle(null, request.Snapshot, request.State ?? LuaValue.Null);
             _ = ScreenLuaProtocol.Prepare(definition, changes);
             if (entries.Values.Sum(e => e.Vm.Definition.Nodes.Length) + vm.Definition.Nodes.Length > ScreenStack.MaxSessionNodes)
@@ -261,7 +261,7 @@ internal sealed class ScreenLuaWorkerService
         }
         if (!entries.TryGetValue(stamp.InstanceId, out var entry) || entry.Stamp.OwnerId != stamp.OwnerId ||
             entry.Version != stamp.Version || entry.ResourceId != request.ResourceId ||
-            !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty)
+            !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Modules is not null)
             throw new ArgumentException("Устаревшие данные или чужой владелец экрана.");
         if (request.Kind == "close" && request.Event is null && request.Snapshot.IsEmpty && request.State is null)
         { entries.Remove(stamp.InstanceId); return Reply("closed", []); }

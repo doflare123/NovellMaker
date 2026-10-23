@@ -34,6 +34,7 @@ public sealed class ScriptLibraryView : UserControl
     public ScriptLibraryView() : this(false) { }
     public ScriptLibraryView(bool propertiesOnly)
     {
+        ToolTip.SetTip(references, "Ссылка на Lua-ресурс доступна в обработчике как modules.<имя>: ui.import(modules.counter). refs узлов задаются у холста. Сценарный game.run(refs.<имя>) сохраняет прежний API.");
         var root = new DockPanel { Margin = new Thickness(12) };
         var toolbar = new WrapPanel();
         void Button(string label, string id, Func<Task> run)
@@ -156,7 +157,8 @@ public sealed class ScriptLibraryView : UserControl
             var oldScene = (scenes.SelectedItem as Target)?.Id;
             var options = ReferenceTargets().ToArray(); targets.ItemsSource = options;
             references.Text = script is null ? "" : string.Join("\n", script.References.Select(r =>
-                $"refs.{r.Key} → {options.FirstOrDefault(t => t.Id == r.Value)?.Label ?? "Объект удалён"}"));
+                $"refs.{r.Key}" + (session?.Project?.Scripts.Any(s => s.Id == r.Value) == true ? $" / modules.{r.Key}" : "") +
+                $" → {options.FirstOrDefault(t => t.Id == r.Value)?.Label ?? "Объект удалён"}"));
             targets.SelectedItem = options.FirstOrDefault(t => t.Id == oldTarget) ?? options.FirstOrDefault();
             var sceneOptions = session?.Project?.Scenes.Where(s => !s.HasLegacyActionScript).Select(s => new Target(s.Id, s.Name)).ToArray() ?? [];
             scenes.ItemsSource = sceneOptions; scenes.SelectedItem = sceneOptions.FirstOrDefault(t => t.Id == oldScene) ?? sceneOptions.FirstOrDefault();

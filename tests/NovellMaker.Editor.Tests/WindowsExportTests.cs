@@ -93,6 +93,18 @@ public sealed class WindowsExportTests
     }
 
     [TestMethod]
+    public async Task CyclicModuleDependenciesAreRejectedBeforeCreatingStagingOrOutput()
+    {
+        var edited = NovellMaker.Editor.Examples.ExampleLuaModulesModule.AddTo(project);
+        var handler = edited.Scripts.Single(s => s.Id == edited.Scenes.Last().Canvas.HandlerScriptId);
+        var child = edited.Scripts.Single(s => s.Id == handler.References["counter"]);
+        edited = edited with { Scripts = edited.Scripts.Replace(child, child with { References = child.References.Add("back", handler.Id) }) };
+        var destination = Path.Combine(root, "game");
+        await Assert.ThrowsAsync<ArgumentException>(() => new WindowsExportService(template, new ImageAssetService()).ExportAsync(edited, source, edited.Scenes[0].Id, destination));
+        Assert.IsFalse(Directory.Exists(destination)); Assert.IsEmpty(Directory.GetDirectories(root, ".novell-export-*"));
+    }
+
+    [TestMethod]
     public async Task InvalidAudioLeavesNoPartialExport()
     {
         File.WriteAllText(Path.Combine(source, project.Audio.Assets[0].RelativePath), "corrupt");

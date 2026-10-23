@@ -30,6 +30,8 @@ internal sealed record ScreenLuaRequest(int Protocol, string Kind, ScreenLuaStam
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public LuaValue? State { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LuaModuleBundle? Modules { get; init; }
 }
 internal sealed record ScreenLuaResponse(int Protocol, string Kind, ScreenLuaStamp Stamp, string? Error, ImmutableArray<ScreenChange> Changes);
 internal sealed record ScreenPreparedBatch(ScreenDefinition Definition, bool Close, GameServiceCommand? Service = null)
@@ -41,7 +43,7 @@ public sealed record ScreenServiceInvocation(ScreenInstance Instance, GameServic
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 9;
+    internal const int Version = 10;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {

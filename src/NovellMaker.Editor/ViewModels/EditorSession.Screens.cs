@@ -117,6 +117,12 @@ public sealed partial class EditorSession
         EditProject(Examples.ExampleComponentStateModule.AddTo(project));
     }
 
+    public void AddLuaModulesExample()
+    {
+        if (!CanEdit || project is null) return;
+        EditProject(Examples.ExampleLuaModulesModule.AddTo(project));
+    }
+
     public void DuplicateScreen()
     {
         if (!CanEdit || project is null || SelectedScreen is not { } source) return;

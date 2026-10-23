@@ -27,6 +27,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         internal bool Closing;
         internal string? Error;
         internal LuaValue State = LuaValue.Null;
+        internal LuaModuleLibrary? Modules;
     }
     private sealed record Work(Entry Entry, string Kind, ScreenLuaEvent? Event,
         ImmutableDictionary<string, string> Snapshot, long Submitted, int ChainDepth = 0);
@@ -102,7 +103,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     }
 
     public void Attach(ScreenInstance instance, string source, ImmutableDictionary<string, Guid>? references = null,
-        ImmutableDictionary<string, string>? snapshot = null, LuaValue? state = null)
+        ImmutableDictionary<string, string>? snapshot = null, LuaValue? state = null, LuaModuleLibrary? modules = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         LuaLimits.CheckSource(source);
@@ -113,7 +114,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             !LuaLimits.ValidVariables(snapshot)) throw new ArgumentException("Неверный владелец, ссылки или снимок экранного Lua.");
         if (faulted) Reset();
         if (queue.Count + serviceReplies.Count >= MaximumQueuedEvents) throw new InvalidOperationException("Очередь событий экрана заполнена.");
-        var entry = new Entry(instance, source, references, snapshot) { State = state ?? LuaValue.Null };
+        var entry = new Entry(instance, source, references, snapshot) { State = state ?? LuaValue.Null, Modules = modules };
         entries.Add(instance.Id, entry);
         queue.AddLast(new Work(entry, "load", null, snapshot, clock.GetTimestamp()));
     }
@@ -284,6 +285,17 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         }
         CheckDeadline();
         var entry = work.Entry;
+        LuaModuleBundle? modules = null;
+        if (work.Kind == "load" && entry.Modules is not null)
+        {
+            try { modules = entry.Modules.Prepare(entry.Source, CheckDeadline); }
+            catch (ArgumentException error)
+            {
+                CheckDeadline();
+                var message = error.Message.Length > 4096 ? error.Message[..4096] : error.Message;
+                return new(new(ScreenLuaProtocol.Version, "error", stamp, message, []), null);
+            }
+        }
         if (!conversation.Ready)
         {
             var hello = new ScreenLuaRequest(ScreenLuaProtocol.Version, "handshake",
@@ -302,7 +314,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         var request = new ScreenLuaRequest(ScreenLuaProtocol.Version, work.Kind, stamp, definition.Id,
             work.Kind == "load" ? definition.Nodes : [], work.Kind == "load" ? entry.Source : null,
             work.Kind == "load" ? entry.References : ImmutableDictionary<string, Guid>.Empty, work.Event, work.Snapshot)
-        { State = work.Kind == "close" ? null : state };
+        { State = work.Kind == "close" ? null : state, Modules = modules };
         request = await ScreenLuaProtocol.FitServiceResultAsync(request, token).ConfigureAwait(false);
         CheckDeadline();
         exchangeStarted = true;

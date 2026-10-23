@@ -33,18 +33,42 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
-    [DataRow(0)] [DataRow(1)] [DataRow(2)]
+    [DataRow(0)] [DataRow(1)] [DataRow(2)] [DataRow(3)]
     public Task AuthorExampleCanBeAddedThroughInspectorAndEditedOnCanvas(int exampleKind) => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
         await session.NewProjectAsync(); session.AddScene(); session.OpenScreenLibrary(); Dispatcher.UIThread.RunJobs();
         var inspector = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single(); var before = session.Project!;
-        Find<Button>(inspector, exampleKind == 2 ? "AddComponentStateExample" : exampleKind == 1 ? "AddTriggersExample" : "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Find<Button>(inspector, exampleKind == 3 ? "AddLuaModulesExample" : exampleKind == 2 ? "AddComponentStateExample" : exampleKind == 1 ? "AddTriggersExample" : "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
         Assert.AreEqual(before.Scenes.Length + 1, session.Project!.Scenes.Length);
         session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo();
         session.OpenScreenLibrary(session.Project!.Scenes.Last().Id); Dispatcher.UIThread.RunJobs();
-        Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == (exampleKind == 2 ? "Состояние компонентов" : exampleKind == 1 ? "Триггеры и постоянные данные" : "Настройки")));
-        Capture(window, exampleKind == 2 ? "editor-component-state.png" : exampleKind == 1 ? "editor-triggers.png" : "editor-player-settings.png"); window.Close();
+        Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == (exampleKind == 3 ? "Модули Lua" : exampleKind == 2 ? "Состояние компонентов" : exampleKind == 1 ? "Триггеры и постоянные данные" : "Настройки")));
+        Capture(window, exampleKind == 3 ? "editor-lua-modules.png" : exampleKind == 2 ? "editor-component-state.png" : exampleKind == 1 ? "editor-triggers.png" : "editor-player-settings.png"); window.Close();
+    });
+
+    [TestMethod]
+    public Task ModuleReferenceCanBeBoundRenamedAndUndoneThroughTheInspector() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); session.AddLuaModulesExample();
+        var handler = session.Project!.Scripts.Single(s => s.Id == session.Project.Scenes.Last().Canvas.HandlerScriptId);
+        var child = session.Project.Scripts.Single(s => s.Id == handler.References["counter"]);
+        session.OpenScriptLibrary(handler.Id); Dispatcher.UIThread.RunJobs();
+        Find<Expander>(window, "LuaReferencesSettings").IsExpanded = true; Dispatcher.UIThread.RunJobs();
+        Find<TextBox>(window, "LuaAssetReferenceAlias").Text = "renamed_alias";
+        var target = Find<ComboBox>(window, "LuaAssetReferenceTarget");
+        target.SelectedItem = target.ItemsSource!.Cast<object>().Single(t => t.ToString() == "Lua: " + child.Name);
+        Find<Button>(window, "InsertLuaAssetReference").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.AreEqual(child.Id, session.SelectedScript!.References["renamed_alias"]);
+        StringAssert.Contains(Find<TextBlock>(window, "LuaAssetReferences").Text!, "modules.renamed_alias");
+        session.Undo(); Assert.IsFalse(session.SelectedScript!.References.ContainsKey("renamed_alias")); session.Redo();
+        session.OpenScriptLibrary(child.Id); session.UpdateScript(child with { Name = "new-name.lua" });
+        session.OpenScriptLibrary(handler.Id); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(child.Id, session.SelectedScript!.References["renamed_alias"]);
+        Find<Expander>(window, "LuaReferencesSettings").IsExpanded = true; Dispatcher.UIThread.RunJobs();
+        StringAssert.Contains(Find<TextBlock>(window, "LuaAssetReferences").Text!, "new-name.lua");
+        Capture(window, "editor-lua-module-references.png"); window.Close();
     });
 
     [TestMethod]

@@ -3,6 +3,7 @@ using NovellMaker.Core.Projects;
 using NovellMaker.Core.Screens;
 using NovellMaker.Core.Screens.Lua;
 using NovellMaker.Core.Execution;
+using NovellMaker.Core.Scripting;
 
 namespace NovellMaker.Runtime;
 
@@ -75,7 +76,7 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
         try
         {
             if (asset.HandlerScriptId is { } id && project?.Scripts.FirstOrDefault(s => s.Id == id) is { } script)
-                Scripts?.Attach(instance, script.Source, asset.References, snapshot());
+                Scripts?.Attach(instance, script.Source, asset.References, snapshot(), modules: new LuaModuleLibrary(id, project.Scripts));
         }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException)
         { Report(asset.Name + ": " + error.Message); }

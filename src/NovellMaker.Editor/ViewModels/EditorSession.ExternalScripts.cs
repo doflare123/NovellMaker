@@ -196,6 +196,16 @@ public sealed partial class EditorSession
                 if (sessionDisposed || generation != syntaxGeneration) throw new OperationCanceledException();
             }
         }
+        var captured = project;
+        syntaxCancellation ??= new();
+        var moduleValidationToken = syntaxCancellation.Token;
+        waitingForSyntax++;
+        try
+        {
+            await Task.Run(() => NovellMaker.Core.Scripting.LuaModuleLibrary.ValidateProject(captured, moduleValidationToken), moduleValidationToken);
+        }
+        finally { waitingForSyntax--; }
+        if (sessionDisposed || generation != syntaxGeneration || !ReferenceEquals(captured, project)) throw new OperationCanceledException();
     }
 
     private void StartScriptWatcher()

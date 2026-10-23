@@ -32,6 +32,8 @@ public sealed class PreviewService : IPreviewService
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         DialogueDisplayValidation.Validate(request.Project);
+        await Task.Run(() => NovellMaker.Core.Scripting.LuaModuleLibrary.ValidateProject(request.Project));
+        ObjectDisposedException.ThrowIf(disposed, this);
         StopOwnedProcess();
         if (!File.Exists(runtime)) throw new FileNotFoundException("Игровой модуль отсутствует. Соберите редактор вместе с NovellMaker.Runtime.", runtime);
         var directory = Path.Combine(temporaryRoot, Guid.NewGuid().ToString("N"));
