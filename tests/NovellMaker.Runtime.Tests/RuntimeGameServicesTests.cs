@@ -18,7 +18,7 @@ public sealed class RuntimeGameServicesTests
         {
             var project = Project(); using var session = new GameSession(project, project.Scenes[0].Id, "ru");
             var store = new GameSlotStore(project, Path.Combine(path, "slots"), Path.Combine(path, "quick.json"));
-            var snapshot = GameSlotStore.Capture(session);
+            var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(session));
             await store.SaveAsync("broken", snapshot); await store.SaveAsync("healthy", snapshot);
             var file = Path.Combine(path, "slots", "broken.json"); var document = JsonNode.Parse(File.ReadAllText(file))!;
             var state = JsonNode.Parse(snapshot.SaveJson)!; state["State"]!["LineId"] = Guid.Empty;
@@ -40,7 +40,7 @@ public sealed class RuntimeGameServicesTests
     public async Task ClosingOriginBeforePollCancelsEvenCompletedLoadWithoutReplacingState()
     {
         var project = Project(); using var session = new GameSession(project, project.Scenes[0].Id, "ru"); var store = new Store();
-        var snapshot = GameSlotStore.Capture(session); var state = session.Player.Execution.State;
+        var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(session)); var state = session.Player.Execution.State;
         await using var slots = new GameSessionSlots(session, store); using var services = new RuntimeGameServices(session, slots);
         var stack = new ScreenStack(Guid.NewGuid()); var origin = stack.Open(Guid.NewGuid(), ScreenFixture.Create("UI").Definition());
         services.IsCurrentOrigin = candidate => stack.Instances.Any(i => ReferenceEquals(i,candidate));
@@ -58,11 +58,12 @@ public sealed class RuntimeGameServicesTests
     {
         internal readonly TaskCompletionSource<GameSlotRead> Read = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource Saved = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource SaveStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal CancellationToken Token;
         internal string? SavedId; internal GameSlotSnapshot? Snapshot;
         internal ImmutableArray<GameSlotInfo> Items = [];
         public Task SaveAsync(string id, GameSlotSnapshot snapshot, CancellationToken cancellationToken = default)
-        { SavedId = id; Snapshot = snapshot; Token = cancellationToken; return Saved.Task; }
+        { SavedId = id; Snapshot = snapshot; Token = cancellationToken; SaveStarted.TrySetResult(); return Saved.Task; }
         public Task<GameSlotRead> ReadAsync(string id, CancellationToken cancellationToken = default) { Token = cancellationToken; return Read.Task; }
         public async Task<GameSlotRead?> LatestAsync(CancellationToken cancellationToken = default) => await ReadAsync("latest", cancellationToken);
         public Task<ImmutableArray<GameSlotInfo>> ListAsync(CancellationToken cancellationToken = default) => Task.FromResult(Items);
@@ -82,7 +83,9 @@ public sealed class RuntimeGameServicesTests
         var stack = new ScreenStack(Guid.NewGuid()); var origin = stack.Open(Guid.NewGuid(), ScreenFixture.Create("UI").Definition());
         var first = new GameServiceCommand(Guid.NewGuid(), GameServiceAction.SaveSlot, Title: "Глава");
         var replies = new List<(ScreenInstance? Origin, GameServiceResult Result)>(); services.Completed += (owner, result) => replies.Add((owner, result));
-        Assert.IsTrue(services.Request(origin, first, session.Generation)); Assert.IsTrue(GameSlotStore.IsValidSlotId(store.SavedId));
+        Assert.IsTrue(services.Request(origin, first, session.Generation));
+        await store.SaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.IsTrue(GameSlotStore.IsValidSlotId(store.SavedId));
         Assert.AreEqual("Глава", store.Snapshot!.Metadata.Title);
         var second = new GameServiceCommand(Guid.NewGuid(), GameServiceAction.ListSlots);
         Assert.IsFalse(services.Request(origin, second, session.Generation)); Assert.IsTrue(slots.IsBusy);
@@ -97,7 +100,7 @@ public sealed class RuntimeGameServicesTests
     public async Task NewGameCancelsPendingLoadAndLateReplyCannotEnterNewLifetime(bool fault)
     {
         var project = Project(); project = project with { StartScreenSceneId = project.Scenes[0].Id };
-        using var seed = new GameSession(project, project.Scenes[0].Id, "ru"); seed.NewGame(0); var snapshot = GameSlotStore.Capture(seed);
+        using var seed = new GameSession(project, project.Scenes[0].Id, "ru"); seed.NewGame(0); var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(seed));
         using var session = new GameSession(project, project.Scenes[0].Id, "ru"); var store = new Store();
         await using var slots = new GameSessionSlots(session, store); using var services = new RuntimeGameServices(session, slots);
         var replies = 0; services.Completed += (_, _) => replies++;
@@ -114,7 +117,7 @@ public sealed class RuntimeGameServicesTests
     public async Task SuccessfulLoadResetsOriginAndDoesNotSendResultIntoReplacementHandler()
     {
         var project = Project(); using var session = new GameSession(project, project.Scenes[0].Id, "ru");
-        var snapshot = GameSlotStore.Capture(session); var store = new Store();
+        var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(session)); var store = new Store();
         await using var slots = new GameSessionSlots(session, store); using var services = new RuntimeGameServices(session, slots);
         var replies = 0; services.Completed += (_, _) => replies++;
         var request = new GameServiceCommand(Guid.NewGuid(), GameServiceAction.LoadSlot, "slot"); Assert.IsTrue(services.Request(null, request, 0));

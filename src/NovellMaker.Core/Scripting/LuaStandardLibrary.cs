@@ -16,13 +16,13 @@ internal sealed class LuaStandardLibrary(Script script)
 
     internal void ResetBudget() { work = 0; characters = 0; }
 
-    private void Charge(long count)
+    internal void Charge(long count)
     {
         if (count > MaximumWork - work) throw new ScriptRuntimeException("Превышен бюджет операций стандартной библиотеки Lua (65536).");
         work += (int)count;
     }
 
-    private void ReserveText(long count)
+    internal void ReserveText(long count)
     {
         if (count > MaximumStringLength) throw new ScriptRuntimeException("Результат стандартной библиотеки Lua длиннее 8192 символов.");
         if (count > MaximumResultCharacters - characters) throw new ScriptRuntimeException("Превышен бюджет строк стандартной библиотеки Lua (32768).");

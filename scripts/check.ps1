@@ -1,10 +1,10 @@
 param([switch]$CaptureScreenshots, [switch]$NativeRuntime, [switch]$WindowsExport, [switch]$WindowsInstaller,
-      [switch]$Coverage, [switch]$MeasureLua)
+      [switch]$Coverage, [switch]$MeasureLua, [switch]$MeasureFramePreparation)
 
 $ErrorActionPreference = 'Stop'
 $environmentNames = @('AVALONIA_TELEMETRY_OPTOUT', 'DOTNET_CLI_TELEMETRY_OPTOUT',
     'NOVELLMAKER_NATIVE_SMOKE', 'NOVELLMAKER_EXPORT_SMOKE', 'NOVELLMAKER_INSTALLER_SMOKE',
-    'NOVELLMAKER_CAPTURE_DIR', 'NOVELLMAKER_LUA_BENCHMARK_DIR')
+    'NOVELLMAKER_CAPTURE_DIR', 'NOVELLMAKER_LUA_BENCHMARK_DIR', 'NOVELLMAKER_FRAME_BENCHMARK_DIR')
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name) }
 $env:AVALONIA_TELEMETRY_OPTOUT = '1'
@@ -29,6 +29,7 @@ try {
     if ($NativeRuntime) { $env:NOVELLMAKER_NATIVE_SMOKE = '1' }
     # The optional benchmark runs separately, after all functional tests and without coverage.
     if ($MeasureLua) { [Environment]::SetEnvironmentVariable('NOVELLMAKER_LUA_BENCHMARK_DIR', $null) }
+    if ($MeasureFramePreparation) { [Environment]::SetEnvironmentVariable('NOVELLMAKER_FRAME_BENCHMARK_DIR', $null) }
     dotnet restore NovellMaker.slnx --locked-mode
     if ($LASTEXITCODE -ne 0) { throw 'Restore failed.' }
     dotnet build NovellMaker.slnx -c Release --no-restore
@@ -51,6 +52,13 @@ try {
         $env:NOVELLMAKER_LUA_BENCHMARK_DIR = Join-Path (Get-Location) 'artifacts/lua-benchmark'
         dotnet test tests/NovellMaker.Core.Tests -c Release --no-build --filter 'TestCategory=LuaMeasurement' --logger trx --results-directory TestResults/lua-measurement
         if ($LASTEXITCODE -ne 0) { throw 'Lua measurement failed.' }
+    }
+    if ($MeasureFramePreparation) {
+        $env:NOVELLMAKER_FRAME_BENCHMARK_DIR = Join-Path (Get-Location) 'artifacts/frame-preparation-benchmark'
+        foreach ($project in @('tests/NovellMaker.Core.Tests', 'tests/NovellMaker.Runtime.Tests')) {
+            dotnet test $project -c Release --no-build --filter 'TestCategory=FramePreparationMeasurement' --logger trx --results-directory TestResults/frame-preparation-measurement
+            if ($LASTEXITCODE -ne 0) { throw 'Frame preparation measurement failed.' }
+        }
     }
 }
 finally {

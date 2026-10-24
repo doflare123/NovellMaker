@@ -11,7 +11,7 @@ public sealed class GameSessionSlots : IDisposable, IAsyncDisposable
 {
     private readonly GameSession session;
     private readonly IGameSlotStore store;
-    private sealed record Reply(GameSlotRead? Read = null, ImmutableArray<GameSlotInfo> Slots = default);
+    private sealed record Reply(GameSlotRead? Read = null, ImmutableArray<GameSlotInfo> Slots = default, PreparedGameLoad? Load = null);
     private sealed record Pending(long Generation, GameSlotOperation Operation, CancellationTokenSource Cancellation, Task<Reply> Task);
     private Pending? pending;
     private readonly List<Task> retiring = [];
@@ -31,14 +31,30 @@ public sealed class GameSessionSlots : IDisposable, IAsyncDisposable
         // This delegate executes synchronously before any await, on the calling host thread.
         var snapshot = GameSlotStore.Capture(session, title);
         return SaveSnapshot(snapshot, token);
-        async Task<Reply> SaveSnapshot(GameSlotSnapshot captured, CancellationToken cancellation)
-        { await store.SaveAsync(id, captured, cancellation).ConfigureAwait(false); return new(); }
+        async Task<Reply> SaveSnapshot(GameSlotCapture captured, CancellationToken cancellation)
+        {
+            var prepared = await GameSlotStore.PrepareAsync(captured, cancellation).ConfigureAwait(false);
+            cancellation.ThrowIfCancellationRequested();
+            await store.SaveAsync(id, prepared, cancellation).ConfigureAwait(false);
+            return new();
+        }
     });
 
-    public bool Load(string id = GameSlotStore.QuickSlotId) => Start(GameSlotOperation.Load,
-        async token => new(await store.ReadAsync(id, token).ConfigureAwait(false)));
-    public bool Continue() => Start(GameSlotOperation.Continue,
-        async token => new(await store.LatestAsync(token).ConfigureAwait(false)));
+    public bool Load(string id = GameSlotStore.QuickSlotId) => StartLoad(GameSlotOperation.Load, async token => await store.ReadAsync(id, token).ConfigureAwait(false));
+    public bool Continue() => StartLoad(GameSlotOperation.Continue, token => store.LatestAsync(token));
+    private bool StartLoad(GameSlotOperation operation, Func<CancellationToken, Task<GameSlotRead?>> read) => Start(operation, token =>
+    {
+        var preparation = session.CaptureLoadPreparation(); // Host capture before the first await.
+        return PrepareReply();
+        async Task<Reply> PrepareReply()
+        {
+            var result = await read(token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            var prepared = result is { Info.Status: GameSlotStatus.Compatible, Snapshot: { } snapshot }
+                ? await preparation.PrepareAsync(snapshot.SaveJson, token).ConfigureAwait(false) : null;
+            return new(result, Load: prepared);
+        }
+    });
     public bool List() => Start(GameSlotOperation.List,
         async token => new(Slots: await store.ListAsync(token).ConfigureAwait(false)));
     public bool Delete(string id) => Start(GameSlotOperation.Delete, async token =>
@@ -60,9 +76,10 @@ public sealed class GameSessionSlots : IDisposable, IAsyncDisposable
     {
         if (pending is not { Task.IsCompleted: true } work) return false;
         pending = null;
+        Reply? reply = null;
         try
         {
-            var reply = work.Task.GetAwaiter().GetResult(); // Completed task only.
+            reply = work.Task.GetAwaiter().GetResult(); // Completed task only.
             if (disposed || work.Cancellation.IsCancellationRequested || !session.IsCurrentGeneration(work.Generation))
                 return false;
             if (work.Operation is GameSlotOperation.Load or GameSlotOperation.Continue)
@@ -72,7 +89,7 @@ public sealed class GameSessionSlots : IDisposable, IAsyncDisposable
                     if (reply.Read?.Info.Status == GameSlotStatus.Unavailable) throw new IOException("Файл слота недоступен.");
                     throw new InvalidOperationException(reply.Read?.Info.Diagnostic ?? "Совместимых сохранений нет.");
                 }
-                if (!session.TryLoadSave(snapshot.SaveJson, work.Generation)) return false;
+                if (reply.Load is null || !session.TryLoadPrepared(reply.Load, work.Generation)) return false;
             }
             LastResult = new(work.Operation, true, work.Operation switch
             {
@@ -90,7 +107,7 @@ public sealed class GameSessionSlots : IDisposable, IAsyncDisposable
                 ? "Хранилище слотов недоступно. Проверьте доступ к файлам и свободное место." : error.Message);
             return true;
         }
-        finally { work.Cancellation.Dispose(); }
+        finally { reply?.Load?.Dispose(); work.Cancellation.Dispose(); }
     }
 
     /// <summary>Invalidate a host-owned operation before Poll can apply it. A published disk write is not rolled back.</summary>
@@ -106,6 +123,7 @@ public sealed class GameSessionSlots : IDisposable, IAsyncDisposable
             retiring.Add(work.Task.ContinueWith(task =>
             {
                 _ = task.Exception; // Observe even a deliberately cancellation-ignoring backend's late failure.
+                if (task.IsCompletedSuccessfully) task.Result.Load?.Dispose();
                 work.Cancellation.Dispose();
             }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default));
         }

@@ -107,6 +107,7 @@ public sealed class WindowsInstallerTests
             Assert.AreEqual(0, await RunAsync(installer, ["/S", "/D=" + installed], root));
             Assert.IsTrue(File.Exists(Path.Combine(installed, "coreclr.dll")));
             Assert.IsTrue(File.Exists(Path.Combine(installed, "game.ico")));
+            StringAssert.Contains(await File.ReadAllTextAsync(Path.Combine(installed, "Licenses", "PCG.txt")), "Copyright 2014 Melissa O'Neill");
             Assert.AreEqual(project.Id, GamePackage.Load(installed).ProjectId);
             using (var registry = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64))
             using (var entry = registry.OpenSubKey(key))
@@ -141,6 +142,7 @@ public sealed class WindowsInstallerTests
             CollectionAssert.AreEqual(save, await File.ReadAllBytesAsync(Path.Combine(saves, "quicksave.json")));
             Assert.AreEqual("retain me", await File.ReadAllTextAsync(Path.Combine(installed, "foreign.txt")));
             Assert.IsFalse(File.Exists(Path.Combine(installed, "NovellMaker.Runtime.exe")));
+            Assert.IsFalse(File.Exists(Path.Combine(installed, "Licenses", "PCG.txt")));
             Assert.IsFalse(Directory.Exists(shortcuts));
             using (var registry = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64)) Assert.IsNull(registry.OpenSubKey(key));
             // Installation after uninstall is possible; another revision still uses the same save identity.

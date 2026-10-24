@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using NovellMaker.Core.Assets;
 using SkiaSharp;
@@ -7,14 +8,12 @@ namespace NovellMaker.Runtime;
 
 internal static class RuntimeImageLoader
 {
+    internal sealed record Decoded(int Width, int Height, byte[] Pixels);
     private const long MaximumEncodedBytes = 64L * 1024 * 1024;
 
-    public static Texture2D Load(
-        GraphicsDevice graphicsDevice,
-        string assetsRoot,
-        ImageAsset asset)
+    public static Decoded Decode(string assetsRoot, ImageAsset asset, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(graphicsDevice);
+        cancellationToken.ThrowIfCancellationRequested();
         ArgumentException.ThrowIfNullOrWhiteSpace(assetsRoot);
         ArgumentNullException.ThrowIfNull(asset);
 
@@ -71,6 +70,7 @@ internal static class RuntimeImageLoader
         }
 
         var decodeResult = codec.GetPixels(imageInfo, bitmap.GetPixels());
+        cancellationToken.ThrowIfCancellationRequested();
         if (decodeResult != SKCodecResult.Success)
         {
             throw new InvalidDataException(
@@ -79,10 +79,23 @@ internal static class RuntimeImageLoader
 
         var bytes = new byte[checked(width * height * 4)];
         Marshal.Copy(bitmap.GetPixels(), bytes, 0, bytes.Length);
-        var texture = new Texture2D(graphicsDevice, width, height, false, SurfaceFormat.Color);
+        return new(width, height, bytes);
+    }
+
+    // GPU creation and upload must stay on the graphics host thread.
+    public static Texture2D CreateTexture(GraphicsDevice graphicsDevice, Decoded image) =>
+        new(graphicsDevice, image.Width, image.Height, false, SurfaceFormat.Color);
+
+    public static void UploadRows(Texture2D texture, Decoded image, int firstRow, int rows) =>
+        texture.SetData(0, new Rectangle(0, firstRow, image.Width, rows), image.Pixels,
+            checked(firstRow * image.Width * 4), checked(rows * image.Width * 4));
+
+    public static Texture2D Upload(GraphicsDevice graphicsDevice, Decoded image)
+    {
+        var texture = new Texture2D(graphicsDevice, image.Width, image.Height, false, SurfaceFormat.Color);
         try
         {
-            texture.SetData(bytes);
+            texture.SetData(image.Pixels);
             return texture;
         }
         catch

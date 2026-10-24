@@ -16,6 +16,7 @@ public sealed record GameSlotMetadata(Guid ProjectId, string Revision, DateTimeO
         SavedAtUtc != default && SavedAtUtc.Offset == TimeSpan.Zero && double.IsFinite(GameTime) && GameTime >= 0;
 }
 public sealed record GameSlotSnapshot(GameSlotMetadata Metadata, string SaveJson);
+public sealed record GameSlotCapture(GameSlotMetadata Metadata, GameSaveSnapshot Save);
 public sealed record GameSlotInfo(string Id, GameSlotStatus Status, GameSlotMetadata? Metadata, string? Diagnostic, bool Legacy = false);
 public sealed record GameSlotRead(GameSlotInfo Info, GameSlotSnapshot? Snapshot);
 
@@ -60,18 +61,24 @@ public sealed class GameSlotStore : IGameSlotStore
             throw new ArgumentException("Быстрый слот должен находиться отдельно от каталога именованных слотов.");
     }
 
-    /// <summary>Call only on the host thread, before starting file I/O. No player escapes into a Task.</summary>
-    public static GameSlotSnapshot Capture(GameSession session, string? title = null, DateTimeOffset? savedAt = null)
+    /// <summary>Host-only capture of immutable data. No serialization, fingerprinting, validation or I/O.</summary>
+    public static GameSlotCapture Capture(GameSession session, string? title = null, DateTimeOffset? savedAt = null)
     {
         if (session.Phase != GameSessionPhase.Playing) throw new InvalidOperationException("Нет активного прохождения.");
         var player = session.Player;
-        var json = GameSave.Serialize(player.Execution); // Includes pending-Lua/save-point restrictions.
-        var state = player.Execution.State;
+        var snapshot = GameSave.Capture(player.Execution); // Includes pending-Lua/save-point restrictions.
+        var state = snapshot.State;
         var scene = player.Execution.Project.Scenes.First(s => s.Id == state.SceneId);
         return new(new(state.ProjectId, state.Revision, (savedAt ?? DateTimeOffset.UtcNow).ToUniversalTime(),
             Clip(title ?? scene.Name, 128), state.SceneId, Clip(scene.Name, 256), state.LineId,
-            Clip(player.Frame.Text, 512), state.Time), json);
+            Clip(player.Frame.Text, 512), state.Time), snapshot);
     }
+
+    /// <summary>Heavy preparation, independent of the live session. Run outside the host thread.</summary>
+    public static GameSlotSnapshot Prepare(GameSlotCapture captured) => new(captured.Metadata, GameSave.Serialize(captured.Save));
+
+    public static async Task<GameSlotSnapshot> PrepareAsync(GameSlotCapture captured, CancellationToken cancellationToken = default) =>
+        new(captured.Metadata, await GameSave.SerializeAsync(captured.Save, cancellationToken).ConfigureAwait(false));
 
     public Task SaveAsync(string id, GameSlotSnapshot snapshot, CancellationToken cancellationToken = default) =>
         Run<object?>(token =>

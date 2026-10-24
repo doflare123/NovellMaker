@@ -16,6 +16,43 @@ namespace NovellMaker.Runtime.Tests;
 public sealed class NativeRuntimeSmokeTests
 {
     [TestMethod]
+    public async Task NativeLargeImageUsesBoundedTransfersAndKeepsPreviousWholeFrameDuringTransition()
+    {
+        if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1") Assert.Inconclusive("Set NOVELLMAKER_NATIVE_SMOKE=1.");
+        var directory = Path.Combine(FindRepositoryRoot(), "artifacts", "screenshots", "progressive-images", Guid.NewGuid().ToString("N"));
+        var images = Path.Combine(directory, "Assets", "Images"); Directory.CreateDirectory(images);
+        var fixture = await CreateFixtureAsync(directory, images, false); var store = new JsonProjectStore(); var project = await store.LoadAsync(fixture.ProjectPath);
+        var asset = new ImageAsset(Guid.NewGuid(), "Large", "Assets/Images/large.png", 4096, 4096);
+        using (var bitmap = new SKBitmap(4096, 4096))
+        {
+            bitmap.Erase(new SKColor(200, 30, 40)); using var canvas = new SKCanvas(bitmap);
+            using var paint = new SKPaint { Color = new SKColor(20, 50, 210) }; canvas.DrawRect(0, 2048, 4096, 2048, paint);
+            using var encoded = bitmap.Encode(SKEncodedImageFormat.Png, 100);
+            using var file = File.Create(Path.Combine(directory, asset.RelativePath)); encoded.SaveTo(file);
+        }
+        var target = NovelScene.Create("Large destination") with { BackgroundImageId = asset.Id, Lines = [DialogueLine.Create("ru", "Loaded")] };
+        var source = project.Scenes[0]; source = source with { ScriptBlocks = [new(source.Lines[0].Id, ScriptPhase.AfterLine,
+            new JumpAction(Guid.NewGuid(), target.Id, ScenarioProgram.LineEntryId(target.Lines[0].Id)))] };
+        project = project with { Scenes = [source, target], Images = project.Images.Add(asset) }; await store.SaveAsync(fixture.ProjectPath, project);
+        var png = Path.Combine(directory, "frame.png"); var report = Path.ChangeExtension(png, ".json");
+        var runtime = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
+        using var process = Process.Start(CreateStartInfo(runtime, fixture.ProjectPath, directory, source.Id, source.Lines[0].Id, png, report))!;
+        var stderr = process.StandardError.ReadToEndAsync(); var stdout = process.StandardOutput.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException) { process.Kill(true); await process.WaitForExitAsync(); Assert.Fail("Large image runtime timed out."); }
+        Assert.AreEqual(0, process.ExitCode, await stderr + await stdout);
+        using var json = JsonDocument.Parse(File.ReadAllText(report)); var result = json.RootElement;
+        Assert.IsGreaterThan(0, result.GetProperty("HeldImageDrawFrames").GetInt32());
+        Assert.IsGreaterThanOrEqualTo(64, result.GetProperty("PendingImageDrawFrames").GetInt32());
+        Assert.IsLessThanOrEqualTo(RuntimeImageCache<IDisposable>.MaximumUploadBytesPerFrame, result.GetProperty("LargestImageUploadBytes").GetInt32());
+        using var final = SKBitmap.Decode(png); using var held = SKBitmap.Decode(Path.ChangeExtension(report, ".held.png"));
+        Assert.AreEqual(new SKColor(200, 30, 40), final.GetPixel(10, 100));
+        Assert.AreEqual(new SKColor(20, 50, 210), final.GetPixel(10, 600));
+        Assert.AreEqual(new SKColor(22, 58, 112), held.GetPixel(10, 100));
+    }
+
+    [TestMethod]
     public async Task NativeDialogueGeometryOverflowReportsFallbackAndKeepsDrawing()
     {
         if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1") Assert.Inconclusive("Set NOVELLMAKER_NATIVE_SMOKE=1.");

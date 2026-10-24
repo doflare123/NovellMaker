@@ -23,6 +23,8 @@ public sealed record ScreenChange(string Kind, Guid? NodeId, string? Text, bool?
     public AuthorTrigger? Trigger { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public LuaValue? State { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LuaRandomState? RandomState { get; init; }
 }
 internal sealed record ScreenLuaRequest(int Protocol, string Kind, ScreenLuaStamp Stamp, Guid ResourceId,
     ImmutableArray<ScreenNode> Nodes, string? Source, ImmutableDictionary<string, Guid> References,
@@ -32,18 +34,21 @@ internal sealed record ScreenLuaRequest(int Protocol, string Kind, ScreenLuaStam
     public LuaValue? State { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public LuaModuleBundle? Modules { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LuaRandomState? RandomState { get; init; }
 }
 internal sealed record ScreenLuaResponse(int Protocol, string Kind, ScreenLuaStamp Stamp, string? Error, ImmutableArray<ScreenChange> Changes);
 internal sealed record ScreenPreparedBatch(ScreenDefinition Definition, bool Close, GameServiceCommand? Service = null)
 {
     public ImmutableArray<AuthorTrigger> Triggers { get; init; } = [];
     public LuaValue? State { get; init; }
+    public LuaRandomState? RandomState { get; init; }
 }
 public sealed record ScreenServiceInvocation(ScreenInstance Instance, GameServiceCommand Command);
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 11;
+    internal const int Version = 12;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {
@@ -175,10 +180,15 @@ internal static class ScreenLuaProtocol
         var characters = 0;
         var stateBytes = 0;
         LuaValue? state = null;
+        LuaRandomState? random = null;
         foreach (var change in changes)
         {
             if (change is null || close) throw new InvalidOperationException("Некорректный пакет экрана.");
             var extra = change.Patch is not null || change.ParentId is not null || change.Ids is not null;
+            if (change.Kind == "random" && change.RandomState is { } rng && random is null && !extra && change.NodeId is null && change.Text is null &&
+                change.Value is null && change.Service is null && change.Trigger is null && change.State is null)
+            { random = rng; continue; }
+            if (change.RandomState is not null) throw new InvalidOperationException("Лишние или повторные данные RNG.");
             if (change.Kind == "state" && change.State is { } data && !extra && change.NodeId is null && change.Text is null && change.Value is null && change.Service is null && change.Trigger is null)
             {
                 if ((stateBytes += data.JsonByteCount) > LuaValue.MaximumJsonBytes)
@@ -226,6 +236,7 @@ internal static class ScreenLuaProtocol
         // Still advance protocol versions for successful no-ops, but preserve view identity.
         if (close && service is not null) throw new InvalidOperationException("Нельзя закрыть экран и запросить сервис одним пакетом.");
         if (triggers.Count != 0 && (close || service is not null)) throw new InvalidOperationException("Триггеры нельзя совмещать с закрытием или сервисом в одном пакете.");
-        return new(current.Nodes.SequenceEqual(definition.Nodes) && current.RetiredNodeIds.SetEquals(definition.RetiredNodeIds) ? definition : current, close, service) { Triggers = triggers.ToImmutable(), State = state };
+        return new(current.Nodes.SequenceEqual(definition.Nodes) && current.RetiredNodeIds.SetEquals(definition.RetiredNodeIds) ? definition : current, close, service)
+        { Triggers = triggers.ToImmutable(), State = state, RandomState = random };
     }
 }

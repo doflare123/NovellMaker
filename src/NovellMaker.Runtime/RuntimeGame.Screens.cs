@@ -17,6 +17,7 @@ internal sealed partial class RuntimeGame
     private void ResetSessionResources()
     {
         screens.Reset(); audio?.Stop();
+        imageHintsKey = null;
         lineElapsed = TimeSpan.Zero; saveMessage = "";
         dialoguePresentations.Clear(); dialogueDiagnostics.Clear();
         renderedFrameKey = null; interactionKey = "";

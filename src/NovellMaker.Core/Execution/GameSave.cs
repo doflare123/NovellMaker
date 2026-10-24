@@ -5,9 +5,14 @@ using NovellMaker.Core.Projects;
 
 namespace NovellMaker.Core.Execution;
 
+/// <summary>Immutable data captured on the host. Contains no player or host resources.</summary>
+public sealed record GameSaveSnapshot(GameState State, NovelProject Project);
+
 public static class GameSave
 {
     public const int CurrentVersion = 1;
+    private static readonly SemaphoreSlim PreparationGate = new(2, 2);
+    private static int admittedPreparations;
     private sealed record Document([property: JsonRequired] int Version, [property: JsonRequired] GameState State);
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -15,11 +20,49 @@ public static class GameSave
         AllowDuplicateProperties = false, RespectNullableAnnotations = true, RespectRequiredConstructorParameters = true,
     };
 
-    public static string Serialize(ScenarioPlayer player)
+    public static GameSaveSnapshot Capture(ScenarioPlayer player)
     {
         player.EnsureCanSave();
-        Validate(player.State, player.Project);
-        return JsonSerializer.Serialize(new Document(CurrentVersion, player.State), Options);
+        return new(player.State, player.Project);
+    }
+
+    public static string Serialize(ScenarioPlayer player) => Serialize(Capture(player));
+
+    /// <summary>Validate and serialize captured data without accessing the live player. May run in the background.</summary>
+    public static string Serialize(GameSaveSnapshot snapshot)
+    {
+        Validate(snapshot.State, snapshot.Project);
+        return JsonSerializer.Serialize(new Document(CurrentVersion, snapshot.State), Options);
+    }
+
+    /// <summary>Bounded background preparation: two active and at most 32 waiting requests per process.</summary>
+    public static Task<string> SerializeAsync(GameSaveSnapshot snapshot, CancellationToken cancellationToken = default) =>
+        PrepareAsync(() => Serialize(snapshot), cancellationToken);
+
+    internal static async Task<T> PrepareAsync<T>(Func<T> prepare, CancellationToken cancellationToken)
+    {
+        if (Interlocked.Increment(ref admittedPreparations) > 34)
+        { Interlocked.Decrement(ref admittedPreparations); throw new InvalidOperationException("Очередь подготовки сохранений заполнена."); }
+        try
+        {
+            await PreparationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await Task.Run(() =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var result = prepare();
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        if (result is IDisposable disposable) disposable.Dispose();
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+                    return result;
+                }, cancellationToken).ConfigureAwait(false);
+            }
+            finally { PreparationGate.Release(); }
+        }
+        finally { Interlocked.Decrement(ref admittedPreparations); }
     }
 
     public static void Load(ScenarioPlayer player, string json)
@@ -39,7 +82,8 @@ public static class GameSave
 
     public static async Task SaveAsync(string path, ScenarioPlayer player, CancellationToken cancellationToken = default)
     {
-        var json = Serialize(player);
+        var snapshot = Capture(player);
+        var json = await SerializeAsync(snapshot, cancellationToken).ConfigureAwait(false);
         var full = Path.GetFullPath(path);
         var temporary = full + $".{Guid.NewGuid():N}.tmp";
         try

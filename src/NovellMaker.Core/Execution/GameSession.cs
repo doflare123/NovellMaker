@@ -16,6 +16,7 @@ public sealed class GameSession : IDisposable, IAsyncDisposable
     private readonly List<Task> retiring = [];
     private bool disposed;
     private bool changing;
+    private readonly object loadOwner = new();
     public ScenePlayer Player { get; private set; }
     public GameSessionPhase Phase { get; private set; }
     public long Generation { get; private set; }
@@ -88,6 +89,20 @@ public sealed class GameSession : IDisposable, IAsyncDisposable
     {
         if (!Current(expectedGeneration)) return false;
         LoadSave(json);
+        return true;
+    }
+
+    internal GameLoadPreparation CaptureLoadPreparation()
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return new(loadOwner, project, startSceneId, language, playbackMode, runLua);
+    }
+
+    /// <summary>Host commit only: ownership/generation checks and lifetime replacement, no parsing or project work.</summary>
+    internal bool TryLoadPrepared(PreparedGameLoad prepared, long expectedGeneration)
+    {
+        if (!Current(expectedGeneration)) return false;
+        Replace(prepared.Take(loadOwner), GameSessionPhase.Playing);
         return true;
     }
 

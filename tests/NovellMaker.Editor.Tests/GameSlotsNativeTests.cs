@@ -37,7 +37,7 @@ public sealed class GameSlotsNativeTests
         using var seed = new GameSession(project, story.Id, "ru"); seed.NewGame(0);
         var legacy = GameSave.Serialize(seed.Player.Execution);
         seed.Player.Next(); seed.Player.Tick(TimeSpan.FromSeconds(9));
-        var latest = GameSlotStore.Capture(seed, "Последний совместимый", DateTimeOffset.UtcNow.AddDays(1));
+        var latest = GameSlotStore.Prepare(GameSlotStore.Capture(seed, "Последний совместимый", DateTimeOffset.UtcNow.AddDays(1)));
         foreach (var packaged in new[] { false, true })
         {
             var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

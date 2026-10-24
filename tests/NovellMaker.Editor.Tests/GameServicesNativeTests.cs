@@ -39,7 +39,7 @@ public sealed class GameServicesNativeTests
              {"Kind":"click","X":630,"Y":230},{"Kind":"key","Key":"F10"}]
             """);
         using var seed = new GameSession(project, story.Id, "ru"); seed.NewGame(0); seed.Player.Next(); seed.Player.Tick(TimeSpan.FromSeconds(6));
-        var saved = GameSlotStore.Capture(seed);
+        var saved = GameSlotStore.Prepare(GameSlotStore.Capture(seed));
         foreach (var packaged in new[] { false, true })
         {
             var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

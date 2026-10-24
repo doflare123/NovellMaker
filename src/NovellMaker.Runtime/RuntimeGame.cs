@@ -26,9 +26,6 @@ internal sealed partial class RuntimeGame : Game
     private string windowSettingsDiagnostic = "";
     private ScenePlayer player => session.Player;
     private readonly bool showNavigationControls;
-    private readonly Dictionary<Guid, Texture2D> assetTextures = [];
-    private readonly HashSet<Guid> screenBudgetRejected = [];
-    private readonly Dictionary<Guid, string> assetDiagnostics = [];
     private SpriteBatch? spriteBatch;
     private RenderTarget2D? sceneTarget;
     private Texture2D? pixel;
@@ -104,6 +101,10 @@ internal sealed partial class RuntimeGame : Game
 
     protected override void LoadContent()
     {
+        imageCache = new((asset, token) => RuntimeImageLoader.Decode(arguments.AssetsRoot, asset, token),
+            decoded => RuntimeImageLoader.CreateTexture(GraphicsDevice, decoded), uploadRows: RuntimeImageLoader.UploadRows);
+        imagePreloader = new(player.Execution.Project);
+        imageLoadingTexture = DialogueTextureRenderer.RenderButton(GraphicsDevice, "Загрузка…", 200, 40);
         InitializeAudio();
         try { ApplyPlayerSettings(settings.Current); }
         catch (InvalidOperationException)
@@ -139,9 +140,10 @@ internal sealed partial class RuntimeGame : Game
         PollSlots();
         screens.SyncScene(player.Execution.State.SceneId);
         screens.Poll();
+        RefreshFrameResources();
         var hostActive = arguments.SmokeOutputPath is not null || IsActive;
-        screens.Stack.SetActive(hostActive);
-        var paused = session.Phase != GameSessionPhase.Playing || screens.Stack.PausesScenario || !hostActive;
+        screens.Stack.SetActive(hostActive && imageCache?.IsPending != true);
+        var paused = session.Phase != GameSessionPhase.Playing || screens.Stack.PausesScenario || !hostActive || imageCache?.IsPending == true;
         player.Execution.IsPaused = paused;
         SynchronizeAudio();
         var scenarioTime = player.Execution.State.Time;
@@ -169,7 +171,7 @@ internal sealed partial class RuntimeGame : Game
             }
             if (smokePlan is null) AdvanceSmokeSequence(); else AdvanceActionSmoke();
         }
-        else if (IsActive && inputActive)
+        else if (IsActive && inputActive && imageCache?.IsPending != true)
         {
             var keyboard = Keyboard.GetState();
             var mouse = Mouse.GetState();
@@ -217,10 +219,11 @@ internal sealed partial class RuntimeGame : Game
         if (session.Phase == GameSessionPhase.Ended) { base.Update(gameTime); return; }
         screens.SyncScene(player.Execution.State.SceneId);
         screens.Poll();
-        RefreshFrameResources();
+        RefreshFrameResources(poll: true);
+        RefreshTextTextures();
         var menuDiagnostics = string.Join("\n", screens.Diagnostics.Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values));
         if (menuDiagnostics != lastMenuDiagnostics) { lastMenuDiagnostics = menuDiagnostics; RefreshTextTextures(); }
-        player.Execution.IsPaused = session.Phase != GameSessionPhase.Playing || screens.Stack.PausesScenario || !hostActive;
+        player.Execution.IsPaused = session.Phase != GameSessionPhase.Playing || screens.Stack.PausesScenario || !hostActive || imageCache?.IsPending == true;
         SynchronizeAudio();
         base.Update(gameTime);
     }
@@ -232,24 +235,41 @@ internal sealed partial class RuntimeGame : Game
             return;
         }
 
-        GraphicsDevice.SetRenderTarget(sceneTarget);
-        GraphicsDevice.Clear(new Color(18, 20, 24));
-        spriteBatch.Begin(
-            SpriteSortMode.Deferred,
-            BlendState.AlphaBlend,
-            SamplerState.LinearClamp,
-            DepthStencilState.None,
-            RasterizerState.CullNone);
-        DrawBackground(spriteBatch, player.Frame.Background);
-        DrawCharacters(spriteBatch, player.Frame.Characters);
-        DrawComponents(spriteBatch);
-        DrawNavigationControls(spriteBatch);
-        foreach (var button in interactionButtons) spriteBatch.Draw(button.Texture.Texture, button.Bounds, Color.White);
-        if (actionHelp is not null) spriteBatch.Draw(actionHelp.Texture, new Vector2(16, 16), Color.White);
-        DrawDiagnostics(spriteBatch);
-        spriteBatch.End();
-
-        GraphicsDevice.SetRenderTarget(null);
+        var imagesPending = imageCache?.IsPending == true;
+        if (imagesPending && hasPresentedFrame)
+        {
+            heldImageDrawFrames++;
+            if (!heldImageScreenshotWritten && arguments.SmokeReportPath is { } smokeReport)
+            {
+                using var held = File.Create(Path.ChangeExtension(smokeReport, ".held.png"));
+                sceneTarget.SaveAsPng(held, sceneTarget.Width, sceneTarget.Height);
+                heldImageScreenshotWritten = true;
+            }
+        }
+        if (!imagesPending || !hasPresentedFrame)
+        {
+            GraphicsDevice.SetRenderTarget(sceneTarget);
+            GraphicsDevice.Clear(new Color(18, 20, 24));
+            spriteBatch.Begin(
+                SpriteSortMode.Deferred,
+                BlendState.AlphaBlend,
+                SamplerState.LinearClamp,
+                DepthStencilState.None,
+                RasterizerState.CullNone);
+            if (!imagesPending)
+            {
+                DrawBackground(spriteBatch, player.Frame.Background);
+                DrawCharacters(spriteBatch, player.Frame.Characters);
+                DrawComponents(spriteBatch);
+                DrawNavigationControls(spriteBatch);
+                foreach (var button in interactionButtons) spriteBatch.Draw(button.Texture.Texture, button.Bounds, Color.White);
+                if (actionHelp is not null) spriteBatch.Draw(actionHelp.Texture, new Vector2(16, 16), Color.White);
+                DrawDiagnostics(spriteBatch);
+                hasPresentedFrame = true;
+            }
+            spriteBatch.End();
+            GraphicsDevice.SetRenderTarget(null);
+        }
         GraphicsDevice.Clear(Color.Black);
         var destination = RuntimeInputMapper.CalculateLetterbox(GraphicsDevice.PresentationParameters.BackBufferWidth,
             GraphicsDevice.PresentationParameters.BackBufferHeight);
@@ -260,14 +280,18 @@ internal sealed partial class RuntimeGame : Game
             DepthStencilState.None,
             RasterizerState.CullNone);
         spriteBatch.Draw(sceneTarget, destination, Color.White);
+        if (imagesPending && imageLoadingTexture is { } loading)
+            spriteBatch.Draw(loading.Texture, new Rectangle(destination.X + 16, destination.Y + 16, 200, 40), Color.White);
         spriteBatch.End();
 
         drawFrames++;
         if (player.Execution.HasPendingLua) pendingLuaDrawFrames++;
         if (screens.HasPending) pendingScreenLuaDrawFrames++;
         if (slots.IsBusy) pendingSlotDrawFrames++;
+        if (imagesPending) pendingImageDrawFrames++;
         if (arguments.SmokeOutputPath is not null && drawFrames >= 4 &&
-            (smokePlan is null || actionTrace.Count == smokePlan.Length) && !player.Execution.HasPendingLua && !screens.HasPending && !slots.IsBusy &&
+            (smokePlan is null ? smokeReturned : actionTrace.Count == smokePlan.Length) && !player.Execution.HasPendingLua && !screens.HasPending && !slots.IsBusy &&
+            imageCache?.IsPending != true &&
             (componentTextures is null || componentTextures.DeferredNodes == componentTextures.CapacityDeferredNodes) && !smokeWritten)
         {
             WriteSmokeArtifacts(sceneTarget);
@@ -292,11 +316,8 @@ internal sealed partial class RuntimeGame : Game
         foreach (var button in interactionButtons) button.Texture.Dispose();
         diagnosticsTexture?.Dispose();
         navigationTexture?.Dispose();
-        foreach (var texture in assetTextures.Values)
-        {
-            texture.Dispose();
-        }
-
+        imageCache?.Dispose();
+        imageLoadingTexture?.Dispose();
         assetTextures.Clear();
         pixel?.Dispose();
         sceneTarget?.Dispose();
@@ -306,7 +327,7 @@ internal sealed partial class RuntimeGame : Game
 
     private void AdvanceSmokeSequence()
     {
-        if (player.Execution.HasPendingLua || screens.HasPending) return;
+        if (player.Execution.HasPendingLua || screens.HasPending || imageCache?.IsPending == true) return;
         if (drawFrames >= 1 && !smokeAdvanced)
         {
             smokeNextResult = ApplyAction(RuntimeAction.Next);
@@ -335,7 +356,7 @@ internal sealed partial class RuntimeGame : Game
     private void AdvanceActionSmoke()
     {
         var immediate = pendingSmokeStep is null && actionTrace.Count < smokePlan!.Length && smokePlan[actionTrace.Count].Kind.EndsWith("_now", StringComparison.Ordinal);
-        if (!immediate && (player.Execution.HasPendingLua || screens.HasPending || slots.IsBusy || settings.IsBusy)) return;
+        if (!immediate && (player.Execution.HasPendingLua || screens.HasPending || slots.IsBusy || settings.IsBusy || imageCache?.IsPending == true)) return;
         if (pendingSmokeStep is { } finished)
         {
             actionTrace.Add(CaptureTrace(finished.Kind, pendingSmokeSlots ? slots.LastResult?.Success == true : pendingSmokeSuccess));
@@ -391,7 +412,7 @@ internal sealed partial class RuntimeGame : Game
 
     private RuntimeActionTrace CaptureTrace(string kind, bool success)
     {
-        player.Execution.IsPaused = session.Phase != GameSessionPhase.Playing || screens.Stack.PausesScenario;
+        player.Execution.IsPaused = session.Phase != GameSessionPhase.Playing || screens.Stack.PausesScenario || imageCache?.IsPending == true;
         SynchronizeAudio();
         return new(kind, success, player.Execution.State, player.Frame.Text)
         {
@@ -496,68 +517,6 @@ internal sealed partial class RuntimeGame : Game
         foreach (var b in buttons) interactionButtons.Add((b.Id, b.Bounds, DialogueTextureRenderer.RenderButton(GraphicsDevice, b.Label, b.Bounds.Width, b.Bounds.Height)));
         actionHelp?.Dispose();
         actionHelp = string.IsNullOrEmpty(saveMessage) ? null : DialogueTextureRenderer.RenderButton(GraphicsDevice, saveMessage, 1040, 40);
-    }
-
-    private void RefreshFrameResources()
-    {
-        var wanted = new Dictionary<Guid, ImageAsset>();
-        if (player.Frame.Background is { } background)
-        {
-            wanted[background.Id] = background;
-        }
-
-        foreach (var character in player.Frame.Characters)
-        {
-            wanted[character.Image.Id] = character.Image;
-        }
-
-        foreach (var rejected in screenBudgetRejected) assetDiagnostics.Remove(rejected);
-        screenBudgetRejected.Clear();
-        var screenPixels = 0L; var screenImages = 0;
-        foreach (var id in screens.Stack.Instances.SelectMany(i => i.Definition.VisibleRegions(new(0, 0, LogicalWidth, LogicalHeight)))
-            .Where(r => r.Node.ImageId is not null).Select(r => r.Node.ImageId!.Value)
-            .Concat(screens.Stack.Instances.Select(i => player.Execution.Project.Scenes.FirstOrDefault(s => s.Id == i.Definition.Id)?.BackgroundImageId)
-                .OfType<Guid>()).Distinct())
-        {
-            if (wanted.ContainsKey(id) || player.Execution.Project.Images.FirstOrDefault(i => i.Id == id) is not { } image) continue;
-            wanted[id] = image;
-            var pixels = (long)image.PixelWidth * image.PixelHeight;
-            if (screenImages >= 32 || screenPixels + pixels > 16 * 1024 * 1024)
-            {
-                if (assetTextures.Remove(id, out var rejectedTexture)) rejectedTexture.Dispose();
-                screenBudgetRejected.Add(id);
-                assetDiagnostics[id] = $"Изображение «{image.Name}»: превышен бюджет спрайтов экранов (32 изображения / 16 Мп).";
-            }
-            else { screenImages++; screenPixels += pixels; }
-        }
-
-        foreach (var staleId in assetTextures.Keys.Where(id => !wanted.ContainsKey(id)).ToArray())
-        {
-            assetTextures[staleId].Dispose();
-            assetTextures.Remove(staleId);
-        }
-
-        foreach (var staleId in assetDiagnostics.Keys.Where(id => !wanted.ContainsKey(id)).ToArray())
-        {
-            assetDiagnostics.Remove(staleId);
-        }
-
-        foreach (var (id, asset) in wanted)
-        {
-            if (assetTextures.ContainsKey(id) || assetDiagnostics.ContainsKey(id))
-            {
-                continue;
-            }
-
-            try
-            {
-                assetTextures[id] = RuntimeImageLoader.Load(GraphicsDevice, arguments.AssetsRoot, asset);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
-            {
-                assetDiagnostics[id] = $"Ресурс «{asset.Name}»: {exception.Message}";
-            }
-        }
     }
 
     private void RefreshTextTextures()
@@ -719,6 +678,12 @@ internal sealed partial class RuntimeGame : Game
                 PendingLuaDrawFrames = pendingLuaDrawFrames,
                 PendingScreenLuaDrawFrames = pendingScreenLuaDrawFrames,
                 PendingSlotDrawFrames = pendingSlotDrawFrames,
+                PendingImageDrawFrames = pendingImageDrawFrames,
+                HeldImageDrawFrames = heldImageDrawFrames,
+                ImageDecodeCount = imageCache?.DecodeCount ?? 0,
+                LargestImageUploadBytes = imageCache?.LargestUploadBytes ?? 0,
+                MaximumImageAllocationMilliseconds = imageCache?.MaximumAllocationMilliseconds ?? 0,
+                MaximumImageTransferMilliseconds = imageCache?.MaximumTransferMilliseconds ?? 0,
                 ScreenLuaAppliedBatches = screens.Scripts?.AppliedBatches ?? 0,
                 ScreenLuaDiagnostics = screens.Scripts?.Diagnostics ?? [],
                 Packaged = arguments.Package is not null, WindowTitle = Window.Title,
@@ -757,6 +722,12 @@ internal sealed record RuntimeSmokeReport(
     public int PendingLuaDrawFrames { get; init; }
     public int PendingScreenLuaDrawFrames { get; init; }
     public int PendingSlotDrawFrames { get; init; }
+    public int PendingImageDrawFrames { get; init; }
+    public int HeldImageDrawFrames { get; init; }
+    public int ImageDecodeCount { get; init; }
+    public int LargestImageUploadBytes { get; init; }
+    public double MaximumImageAllocationMilliseconds { get; init; }
+    public double MaximumImageTransferMilliseconds { get; init; }
     public int ScreenLuaAppliedBatches { get; init; }
     public IReadOnlyList<string> ScreenLuaDiagnostics { get; init; } = [];
     public string? SavePath { get; init; }

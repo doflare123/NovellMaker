@@ -11,6 +11,7 @@ internal sealed class ScreenLuaVm
 {
     private readonly Script script = new(CoreModules.None);
     private readonly LuaStandardLibrary library;
+    private readonly LuaRandomApi random;
     private readonly DynValue handlers;
     private readonly Guid instanceId;
     private ImmutableArray<ScreenChange>.Builder changes = ImmutableArray.CreateBuilder<ScreenChange>();
@@ -25,8 +26,10 @@ internal sealed class ScreenLuaVm
         Definition = definition;
         this.instanceId = instanceId;
         library = new(script);
+        random = new(library);
         LuaLimits.CheckSource(source);
         var ui = new Table(script);
+        random.Install(ui, () => handling);
         var refs = new Table(script);
         string Handle(Guid id) => new ScreenNodeHandle(definition.Id, instanceId, id).ToString();
         foreach (var pair in references) refs.Set(pair.Key, DynValue.NewString(Handle(pair.Value)));
@@ -113,12 +116,13 @@ internal sealed class ScreenLuaVm
         if (changes.Count != 0) throw new InvalidOperationException("Изменения экрана и команды сервисов разрешены только в обработчике.");
     }
 
-    internal ImmutableArray<ScreenChange> Handle(ScreenLuaEvent? value, ImmutableDictionary<string, string> data, LuaValue? componentState = null)
+    internal ImmutableArray<ScreenChange> Handle(ScreenLuaEvent? value, ImmutableDictionary<string, string> data, LuaValue? componentState = null, LuaRandomState? randomState = null)
     {
         snapshot = data;
         if (componentState is not null) state = componentState;
         stateBytes = 0;
         changes = ImmutableArray.CreateBuilder<ScreenChange>();
+        random.Begin(randomState);
         var function = handlers.Table.Get(value is null ? "on_load" : "on_event");
         var argument = new Table(script);
         if (value is not null)
@@ -176,6 +180,12 @@ internal sealed class ScreenLuaVm
         handling = true;
         try { if (function.Type != DataType.Nil) Execute(function, DynValue.NewTable(argument)); }
         finally { handling = false; }
+        if (random.Changed)
+        {
+            if (changes.Count >= LuaActionScript.MaximumCommands) throw new ScriptRuntimeException("Превышен лимит команд вместе с состоянием RNG.");
+            // Metadata precedes close; there is only one final RNG value per atomic batch.
+            changes.Insert(0, new("random", null, null, null) { RandomState = random.State });
+        }
         var batch = changes.ToImmutable();
         // Revalidate aggregate text/command budgets as one atomic batch on the host too.
         return batch;
@@ -240,7 +250,7 @@ internal sealed class ScreenLuaWorkerService
         if (request.Kind == "handshake")
         {
             if (identity is not null || stamp.OwnerId != Guid.Empty || stamp.InstanceId != Guid.Empty || stamp.Version != 0 ||
-                request.ResourceId != Guid.Empty || !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Event is not null || !request.Snapshot.IsEmpty || request.State is not null || request.Modules is not null)
+                request.ResourceId != Guid.Empty || !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Event is not null || !request.Snapshot.IsEmpty || request.State is not null || request.Modules is not null || request.RandomState is not null)
                 throw new ArgumentException("Неверное приветствие экранного worker.");
             identity = (stamp.SessionId, stamp.Generation);
             return Reply("ready", []);
@@ -255,7 +265,7 @@ internal sealed class ScreenLuaWorkerService
             var definition = new ScreenDefinition(request.ResourceId, request.Nodes);
             if (request.References.Any(r => !definition.Nodes.Any(n => n.Id == r.Value))) throw new ArgumentException("Чужая именованная ссылка экрана.");
             var vm = new ScreenLuaVm(definition, stamp.InstanceId, request.Source, request.References, request.Modules);
-            var changes = vm.Handle(null, request.Snapshot, request.State ?? LuaValue.Null);
+            var changes = vm.Handle(null, request.Snapshot, request.State ?? LuaValue.Null, request.RandomState ?? LuaRandomState.Initial);
             _ = ScreenLuaProtocol.Prepare(definition, changes);
             if (entries.Values.Sum(e => e.Vm.Definition.Nodes.Length) + vm.Definition.Nodes.Length > ScreenStack.MaxSessionNodes)
                 throw new InvalidOperationException("Превышен бюджет узлов сеанса.");
@@ -266,14 +276,14 @@ internal sealed class ScreenLuaWorkerService
             entry.Version != stamp.Version || entry.ResourceId != request.ResourceId ||
             !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Modules is not null)
             throw new ArgumentException("Устаревшие данные или чужой владелец экрана.");
-        if (request.Kind == "close" && request.Event is null && request.Snapshot.IsEmpty && request.State is null)
+        if (request.Kind == "close" && request.Event is null && request.Snapshot.IsEmpty && request.State is null && request.RandomState is null)
         { entries.Remove(stamp.InstanceId); return Reply("closed", []); }
         if (request.Kind != "event" || request.Event is null) throw new ArgumentException("Неизвестное сообщение экрана.");
         ScreenLuaProtocol.ValidateEvent(entry.Vm.Definition, request.Event, worker: true);
         try
         {
             var before = entry.Vm.Definition;
-            var changes = entry.Vm.Handle(request.Event, request.Snapshot, request.State ?? LuaValue.Null);
+            var changes = entry.Vm.Handle(request.Event, request.Snapshot, request.State ?? LuaValue.Null, request.RandomState);
             _ = ScreenLuaProtocol.Prepare(before, changes);
             if (entries.Values.Sum(e => e.Vm.Definition.Nodes.Length) > ScreenStack.MaxSessionNodes)
                 throw new InvalidOperationException("Превышен бюджет узлов сеанса.");

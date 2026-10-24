@@ -34,7 +34,7 @@ public sealed class GameSlotTests
     public async Task EmptyLineIdInSnapshotAndMetadataIsCorruptWithoutMetadata(bool legacy)
     {
         using var folder = new Folder(); var project = Project(); using var session = Session(project);
-        var store = folder.Store(project); var snapshot = GameSlotStore.Capture(session);
+        var store = folder.Store(project); var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(session));
         await store.SaveAsync("broken", snapshot); await store.SaveAsync("healthy", snapshot);
         var path = System.IO.Path.Combine(folder.Slots, "broken.json");
         var state = JsonNode.Parse(snapshot.SaveJson)!; state["State"]!["LineId"] = Guid.Empty;
@@ -54,7 +54,7 @@ public sealed class GameSlotTests
     public async Task UnusableQuicksaveDoesNotHideNamedSlotsOrPreventContinue(string failure)
     {
         using var folder = new Folder(); var project = Project(); using var session = Session(project);
-        var store = folder.Store(project); var snapshot = GameSlotStore.Capture(session);
+        var store = folder.Store(project); var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(session));
         await store.SaveAsync("healthy", snapshot);
         FileStream? locked = null;
         try
@@ -104,7 +104,7 @@ public sealed class GameSlotTests
         Assert.AreEqual(0, process.ExitCode);
         try
         {
-            var snapshot = GameSlotStore.Capture(session);
+            var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(session));
             var outside = System.IO.Path.Combine(target, "quick.json"); File.WriteAllText(outside, snapshot.SaveJson);
             var store = new GameSlotStore(project, folder.Slots, System.IO.Path.Combine(junction, "quick.json"));
             await store.SaveAsync("healthy", snapshot);
@@ -125,7 +125,7 @@ public sealed class GameSlotTests
     {
         using var folder = new Folder(); var project = Project(); using var session = Session(project);
         session.Player.Tick(TimeSpan.FromSeconds(2));
-        var snapshot = GameSlotStore.Capture(session, "Мой слот", DateTimeOffset.Parse("2026-10-22T10:00:00Z"));
+        var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(session, "Мой слот", DateTimeOffset.Parse("2026-10-22T10:00:00Z")));
         var store = folder.Store(project);
         await store.SaveAsync("slot-1", snapshot); await store.SaveAsync(GameSlotStore.QuickSlotId, snapshot);
         session.Player.Next(); session.Player.Tick(TimeSpan.FromSeconds(3));
@@ -163,15 +163,15 @@ public sealed class GameSlotTests
     public async Task ContinueSkipsNewerForeignRevisionCorruptAndUnsupportedSlots()
     {
         using var folder = new Folder(); var project = Project(); using var session = Session(project);
-        var store = folder.Store(project); var old = GameSlotStore.Capture(session, savedAt: DateTimeOffset.UtcNow.AddDays(-3));
+        var store = folder.Store(project); var old = GameSlotStore.Prepare(GameSlotStore.Capture(session, savedAt: DateTimeOffset.UtcNow.AddDays(-3)));
         await store.SaveAsync("old", old); session.Player.Next();
-        var latest = GameSlotStore.Capture(session, savedAt: DateTimeOffset.UtcNow.AddDays(-2));
+        var latest = GameSlotStore.Prepare(GameSlotStore.Capture(session, savedAt: DateTimeOffset.UtcNow.AddDays(-2)));
         await store.SaveAsync("latest", latest);
         var changed = project with { Scenes = [project.Scenes[0] with { Name = "Изменённая сцена" }] };
         using var changedSession = Session(changed);
-        await folder.Store(changed).SaveAsync("revision", GameSlotStore.Capture(changedSession));
+        await folder.Store(changed).SaveAsync("revision", GameSlotStore.Prepare(GameSlotStore.Capture(changedSession)));
         var foreign = Project(); using var foreignSession = Session(foreign);
-        await folder.Store(foreign).SaveAsync("foreign", GameSlotStore.Capture(foreignSession));
+        await folder.Store(foreign).SaveAsync("foreign", GameSlotStore.Prepare(GameSlotStore.Capture(foreignSession)));
         File.WriteAllText(System.IO.Path.Combine(folder.Slots, "corrupt.json"), "{broken");
         File.WriteAllText(System.IO.Path.Combine(folder.Slots, "future.json"), "{\"Version\":999}");
         var list = await store.ListAsync(); Assert.HasCount(6, list);
@@ -190,7 +190,7 @@ public sealed class GameSlotTests
     public async Task UnsafeIdsCannotReadWriteOrDelete(string id)
     {
         using var folder = new Folder(); var project = Project(); using var session = Session(project); var store = folder.Store(project);
-        var snapshot = GameSlotStore.Capture(session);
+        var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(session));
         await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(id, snapshot));
         await Assert.ThrowsAsync<ArgumentException>(() => store.ReadAsync(id));
         await Assert.ThrowsAsync<ArgumentException>(() => store.DeleteAsync(id));
@@ -201,7 +201,7 @@ public sealed class GameSlotTests
     public async Task TamperedMetadataStrictSchemaInvalidStateAndFileLimitAreDiagnosed()
     {
         using var folder = new Folder(); var project = Project(); using var session = Session(project); var store = folder.Store(project);
-        var snapshot = GameSlotStore.Capture(session); await store.SaveAsync("slot", snapshot);
+        var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(session)); await store.SaveAsync("slot", snapshot);
         var path = System.IO.Path.Combine(folder.Slots, "slot.json"); var valid = File.ReadAllText(path);
         var json = JsonNode.Parse(valid)!; json["Metadata"]!["GameTime"] = 100;
         File.WriteAllText(path, json.ToJsonString()); Assert.AreEqual(GameSlotStatus.Corrupt, (await store.ReadAsync("slot")).Info.Status);
@@ -224,9 +224,9 @@ public sealed class GameSlotTests
     public async Task CancelledOrFailedWritePreservesPreviousFileAndCleansTemporaryFiles()
     {
         using var folder = new Folder(); var project = Project(); using var session = Session(project); var store = folder.Store(project);
-        await store.SaveAsync("slot", GameSlotStore.Capture(session));
+        await store.SaveAsync("slot", GameSlotStore.Prepare(GameSlotStore.Capture(session)));
         var path = System.IO.Path.Combine(folder.Slots, "slot.json"); var before = File.ReadAllBytes(path);
-        session.Player.Next(); var updated = GameSlotStore.Capture(session);
+        session.Player.Next(); var updated = GameSlotStore.Prepare(GameSlotStore.Capture(session));
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
         await Assert.ThrowsAsync<OperationCanceledException>(() => store.SaveAsync("slot", updated, cancelled.Token));
         await Assert.ThrowsAsync<OperationCanceledException>(() => store.ReadAsync("slot", cancelled.Token));
@@ -249,7 +249,7 @@ public sealed class GameSlotTests
     public async Task ConcurrentOperationsPublishWholeSnapshotsAndCapacityDoesNotOverwriteExistingSlots()
     {
         using var folder = new Folder(); var project = Project(); using var session = Session(project); var store = folder.Store(project);
-        var first = GameSlotStore.Capture(session); session.Player.Next(); var second = GameSlotStore.Capture(session);
+        var first = GameSlotStore.Prepare(GameSlotStore.Capture(session)); session.Player.Next(); var second = GameSlotStore.Prepare(GameSlotStore.Capture(session));
         await Task.WhenAll(Enumerable.Range(0, 20).Select(i => store.SaveAsync("same", i % 2 == 0 ? first : second)));
         var read = await store.ReadAsync("same"); Assert.IsTrue(read.Snapshot == first || read.Snapshot == second);
         Assert.IsEmpty(Directory.GetFiles(folder.Slots, "*.tmp"));
@@ -271,7 +271,7 @@ public sealed class GameSlotTests
         try
         {
             Assert.AreEqual(GameSlotStatus.Unavailable, (await store.ReadAsync("link")).Info.Status);
-            await Assert.ThrowsAsync<IOException>(() => store.SaveAsync("link", GameSlotStore.Capture(session)));
+            await Assert.ThrowsAsync<IOException>(() => store.SaveAsync("link", GameSlotStore.Prepare(GameSlotStore.Capture(session))));
             await Assert.ThrowsAsync<IOException>(() => store.DeleteAsync("link"));
             Assert.AreEqual("untouched", File.ReadAllText(outside));
         }
@@ -281,10 +281,11 @@ public sealed class GameSlotTests
     private sealed class DelayedStore : IGameSlotStore
     {
         public TaskCompletionSource<GameSlotRead> Reply { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource SaveStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public CancellationToken Token;
         public GameSlotSnapshot? Captured;
         public Task SaveAsync(string id, GameSlotSnapshot snapshot, CancellationToken cancellationToken = default)
-        { Captured = snapshot; Token = cancellationToken; return Reply.Task; }
+        { Captured = snapshot; Token = cancellationToken; SaveStarted.TrySetResult(); return Reply.Task; }
         public Task<GameSlotRead> ReadAsync(string id, CancellationToken cancellationToken = default)
         { Token = cancellationToken; return Reply.Task; }
         public Task<GameSlotRead?> LatestAsync(CancellationToken cancellationToken = default) => throw new IOException("disk unavailable");
@@ -345,7 +346,7 @@ public sealed class GameSlotTests
     public async Task LateLoadAfterMenuNewGameIsCancelledAndCannotReplaceOrReportIntoNewGeneration(bool failure)
     {
         var project = Project(); project = project with { StartScreenSceneId = project.Scenes[0].Id };
-        using var session = Session(project); session.NewGame(0); var snapshot = GameSlotStore.Capture(session);
+        using var session = Session(project); session.NewGame(0); var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(session));
         var store = new DelayedStore(); await using var slots = new GameSessionSlots(session, store);
         Assert.IsTrue(slots.Load()); Assert.IsFalse(slots.Load()); var generation = session.Generation;
         session.ReturnToMenu(generation); session.NewGame(session.Generation); var current = session.Player;
@@ -361,7 +362,7 @@ public sealed class GameSlotTests
     public async Task CompletedLoadWaitsForHostPollAndRestoresWithoutTimeOrCommands()
     {
         var project = Project(); using var session = Session(project); session.Player.Tick(TimeSpan.FromSeconds(2));
-        var snapshot = GameSlotStore.Capture(session); session.Player.Next();
+        var snapshot = GameSlotStore.Prepare(GameSlotStore.Capture(session)); session.Player.Next();
         var store = new DelayedStore(); await using var slots = new GameSessionSlots(session, store);
         Assert.IsTrue(slots.Load()); var old = session.Player;
         store.Reply.SetResult(new(new("quicksave", GameSlotStatus.Compatible, snapshot.Metadata, null), snapshot));
@@ -387,7 +388,9 @@ public sealed class GameSlotTests
     {
         var project = Project(); using var session = Session(project); var store = new DelayedStore();
         await using var slots = new GameSessionSlots(session, store); var before = GameSave.Serialize(session.Player.Execution);
-        Assert.IsTrue(slots.Save()); session.Player.Next(); Assert.AreEqual(before, store.Captured!.SaveJson);
+        Assert.IsTrue(slots.Save()); session.Player.Next();
+        await store.SaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.AreEqual(before, store.Captured!.SaveJson);
         store.Reply.SetResult(new(new("quicksave", GameSlotStatus.Compatible, store.Captured.Metadata, null), store.Captured));
         await Finish(slots); Assert.IsTrue(slots.LastResult!.Success);
         var scene = project.Scenes[0]; var pendingProject = project with { Scenes = [scene with { ScriptBlocks = [

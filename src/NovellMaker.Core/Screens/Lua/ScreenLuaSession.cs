@@ -27,6 +27,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         internal bool Closing;
         internal string? Error;
         internal LuaValue State = LuaValue.Null;
+        internal LuaRandomState RandomState = LuaRandomState.Initial;
         internal LuaModuleLibrary? Modules;
     }
     private sealed record Work(Entry Entry, string Kind, ScreenLuaEvent? Event,
@@ -85,6 +86,15 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         return entry.State;
     }
 
+    /// <summary>Last host-committed random stream; safe to serialize and pass to a new Attach.</summary>
+    public LuaRandomState GetRandomState(ScreenInstance instance)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (!entries.TryGetValue(instance.Id, out var entry) || !ReferenceEquals(entry.Instance, instance) || !Current(instance))
+            throw new ArgumentException("Чужой или закрытый экземпляр RNG.");
+        return entry.RandomState;
+    }
+
     public ImmutableArray<ScreenServiceInvocation> DrainServices()
     {
         var result = services.Where(s => IsAvailable(s.Instance)).ToImmutableArray(); services.Clear(); return result;
@@ -103,7 +113,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     }
 
     public void Attach(ScreenInstance instance, string source, ImmutableDictionary<string, Guid>? references = null,
-        ImmutableDictionary<string, string>? snapshot = null, LuaValue? state = null, LuaModuleLibrary? modules = null)
+        ImmutableDictionary<string, string>? snapshot = null, LuaValue? state = null, LuaModuleLibrary? modules = null, LuaRandomState? randomState = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         LuaLimits.CheckSource(source);
@@ -114,7 +124,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             !LuaLimits.ValidVariables(snapshot)) throw new ArgumentException("Неверный владелец, ссылки или снимок экранного Lua.");
         if (faulted) Reset();
         if (queue.Count + serviceReplies.Count >= MaximumQueuedEvents) throw new InvalidOperationException("Очередь событий экрана заполнена.");
-        var entry = new Entry(instance, source, references, snapshot) { State = state ?? LuaValue.Null, Modules = modules };
+        var entry = new Entry(instance, source, references, snapshot) { State = state ?? LuaValue.Null, Modules = modules, RandomState = randomState ?? LuaRandomState.Initial };
         entries.Add(instance.Id, entry);
         queue.AddLast(new Work(entry, "load", null, snapshot, clock.GetTimestamp()));
     }
@@ -201,6 +211,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                                 throw new InvalidOperationException("Превышен бюджет очереди или глубины цепочки триггеров.");
                             stack.Commit(entry.Instance, ready.Stamp.Version, result.Batch!.Definition);
                             if (result.Batch.State is { } state) entry.State = state;
+                            if (result.Batch.RandomState is { } random) entry.RandomState = random;
                             AppliedBatches++;
                             foreach (var trigger in result.Batch.Triggers)
                                 queue.AddLast(new Work(entry, "event", new("trigger") { Trigger = trigger }, ready.Work.Snapshot,
@@ -258,14 +269,15 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         var captured = work;
         var definition = entry.Instance.Definition;
         var state = entry.State;
+        var random = entry.RandomState;
         var eventDefinition = work.Event is null ? definition : stack.VisualDefinition(entry.Instance);
-        var task = Task.Run(() => PrepareAsync(context, captured, stamp, definition, eventDefinition, state, clock));
+        var task = Task.Run(() => PrepareAsync(context, captured, stamp, definition, eventDefinition, state, random, clock));
         ScreenLuaConnection.Observe(task);
         pending = new(work, stamp, task);
     }
 
     private static async Task<Prepared> PrepareAsync(Conversation conversation, Work work, ScreenLuaStamp stamp,
-        ScreenDefinition definition, ScreenDefinition eventDefinition, LuaValue state, TimeProvider clock)
+        ScreenDefinition definition, ScreenDefinition eventDefinition, LuaValue state, LuaRandomState random, TimeProvider clock)
     {
         var remaining = TimeSpan.FromSeconds(5) - clock.GetElapsedTime(work.Submitted);
         // Task scheduling is part of queue time. No exchange has touched the conversation yet.
@@ -314,7 +326,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         var request = new ScreenLuaRequest(ScreenLuaProtocol.Version, work.Kind, stamp, definition.Id,
             work.Kind == "load" ? definition.Nodes : [], work.Kind == "load" ? entry.Source : null,
             work.Kind == "load" ? entry.References : ImmutableDictionary<string, Guid>.Empty, work.Event, work.Snapshot)
-        { State = work.Kind == "close" ? null : state, Modules = modules };
+        { State = work.Kind == "close" ? null : state, Modules = modules, RandomState = work.Kind == "close" ? null : random };
         request = await ScreenLuaProtocol.FitServiceResultAsync(request, token).ConfigureAwait(false);
         CheckDeadline();
         exchangeStarted = true;
