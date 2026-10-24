@@ -4,7 +4,7 @@ using MoonSharp.Interpreter;
 namespace NovellMaker.Core.Scripting;
 
 /// <summary>VM-local cache and environments. Imports call Lua chunks in the caller's coroutine, never recursively through CLR.</summary>
-internal sealed class LuaModuleLoader(Script script)
+internal sealed class LuaModuleLoader(Script script, LuaStandardLibrary library)
 {
     private readonly Dictionary<Guid, DynValue> chunks = [];
     private readonly Dictionary<Guid, DynValue> exports = [];
@@ -19,6 +19,7 @@ internal sealed class LuaModuleLoader(Script script)
         {
             var root = entry.Id == (bundle?.RootId ?? Guid.Empty);
             var environment = root ? script.Globals : new Table(script);
+            library.Install(environment);
             var api = new Table(script); foreach (var pair in ui.Pairs) api.Set(pair.Key, pair.Value);
             var aliases = new Table(script);
             foreach (var pair in entry.Imports) aliases.Set(pair.Key, DynValue.NewString(pair.Value.ToString("N")));

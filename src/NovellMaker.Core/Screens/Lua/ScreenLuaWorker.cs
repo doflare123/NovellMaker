@@ -10,6 +10,7 @@ namespace NovellMaker.Core.Screens.Lua;
 internal sealed class ScreenLuaVm
 {
     private readonly Script script = new(CoreModules.None);
+    private readonly LuaStandardLibrary library;
     private readonly DynValue handlers;
     private readonly Guid instanceId;
     private ImmutableArray<ScreenChange>.Builder changes = ImmutableArray.CreateBuilder<ScreenChange>();
@@ -23,6 +24,7 @@ internal sealed class ScreenLuaVm
     {
         Definition = definition;
         this.instanceId = instanceId;
+        library = new(script);
         LuaLimits.CheckSource(source);
         var ui = new Table(script);
         var refs = new Table(script);
@@ -104,7 +106,7 @@ internal sealed class ScreenLuaVm
                 value.Type == DataType.Number ? value.Number : null, value.Type == DataType.Boolean ? value.Boolean : null));
         });
         script.Globals.Set("ui", DynValue.NewTable(ui));
-        handlers = Execute(new LuaModuleLoader(script).Compile(source, modules, ui));
+        handlers = Execute(new LuaModuleLoader(script, library).Compile(source, modules, ui));
         if (handlers.Type != DataType.Table || handlers.Table.Get("on_event").Type != DataType.Function ||
             handlers.Table.Get("on_load").Type is not (DataType.Nil or DataType.Function))
             throw new InvalidOperationException("Экранный Lua должен вернуть таблицу с функцией on_event и необязательной on_load.");
@@ -202,6 +204,7 @@ internal sealed class ScreenLuaVm
 
     private DynValue Execute(DynValue function, params DynValue[] arguments)
     {
+        library.ResetBudget();
         var coroutine = script.CreateCoroutine(function).Coroutine;
         coroutine.AutoYieldCounter = LuaActionScript.InstructionBudget;
         var result = coroutine.Resume(arguments);

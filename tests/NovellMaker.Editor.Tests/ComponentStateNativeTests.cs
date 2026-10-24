@@ -13,8 +13,8 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ComponentStateNativeTests
 {
     [TestMethod]
-    [DataRow(false, false)] [DataRow(true, false)] [DataRow(false, true)] [DataRow(true, true)]
-    public async Task EditableTypedStateExampleRunsInPreviewAndStandaloneAndResetsOnReopen(bool packaged, bool modules)
+    [DataRow(false, 0)] [DataRow(true, 0)] [DataRow(false, 1)] [DataRow(true, 1)] [DataRow(false, 2)] [DataRow(true, 2)]
+    public async Task EditableTypedStateExampleRunsInPreviewAndStandaloneAndResetsOnReopen(bool packaged, int exampleKind)
     {
         if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1" || packaged && Environment.GetEnvironmentVariable("NOVELLMAKER_EXPORT_SMOKE") != "1")
             Assert.Inconclusive("Enable NativeRuntime and WindowsExport smoke.");
@@ -24,7 +24,7 @@ public sealed class ComponentStateNativeTests
         Directory.CreateDirectory(directory);
         var story = NovelScene.Create("Сюжет") with { Lines = [DialogueLine.Create("ru", "Первая фраза"), DialogueLine.Create("ru", "Вторая фраза")] };
         var initial = NovelProject.Create("Состояние Lua") with { Scenes = [story] };
-        var project = modules ? ExampleLuaModulesModule.AddTo(initial) : ExampleComponentStateModule.AddTo(initial);
+        var project = exampleKind == 2 ? ExampleLuaLibraryModule.AddTo(initial) : exampleKind == 1 ? ExampleLuaModulesModule.AddTo(initial) : ExampleComponentStateModule.AddTo(initial);
         var file = Path.Combine(directory, "state.novell"); await new JsonProjectStore().SaveAsync(file, project);
         var runtime = Path.Combine(repo.FullName, "src", "NovellMaker.Runtime", "bin", "Release", "net10.0", "NovellMaker.Runtime.exe");
         if (packaged)
@@ -46,15 +46,26 @@ public sealed class ComponentStateNativeTests
         Check(5, "Готово к нажатию"); Check(6, "Шагов: 1"); Check(10, "Готово к нажатию");
         Check(11, "Шагов: 1"); Check(13, "Готово к нажатию");
         Assert.AreEqual(story.Lines[0].Id, trace[9].GetProperty("State").GetProperty("LineId").GetGuid());
-        void Check(int index, string text) => CollectionAssert.Contains(trace[index].GetProperty("ScreenTexts").EnumerateArray().Select(e => e.GetString()).ToArray(), text);
+        string Caption(string text) => exampleKind == 2 && text.StartsWith("Шагов: ", StringComparison.Ordinal)
+            ? text + (text.EndsWith('2') ? " · Последние: 1, 2" : " · Последние: 1") : text;
+        void Check(int index, string text) => CollectionAssert.Contains(trace[index].GetProperty("ScreenTexts").EnumerateArray().Select(e => e.GetString()).ToArray(), Caption(text));
         using var restarted = await Run("restart", """
             [{"Kind":"key","Key":"F7"},{"Kind":"click","X":350,"Y":490}]
             """);
-        CollectionAssert.Contains(restarted.RootElement.GetProperty("ActionTrace")[1].GetProperty("ScreenTexts").EnumerateArray().Select(e => e.GetString()).ToArray(), "Шагов: 1");
+        CollectionAssert.Contains(restarted.RootElement.GetProperty("ActionTrace")[1].GetProperty("ScreenTexts").EnumerateArray().Select(e => e.GetString()).ToArray(), Caption("Шагов: 1"));
+        if (exampleKind == 2)
+        {
+            using var history = await Run("history", """
+                [{"Kind":"key","Key":"F7"},{"Kind":"click","X":350,"Y":490},
+                 {"Kind":"click","X":350,"Y":490},{"Kind":"click","X":350,"Y":490},
+                 {"Kind":"click","X":350,"Y":490}]
+                """);
+            CollectionAssert.Contains(history.RootElement.GetProperty("ActionTrace")[4].GetProperty("ScreenTexts").EnumerateArray().Select(e => e.GetString()).ToArray(), "Шагов: 4 · Последние: 2, 3, 4");
+        }
 
         async Task<JsonDocument> Run(string label, string planText)
         {
-            var plan = Path.Combine(directory, label + ".plan.json"); File.WriteAllText(plan, modules ? planText.Replace("F7", "F4", StringComparison.Ordinal) : planText);
+            var plan = Path.Combine(directory, label + ".plan.json"); File.WriteAllText(plan, planText.Replace("F7", exampleKind == 2 ? "F3" : exampleKind == 1 ? "F4" : "F7", StringComparison.Ordinal));
             var report = Path.Combine(directory, label + ".json");
             var start = new ProcessStartInfo(runtime) { WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardError = true, RedirectStandardOutput = true, WindowStyle = ProcessWindowStyle.Hidden };

@@ -33,18 +33,29 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
-    [DataRow(0)] [DataRow(1)] [DataRow(2)] [DataRow(3)]
+    [DataRow(0)] [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)]
     public Task AuthorExampleCanBeAddedThroughInspectorAndEditedOnCanvas(int exampleKind) => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
         await session.NewProjectAsync(); session.AddScene(); session.OpenScreenLibrary(); Dispatcher.UIThread.RunJobs();
         var inspector = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single(); var before = session.Project!;
-        Find<Button>(inspector, exampleKind == 3 ? "AddLuaModulesExample" : exampleKind == 2 ? "AddComponentStateExample" : exampleKind == 1 ? "AddTriggersExample" : "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Find<Button>(inspector, exampleKind == 4 ? "AddLuaLibraryExample" : exampleKind == 3 ? "AddLuaModulesExample" : exampleKind == 2 ? "AddComponentStateExample" : exampleKind == 1 ? "AddTriggersExample" : "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
         Assert.AreEqual(before.Scenes.Length + 1, session.Project!.Scenes.Length);
         session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo();
         session.OpenScreenLibrary(session.Project!.Scenes.Last().Id); Dispatcher.UIThread.RunJobs();
-        Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == (exampleKind == 3 ? "Модули Lua" : exampleKind == 2 ? "Состояние компонентов" : exampleKind == 1 ? "Триггеры и постоянные данные" : "Настройки")));
-        Capture(window, exampleKind == 3 ? "editor-lua-modules.png" : exampleKind == 2 ? "editor-component-state.png" : exampleKind == 1 ? "editor-triggers.png" : "editor-player-settings.png"); window.Close();
+        Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == (exampleKind == 4 ? "Библиотека Lua" : exampleKind == 3 ? "Модули Lua" : exampleKind == 2 ? "Состояние компонентов" : exampleKind == 1 ? "Триггеры и постоянные данные" : "Настройки")));
+        window.UpdateLayout();
+        await Task.Yield();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick(2);
+        Dispatcher.UIThread.RunJobs();
+        Capture(window, exampleKind == 4 ? "editor-lua-standard-library.png" : exampleKind == 3 ? "editor-lua-modules.png" : exampleKind == 2 ? "editor-component-state.png" : exampleKind == 1 ? "editor-triggers.png" : "editor-player-settings.png");
+        if (exampleKind == 4 && Environment.GetEnvironmentVariable("NOVELLMAKER_CAPTURE_DIR") is { } directory)
+        {
+            // Render this window's current visual tree, avoiding a cached frame from a prior headless window.
+            using var bitmap = new RenderTargetBitmap(new PixelSize((int)window.Bounds.Width, (int)window.Bounds.Height), new Vector(96, 96));
+            bitmap.Render(window); bitmap.Save(Path.Combine(directory, "editor-lua-standard-library.png"), PngBitmapEncoderOptions.Default);
+        }
+        window.Close();
     });
 
     [TestMethod]
@@ -961,7 +972,7 @@ public sealed class EditorWindowTests
             var asset = session.Images.Single();
             Assert.AreEqual(asset.Id, session.SelectedImage!.Id);
             var preview = Find<ProjectImageView>(window, "SelectedImagePreview");
-            await UntilAsync(() => preview.HasImage);
+            await UntilAsync(() => preview.HasImage && window.GetVisualDescendants().OfType<ProjectImageView>().Count(view => view.HasImage) >= 2);
             Assert.IsTrue(window.GetVisualDescendants().OfType<ProjectImageView>().Count(view => view.HasImage) >= 2,
                 "Both the real thumbnail and selected full preview must render.");
             Capture(window, "editor-image-library.png");

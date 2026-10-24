@@ -43,7 +43,7 @@ public sealed record ScreenServiceInvocation(ScreenInstance Instance, GameServic
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 10;
+    internal const int Version = 11;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {

@@ -123,6 +123,12 @@ public sealed partial class EditorSession
         EditProject(Examples.ExampleLuaModulesModule.AddTo(project));
     }
 
+    public void AddLuaLibraryExample()
+    {
+        if (!CanEdit || project is null) return;
+        EditProject(Examples.ExampleLuaLibraryModule.AddTo(project));
+    }
+
     public void DuplicateScreen()
     {
         if (!CanEdit || project is null || SelectedScreen is not { } source) return;
