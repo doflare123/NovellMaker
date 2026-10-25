@@ -1,5 +1,5 @@
 param([switch]$CaptureScreenshots, [switch]$NativeRuntime, [switch]$WindowsExport, [switch]$WindowsInstaller,
-      [switch]$Coverage, [switch]$MeasureLua, [switch]$MeasureFramePreparation)
+      [switch]$Coverage, [switch]$MeasureLua, [switch]$MeasureFramePreparation, [switch]$LuaLanguageServer)
 
 $ErrorActionPreference = 'Stop'
 $environmentNames = @('AVALONIA_TELEMETRY_OPTOUT', 'DOTNET_CLI_TELEMETRY_OPTOUT',
@@ -12,6 +12,7 @@ $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
+    if ($LuaLanguageServer) { & (Join-Path $PSScriptRoot 'prepare-luals.ps1') }
     if ($WindowsInstaller) {
         if (-not $IsWindows) { throw 'Windows installer smoke requires Windows x64.' }
         & (Join-Path $PSScriptRoot 'prepare-windows-installer.ps1')

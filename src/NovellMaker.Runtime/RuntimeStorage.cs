@@ -2,6 +2,7 @@ namespace NovellMaker.Runtime;
 
 internal static class RuntimeStorage
 {
+    internal static string LuaJournalPath(Guid projectId, bool packaged) => Path.Combine(Path.GetDirectoryName(ProfilePath(projectId, packaged))!, "lua-diagnostics.log");
     internal static string ProfilePath(Guid projectId, bool packaged) => packaged
         ? Path.Combine(GameDirectory(projectId), "profile.json")
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovellMaker", "Saves", projectId.ToString(), "profile.json");

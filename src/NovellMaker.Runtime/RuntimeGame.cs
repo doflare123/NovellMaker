@@ -22,6 +22,12 @@ internal sealed partial class RuntimeGame : Game
     private readonly GameSessionSlots slots;
     private readonly RuntimeGameServices services;
     private readonly PlayerSettingsSession settings;
+    private readonly LuaJournalFile luaJournal;
+    internal Task FlushLuaJournalAsync()
+    {
+        if (screens.Scripts is { } scripts) luaJournal.Publish(scripts.Journal);
+        return luaJournal.FlushAsync();
+    }
     private readonly RuntimeSettingsServices settingsServices;
     private string windowSettingsDiagnostic = "";
     private ScenePlayer player => session.Player;
@@ -71,6 +77,7 @@ internal sealed partial class RuntimeGame : Game
         this.arguments = arguments ?? throw new ArgumentNullException(nameof(arguments));
         this.session = session ?? throw new ArgumentNullException(nameof(session));
         this.settings = settings;
+        luaJournal = new(RuntimeStorage.LuaJournalPath(session.Player.Execution.Project.Id, arguments.Package is not null));
         slots = new(session, new GameSlotStore(player.Execution.Project,
             RuntimeStorage.SlotsDirectory(player.Execution.Project.Id, arguments.Package is not null), SavePath));
         services = new(session, slots);
@@ -140,6 +147,7 @@ internal sealed partial class RuntimeGame : Game
         PollSlots();
         screens.SyncScene(player.Execution.State.SceneId);
         screens.Poll();
+        if (screens.Scripts is { } scripts) luaJournal.Publish(scripts.Journal);
         RefreshFrameResources();
         var hostActive = arguments.SmokeOutputPath is not null || IsActive;
         screens.Stack.SetActive(hostActive && imageCache?.IsPending != true);
@@ -221,7 +229,7 @@ internal sealed partial class RuntimeGame : Game
         screens.Poll();
         RefreshFrameResources(poll: true);
         RefreshTextTextures();
-        var menuDiagnostics = string.Join("\n", screens.Diagnostics.Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values));
+        var menuDiagnostics = string.Join("\n", screens.Diagnostics.Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values).Concat(luaJournal.Error is { } journalError ? [journalError] : []));
         if (menuDiagnostics != lastMenuDiagnostics) { lastMenuDiagnostics = menuDiagnostics; RefreshTextTextures(); }
         player.Execution.IsPaused = session.Phase != GameSessionPhase.Playing || screens.Stack.PausesScenario || !hostActive || imageCache?.IsPending == true;
         SynchronizeAudio();
@@ -550,6 +558,7 @@ internal sealed partial class RuntimeGame : Game
     private IReadOnlyList<string> CurrentDiagnostics() =>
         player.Frame.Diagnostics.Concat(assetDiagnostics.Values.Order(StringComparer.Ordinal)).Concat(audio?.Diagnostics ?? [])
             .Concat(screens.Diagnostics).Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values).Concat(session.CleanupDiagnostics)
+            .Concat(luaJournal.Error is { } journalError ? [journalError] : [])
             .Concat(new[] { settings.Diagnostic, windowSettingsDiagnostic }.Where(message => message.Length > 0)).ToArray();
 
     private void DrawBackground(SpriteBatch batch, ImageAsset? background)
@@ -686,6 +695,7 @@ internal sealed partial class RuntimeGame : Game
                 MaximumImageTransferMilliseconds = imageCache?.MaximumTransferMilliseconds ?? 0,
                 ScreenLuaAppliedBatches = screens.Scripts?.AppliedBatches ?? 0,
                 ScreenLuaDiagnostics = screens.Scripts?.Diagnostics ?? [],
+                LuaJournal = screens.Scripts?.Journal.Entries ?? [],
                 Packaged = arguments.Package is not null, WindowTitle = Window.Title,
                 WindowWidth = GraphicsDevice.PresentationParameters.BackBufferWidth, WindowHeight = GraphicsDevice.PresentationParameters.BackBufferHeight,
                 RuntimeLibraryPath = typeof(object).Assembly.Location, AudioSources = audio?.ActiveSources ?? 0, AudioSubmittedBytes = audioBackend.SubmittedBytes, AudioOpenedSources = audioBackend.OpenedSources, AudioMixer = Enum.GetValues<NovellMaker.Core.Audio.AudioGroup>().ToDictionary(g => g, g => audio!.Bus(g)) };
@@ -730,6 +740,7 @@ internal sealed record RuntimeSmokeReport(
     public double MaximumImageTransferMilliseconds { get; init; }
     public int ScreenLuaAppliedBatches { get; init; }
     public IReadOnlyList<string> ScreenLuaDiagnostics { get; init; } = [];
+    public IReadOnlyList<NovellMaker.Core.Scripting.LuaDiagnosticEntry> LuaJournal { get; init; } = [];
     public string? SavePath { get; init; }
     public bool Packaged { get; init; }
     public string? WindowTitle { get; init; }

@@ -19,14 +19,19 @@ internal static class ScriptExplorerMenu
         properties.Click += (_, _) => { if (selected()?.ScriptId is { } id) session.InspectScript(id); else session.OpenScriptLibrary(); };
         var delete = new MenuItem { Header = "Удалить" }; delete.Click += async (_, _) => { if (selected() is { } entry) await session.DeleteExplorerEntryAsync(entry); };
         var editor = new MenuItem { Header = "Редактор Lua по умолчанию…" }; editor.Click += async (_, _) => await session.ChooseCodeEditorAsync();
+        var annotations = new MenuItem { Name = "PrepareLuaAnnotationsMenu", Header = "Подсказки Lua API" };
+        annotations.Click += async (_, _) => await session.PrepareLuaAnnotationsAsync();
+        var journal = new MenuItem { Name = "OpenLuaJournalMenu", Header = "Журнал Lua F6" };
+        journal.Click += async (_, _) => await session.OpenLuaJournalAsync();
         var autoOpen = new MenuItem { Name = "OpenCodeOnCreationMenu", Header = "Открывать код после создания", ToggleType = MenuItemToggleType.CheckBox };
         autoOpen.Click += async (_, _) => await session.SetOpenCodeOnCreationAsync(autoOpen.IsChecked);
-        menu.ItemsSource = new object[] { create, import, new Separator(), open, properties, rename, delete, new Separator(), editor, autoOpen };
+        menu.ItemsSource = new object[] { create, import, new Separator(), open, properties, rename, delete, new Separator(), annotations, journal, editor, autoOpen };
         menu.Opening += (_, _) =>
         {
             var entry = selected(); var isScript = entry?.ScriptId is not null;
             autoOpen.IsChecked = session.OpenCodeOnCreation;
             create.IsEnabled = import.IsEnabled = editor.IsEnabled = session.CanEdit;
+            annotations.IsEnabled = journal.IsEnabled = session.CanEdit;
             open.IsEnabled = delete.IsEnabled = rename.IsEnabled = session.CanEdit && isScript;
             properties.IsEnabled = session.CanEdit && (isScript || entry?.IsScriptLibrary == true);
         };

@@ -27,11 +27,30 @@ public sealed partial class EditorSession
         finally { waitingForSyntax--; }
     }
     internal Func<string, string, CancellationToken, Task> ValidateLuaSyntax { get; set; } = LuaActionScript.ValidateSyntaxAsync;
+    internal Func<Guid, string> ResolveLuaJournalPath { get; set; } = LuaAuthoringTools.JournalPath;
     public string CodeEditorLabel => codeEditor.Executable is { } executable ? Path.GetFileNameWithoutExtension(executable) : "Системное приложение для .lua";
     public bool OpenCodeOnCreation => codeEditor.OpenOnCreation;
     public Task SetOpenCodeOnCreationAsync(bool value) => RunAsync(() => { codeEditor.OpenOnCreation = value; Changed(nameof(OpenCodeOnCreation)); return Task.CompletedTask; });
     public string SelectedScriptPath => SelectedScript is { } script && ProjectDirectory is { } root ? Path.Combine(root, "Scripts", script.Id.ToString("N") + ".lua") : "Сохраните проект для работы с файлами Lua.";
     public string SelectedScriptDiagnostic => SelectedScriptId is { } id ? scriptDiagnostics.GetValueOrDefault(id, "Ещё не проверен") : "Выберите скрипт.";
+
+    public Task PrepareLuaAnnotationsAsync() => RunAsync(async () =>
+    {
+        if (project is null || projectPath is null && !await SaveCoreAsync(false)) return;
+        var file = LuaAuthoringTools.Install(ProjectDirectory!);
+        codeEditor.Open(file);
+        Log("Аннотации Lua API обновлены в Scripts/NovellMakerApi. Откройте папку проекта в редакторе с Lua Language Server.");
+    });
+
+    public Task OpenLuaJournalAsync() => RunAsync(() =>
+    {
+        if (project is null) return Task.CompletedTask;
+        var path = ResolveLuaJournalPath(project.Id);
+        if (!File.Exists(path)) { Log("Журнал Lua появится после запуска F6: " + path); return Task.CompletedTask; }
+        codeEditor.Open(path);
+        Log("Открыт журнал Lua F6: " + path);
+        return Task.CompletedTask;
+    });
 
     public Task ChooseCodeEditorAsync() => RunAsync(async () =>
     {

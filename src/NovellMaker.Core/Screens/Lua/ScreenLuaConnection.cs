@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Diagnostics;
 using NovellMaker.Core.Execution;
+using NovellMaker.Core.Scripting;
 
 namespace NovellMaker.Core.Screens.Lua;
 
@@ -112,6 +113,22 @@ internal sealed class ScreenLuaConnection : IScreenLuaConnection
 
     internal static void Validate(ScreenLuaRequest request, ScreenLuaResponse response)
     {
+        try
+        {
+            if (response.Logs.IsDefault || response.Logs.Length > LuaDiagnosticJournal.MaximumBatchEntries || response.DroppedLogs < 0 ||
+                request.Kind is "handshake" or "close" && (!response.Logs.IsEmpty || response.DroppedLogs != 0) ||
+                response.Fault is not null && (response.Error is null || response.Fault.Level != "error"))
+                throw new ArgumentException("Неверные данные журнала Lua.");
+            var characters = 0;
+            foreach (var log in response.Logs)
+            {
+                if (log is null) throw new ArgumentException("Пустая запись журнала Lua.");
+                log.Validate(); characters += log.Message.Length;
+            }
+            response.Fault?.Validate();
+            if (characters > LuaDiagnosticJournal.MaximumBatchCharacters) throw new ArgumentException("Превышен бюджет журнала Lua.");
+        }
+        catch (ArgumentException error) { throw new IOException("Неверный журнал протокола экранного Lua.", error); }
         var expected = request.Kind switch { "handshake" => "ready", "close" => "closed", _ => "batch" };
         if (response.Protocol != ScreenLuaProtocol.Version || response.Stamp != request.Stamp ||
             response.Changes.IsDefault || response.Changes.Length > LuaActionScript.MaximumCommands || response.Changes.Any(c => c is null) ||

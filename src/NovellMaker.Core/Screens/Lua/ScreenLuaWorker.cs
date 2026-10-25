@@ -19,16 +19,19 @@ internal sealed class ScreenLuaVm
     private LuaValue state = LuaValue.Null;
     private int stateBytes;
     private bool handling;
+    internal LuaLogBuffer Log { get; set; }
     internal ScreenDefinition Definition { get; private set; }
 
-    internal ScreenLuaVm(ScreenDefinition definition, Guid instanceId, string source, ImmutableDictionary<string, Guid> references, LuaModuleBundle? modules = null)
+    internal ScreenLuaVm(ScreenDefinition definition, Guid instanceId, string source, ImmutableDictionary<string, Guid> references, LuaModuleBundle? modules = null, LuaLogBuffer? log = null)
     {
+        Log = log ?? new();
         Definition = definition;
         this.instanceId = instanceId;
         library = new(script);
         random = new(library);
         LuaLimits.CheckSource(source);
         var ui = new Table(script);
+        ui.Set("log", DynValue.NewCallback((context, args) => { Log.Write(script, context, args); return DynValue.Nil; }));
         random.Install(ui, () => handling);
         var refs = new Table(script);
         string Handle(Guid id) => new ScreenNodeHandle(definition.Id, instanceId, id).ToString();
@@ -232,15 +235,18 @@ internal sealed class ScreenLuaWorkerService
 
     internal ScreenLuaResponse Process(ScreenLuaRequest request)
     {
-        try { return ProcessCore(request); }
+        var log = new LuaLogBuffer();
+        ScreenLuaResponse response;
+        try { response = ProcessCore(request, log); }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException or InterpreterException)
         {
             var text = error is InterpreterException interpreter ? interpreter.DecoratedMessage : error.Message;
-            return new(ScreenLuaProtocol.Version, "error", request.Stamp, text.Length > 4096 ? text[..4096] : text, []);
+            response = new(ScreenLuaProtocol.Version, "error", request.Stamp, text.Length > 4096 ? text[..4096] : text, []) { Fault = LuaLogBuffer.Fault(error) };
         }
+        return response with { Logs = log.Messages, DroppedLogs = log.Dropped };
     }
 
-    private ScreenLuaResponse ProcessCore(ScreenLuaRequest request)
+    private ScreenLuaResponse ProcessCore(ScreenLuaRequest request, LuaLogBuffer log)
     {
         var stamp = request.Stamp;
         if (request.Protocol != ScreenLuaProtocol.Version || stamp.RequestId == Guid.Empty || stamp.SessionId == Guid.Empty || stamp.Generation < 1 || stamp.Version < 0 ||
@@ -264,7 +270,7 @@ internal sealed class ScreenLuaWorkerService
                 throw new ArgumentException("Недопустимая загрузка или бюджет экранного worker.");
             var definition = new ScreenDefinition(request.ResourceId, request.Nodes);
             if (request.References.Any(r => !definition.Nodes.Any(n => n.Id == r.Value))) throw new ArgumentException("Чужая именованная ссылка экрана.");
-            var vm = new ScreenLuaVm(definition, stamp.InstanceId, request.Source, request.References, request.Modules);
+            var vm = new ScreenLuaVm(definition, stamp.InstanceId, request.Source, request.References, request.Modules, log);
             var changes = vm.Handle(null, request.Snapshot, request.State ?? LuaValue.Null, request.RandomState ?? LuaRandomState.Initial);
             _ = ScreenLuaProtocol.Prepare(definition, changes);
             if (entries.Values.Sum(e => e.Vm.Definition.Nodes.Length) + vm.Definition.Nodes.Length > ScreenStack.MaxSessionNodes)
@@ -282,6 +288,7 @@ internal sealed class ScreenLuaWorkerService
         ScreenLuaProtocol.ValidateEvent(entry.Vm.Definition, request.Event, worker: true);
         try
         {
+            entry.Vm.Log = log;
             var before = entry.Vm.Definition;
             var changes = entry.Vm.Handle(request.Event, request.Snapshot, request.State ?? LuaValue.Null, request.RandomState);
             _ = ScreenLuaProtocol.Prepare(before, changes);

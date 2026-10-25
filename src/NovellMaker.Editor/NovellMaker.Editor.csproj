@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup><Compile Include="../Shared/DialogueRasterizer.cs" Link="Rendering/DialogueRasterizer.cs" /></ItemGroup>
+  <ItemGroup><EmbeddedResource Include="LuaApi/*" /></ItemGroup>
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>

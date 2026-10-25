@@ -37,7 +37,12 @@ internal sealed record ScreenLuaRequest(int Protocol, string Kind, ScreenLuaStam
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public LuaRandomState? RandomState { get; init; }
 }
-internal sealed record ScreenLuaResponse(int Protocol, string Kind, ScreenLuaStamp Stamp, string? Error, ImmutableArray<ScreenChange> Changes);
+internal sealed record ScreenLuaResponse(int Protocol, string Kind, ScreenLuaStamp Stamp, string? Error, ImmutableArray<ScreenChange> Changes)
+{
+    public ImmutableArray<LuaLogMessage> Logs { get; init; } = [];
+    public int DroppedLogs { get; init; }
+    public LuaLogMessage? Fault { get; init; }
+}
 internal sealed record ScreenPreparedBatch(ScreenDefinition Definition, bool Close, GameServiceCommand? Service = null)
 {
     public ImmutableArray<AuthorTrigger> Triggers { get; init; } = [];
@@ -48,7 +53,7 @@ public sealed record ScreenServiceInvocation(ScreenInstance Instance, GameServic
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 12;
+    internal const int Version = 13;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {

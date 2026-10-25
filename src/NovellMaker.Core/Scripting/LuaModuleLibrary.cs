@@ -7,6 +7,7 @@ namespace NovellMaker.Core.Scripting;
 /// <summary>Immutable source snapshot. Graph preparation runs after admission, outside the host thread.</summary>
 public sealed class LuaModuleLibrary(Guid rootId, ImmutableArray<LuaScriptAsset> scripts)
 {
+    public Guid RootId => rootId;
     internal LuaModuleBundle Prepare(string source, Action checkpoint)
     {
         if (rootId == Guid.Empty) throw new ArgumentException("Некорректный каталог Lua-модулей.");

@@ -33,22 +33,22 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
-    [DataRow(0)] [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)] [DataRow(5)]
+    [DataRow(0)] [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)] [DataRow(5)] [DataRow(6)]
     public Task AuthorExampleCanBeAddedThroughInspectorAndEditedOnCanvas(int exampleKind) => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
         await session.NewProjectAsync(); session.AddScene(); session.OpenScreenLibrary(); Dispatcher.UIThread.RunJobs();
         var inspector = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single(); var before = session.Project!;
-        Find<Button>(inspector, exampleKind == 5 ? "AddLuaRandomExample" : exampleKind == 4 ? "AddLuaLibraryExample" : exampleKind == 3 ? "AddLuaModulesExample" : exampleKind == 2 ? "AddComponentStateExample" : exampleKind == 1 ? "AddTriggersExample" : "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Find<Button>(inspector, exampleKind == 6 ? "AddLuaDiagnosticsExample" : exampleKind == 5 ? "AddLuaRandomExample" : exampleKind == 4 ? "AddLuaLibraryExample" : exampleKind == 3 ? "AddLuaModulesExample" : exampleKind == 2 ? "AddComponentStateExample" : exampleKind == 1 ? "AddTriggersExample" : "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
         Assert.AreEqual(before.Scenes.Length + 1, session.Project!.Scenes.Length);
         session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo();
         session.OpenScreenLibrary(session.Project!.Scenes.Last().Id); Dispatcher.UIThread.RunJobs();
-        Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == (exampleKind == 5 ? "Управляемый RNG" : exampleKind == 4 ? "Библиотека Lua" : exampleKind == 3 ? "Модули Lua" : exampleKind == 2 ? "Состояние компонентов" : exampleKind == 1 ? "Триггеры и постоянные данные" : "Настройки")));
+        Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == (exampleKind == 6 ? "Журнал Lua" : exampleKind == 5 ? "Управляемый RNG" : exampleKind == 4 ? "Библиотека Lua" : exampleKind == 3 ? "Модули Lua" : exampleKind == 2 ? "Состояние компонентов" : exampleKind == 1 ? "Триггеры и постоянные данные" : "Настройки")));
         window.UpdateLayout();
         await Task.Yield();
         AvaloniaHeadlessPlatform.ForceRenderTimerTick(2);
         Dispatcher.UIThread.RunJobs();
-        var screenshot = exampleKind == 5 ? "editor-lua-rng-example.png" : exampleKind == 4 ? "editor-lua-standard-library.png" : exampleKind == 3 ? "editor-lua-modules.png" : exampleKind == 2 ? "editor-component-state.png" : exampleKind == 1 ? "editor-triggers.png" : "editor-player-settings.png";
+        var screenshot = exampleKind == 6 ? "editor-lua-diagnostics-example.png" : exampleKind == 5 ? "editor-lua-rng-example.png" : exampleKind == 4 ? "editor-lua-standard-library.png" : exampleKind == 3 ? "editor-lua-modules.png" : exampleKind == 2 ? "editor-component-state.png" : exampleKind == 1 ? "editor-triggers.png" : "editor-player-settings.png";
         Capture(window, screenshot);
         if (exampleKind >= 4 && Environment.GetEnvironmentVariable("NOVELLMAKER_CAPTURE_DIR") is { } directory)
         {
@@ -560,12 +560,19 @@ public sealed class EditorWindowTests
         Assert.AreEqual(InspectorTarget.Script, session.InspectorTarget);
         await session.RefreshExternalScriptsAsync();
         Dispatcher.UIThread.RunJobs(); Capture(window, "editor-script-properties-before-settings.png");
+        Find<Button>(window, "PrepareLuaAnnotations").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        await UntilAsync(() => !session.IsBusy && dialogs.CodeEditor.Opened.Any(f => f.EndsWith("NovellMakerApi" + Path.DirectorySeparatorChar + "README.md", StringComparison.Ordinal)));
+        Assert.IsTrue(File.Exists(Path.Combine(session.ProjectDirectory!, "Scripts", "NovellMakerApi", "ui.lua")));
+        Assert.AreSame(document, session.SelectedDocument);
+        Find<Button>(window, "OpenLuaJournal").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        await UntilAsync(() => !session.IsBusy);
         Find<Expander>(window, "CodeEditorSettings").IsExpanded = true; Dispatcher.UIThread.RunJobs();
         Click(window, Find<Button>(window, "ChooseCodeEditor"));
         await UntilAsync(() => !session.IsBusy && dialogs.CodeEditor.Executable is not null);
         Assert.AreEqual("FixtureEditor", session.CodeEditorLabel);
+        var openedBeforeScript = dialogs.CodeEditor.Opened.Count;
         await session.OpenScriptExternallyAsync(session.SelectedScript!.Id);
-        await UntilAsync(() => !session.IsBusy && dialogs.CodeEditor.Opened.Count == 2);
+        await UntilAsync(() => !session.IsBusy && dialogs.CodeEditor.Opened.Count == openedBeforeScript + 1);
         Find<Expander>(window, "CodeEditorSettings").IsExpanded = false; Dispatcher.UIThread.RunJobs();
         var id = session.SelectedScript!.Id;
         Find<TextBox>(window, "LuaScriptName").Text = "chapter.lua";

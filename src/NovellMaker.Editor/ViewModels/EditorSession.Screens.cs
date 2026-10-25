@@ -135,6 +135,12 @@ public sealed partial class EditorSession
         EditProject(Examples.ExampleLuaRandomModule.AddTo(project));
     }
 
+    public void AddLuaDiagnosticsExample()
+    {
+        if (!CanEdit || project is null) return;
+        EditProject(Examples.ExampleLuaDiagnosticsModule.AddTo(project));
+    }
+
     public void DuplicateScreen()
     {
         if (!CanEdit || project is null || SelectedScreen is not { } source) return;

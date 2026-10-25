@@ -45,6 +45,7 @@ internal static class Program
                 settings.FlushAsync().GetAwaiter().GetResult();
                 game.DisposeSlotsAsync().AsTask().GetAwaiter().GetResult();
                 game.DisposeScreenLuaAsync().AsTask().GetAwaiter().GetResult();
+                game.FlushLuaJournalAsync().GetAwaiter().GetResult();
                 session.DisposeAsync().AsTask().GetAwaiter().GetResult();
             } // Shutdown only, outside Update/Draw.
             return 0;

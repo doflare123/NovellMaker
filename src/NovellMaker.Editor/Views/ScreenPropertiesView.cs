@@ -113,6 +113,7 @@ public sealed class ScreenPropertiesView : UserControl
         Button(settings, "AddLuaModulesExample", "Добавить пример модулей Lua (F4)", () => session?.AddLuaModulesExample());
         Button(settings, "AddLuaLibraryExample", "Добавить пример библиотеки Lua (F3)", () => session?.AddLuaLibraryExample());
         Button(settings, "AddLuaRandomExample", "Добавить пример управляемого RNG (F2)", () => session?.AddLuaRandomExample());
+        Button(settings, "AddLuaDiagnosticsExample", "Добавить пример журнала Lua (F1)", () => session?.AddLuaDiagnosticsExample());
         startScreen.IsCheckedChanged += (_, _) => { if (!refreshing && session?.SelectedScreen is { } selected) Try(() => session.SetStartScreen(startScreen.IsChecked == true ? selected.Id : null)); };
         settings.Children.Add(pauseBelow); settings.Children.Add(blockBelow);
         settings.Children.Add(new HelpTip { Explanation = "Эти настройки действуют при открытии поверх другой сцены. При обычном переходе сцена исполняет собственные фразы и скрипт. Слой показывает компоненты и принимает их события; нижний сюжет сохраняет свою позицию." });

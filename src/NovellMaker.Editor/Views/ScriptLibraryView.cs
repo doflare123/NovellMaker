@@ -55,6 +55,11 @@ public sealed class ScriptLibraryView : UserControl
         inspector.Children.Add(new TextBlock { Text = "Имя скрипта (можно изменить)" }); inspector.Children.Add(name);
         inspector.Children.Add(path);
         inspector.Children.Add(status);
+        var annotations = new Button { Name = "PrepareLuaAnnotations", Content = "Подсказки Lua API" };
+        annotations.Click += async (_, _) => { if (session is not null) await session.PrepareLuaAnnotationsAsync(); };
+        var journal = new Button { Name = "OpenLuaJournal", Content = "Журнал Lua F6" };
+        journal.Click += async (_, _) => { if (session is not null) await session.OpenLuaJournalAsync(); };
+        inspector.Children.Add(annotations); inspector.Children.Add(journal);
         var editorSettings = new StackPanel { Spacing = 6 };
         editorSettings.Children.Add(editorName);
         var choose = new Button { Name = "ChooseCodeEditor", Content = "Выбрать приложение…" };

@@ -29,6 +29,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         internal LuaValue State = LuaValue.Null;
         internal LuaRandomState RandomState = LuaRandomState.Initial;
         internal LuaModuleLibrary? Modules;
+        internal ImmutableHashSet<Guid> DiagnosticScripts = [];
     }
     private sealed record Work(Entry Entry, string Kind, ScreenLuaEvent? Event,
         ImmutableDictionary<string, string> Snapshot, long Submitted, int ChainDepth = 0);
@@ -39,7 +40,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         internal readonly CancellationTokenSource Cancellation = new();
         internal bool Ready;
     }
-    private sealed record Prepared(ScreenLuaResponse Response, ScreenPreparedBatch? Batch);
+    private sealed record Prepared(ScreenLuaResponse Response, ScreenPreparedBatch? Batch, ImmutableHashSet<Guid>? SourceIds = null);
     private sealed record Pending(Work Work, ScreenLuaStamp Stamp, Task<Prepared> Task);
     private readonly ScreenStack stack;
     private readonly Func<IScreenLuaConnection> factory;
@@ -74,6 +75,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     public Task? PendingTask => pending?.Task;
     public ImmutableArray<string> Diagnostics => [.. diagnostics];
     public ImmutableArray<ScreenLuaIssue> Issues => [.. issues];
+    public LuaDiagnosticJournal Journal { get; } = new();
     public bool IsAvailable(ScreenInstance instance) => !disposed && entries.TryGetValue(instance.Id, out var entry) &&
         ReferenceEquals(entry.Instance, instance) && entry.Error is null && !entry.Closing && Current(instance);
 
@@ -181,6 +183,11 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             {
                 var result = ready.Task.GetAwaiter().GetResult(); // IsCompleted checked: never waits in a frame.
                 var entry = ready.Work.Entry;
+                if (ready.Work.Kind != "close" && Current(entry.Instance) && !entry.Closing && entry.Instance.Version == ready.Stamp.Version)
+                {
+                    if (result.SourceIds is { } ids) entry.DiagnosticScripts = ids;
+                    PublishLogs(ready.Work, result.Response);
+                }
                 if (ready.Work.Kind == "close")
                 {
                     if (result.Response.Error is { } closeError) throw new IOException(closeError);
@@ -190,7 +197,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                 {
                     entry.Loaded = false;
                     entry.Error = error;
-                    if (Current(entry.Instance)) Report(error, ScreenLuaIssueKind.Handler, entry.Instance.Id);
+                    if (Current(entry.Instance) && !entry.Closing) Report(error, ScreenLuaIssueKind.Handler, entry.Instance.Id);
                     RemoveQueued(entry);
                 }
                 else
@@ -228,6 +235,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                         {
                             entry.Error = commitError.Message; RemoveQueued(entry); ScheduleClose(entry);
                             Report(commitError.Message, ScreenLuaIssueKind.Handler, entry.Instance.Id);
+                            PublishLogs(ready.Work, result.Response with { Logs = [], DroppedLogs = 0, Fault = new("error", LuaLogBuffer.Clip(commitError.Message)) });
                         }
                     }
                     else Detach(entry);
@@ -236,7 +244,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             }
             catch (QueueExpiredException error) { Expire(ready.Work, error.Message); }
             catch (Exception error) when (error is IOException or InvalidOperationException or ArgumentException or JsonException or OperationCanceledException)
-            { Fail(error.Message); }
+            { Fail(error.Message, ready.Work); }
             Reconcile();
         }
         retiring.RemoveAll(t => t.IsCompleted);
@@ -335,9 +343,24 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         var result = await exchange.WaitAsync(token).ConfigureAwait(false);
         CheckDeadline();
         ScreenLuaConnection.Validate(request, result);
+        var sourceIds = modules is null ? entry.DiagnosticScripts : modules.Sources.Select(s => s.Id).Append(modules.RootId).ToImmutableHashSet();
+        foreach (var log in result.Logs.Concat(result.Fault is { } fault ? [fault] : []))
+            if (log.ScriptId is { } id && !sourceIds.Contains(id)) throw new IOException("Журнал ссылается на чужой Lua-ресурс.");
         var batch = result.Error is null && work.Kind != "close" ? ScreenLuaProtocol.Prepare(definition, result.Changes) : null;
         CheckDeadline();
-        return new(result, batch);
+        return new(result, batch, sourceIds);
+    }
+
+    private void PublishLogs(Work work, ScreenLuaResponse response)
+    {
+        var instance = work.Entry.Instance;
+        var eventName = work.Kind == "load" ? "load/on_load" : work.Event!.Kind;
+        void Add(LuaLogMessage message) => Journal.Add(stack.SessionId, Generation, instance.OwnerId, instance.Id,
+            instance.Definition.Id, eventName, message with { ScriptId = message.ScriptId ?? work.Entry.Modules?.RootId });
+        foreach (var message in response.Logs) Add(message);
+        if (response.DroppedLogs > 0) Add(new("warning", $"Лимит журнала Lua: пропущено записей {response.DroppedLogs}."));
+        if (response.Fault is { } fault) Add(fault);
+        else if (response.Error is { } error) Add(new("error", LuaLogBuffer.Clip(error)));
     }
 
     private bool Current(ScreenInstance instance) => stack.Instances.Any(i => ReferenceEquals(i, instance));
@@ -379,22 +402,28 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     {
         foreach (var entry in entries.Values.ToArray()) if (!Current(entry.Instance)) Detach(entry);
     }
-    private void Report(string message, ScreenLuaIssueKind kind = ScreenLuaIssueKind.Conversation, Guid? instanceId = null)
+    private void Report(string message, ScreenLuaIssueKind kind = ScreenLuaIssueKind.Conversation, Guid? instanceId = null, Work? context = null)
     {
         if (diagnostics.Count == 32) diagnostics.Dequeue();
         if (issues.Count == 32) issues.Dequeue();
         var text = message.Length > 4096 ? message[..4096] : message;
         diagnostics.Enqueue(text);
         issues.Enqueue(new(kind, instanceId, text));
+        if (kind != ScreenLuaIssueKind.Handler)
+        {
+            var entry = context?.Entry ?? (instanceId is { } id ? entries.GetValueOrDefault(id) : pending?.Work.Entry);
+            Journal.Add(stack.SessionId, Generation, entry?.Instance.OwnerId ?? Guid.Empty, instanceId ?? entry?.Instance.Id ?? Guid.Empty,
+                entry?.Instance.Definition.Id ?? Guid.Empty, context?.Event?.Kind ?? kind.ToString(), new("error", LuaLogBuffer.Clip(message), entry?.Modules?.RootId));
+        }
     }
-    private void Fail(string message)
+    private void Fail(string message, Work? context = null)
     {
         services.Clear();
         serviceReplies.Clear();
         faulted = true;
         foreach (var entry in entries.Values) { entry.Error = message; entry.Loaded = false; }
         queue.Clear(); closes.Clear();
-        Report(message);
+        Report(message, context: context);
         Retire();
     }
     private void Retire()
