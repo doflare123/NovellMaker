@@ -26,6 +26,8 @@ internal static class ActionReferences
                 StateAction a when !source.Characters.Any(c => c.Id == a.ObjectId && c.States.Any(s => s.Id == a.StateId)) => null,
                 JumpAction a when !Target(a.SceneId, a.ActionId) => null,
                 BranchAction a when !Target(a.SceneId, a.ActionId) => null,
+                StartMinigameAction a when !source.Scenes.Any(s => s.Id == a.SceneId && s.Canvas.Minigame is not null) => null,
+                BranchMinigameAction a when !Target(a.SceneId, a.ActionId) => null,
                 ChoiceAction a => a with { Options = a.Options.Where(o => Target(o.TargetSceneId, o.TargetActionId)).ToImmutableArray() },
                 _ => action,
             };

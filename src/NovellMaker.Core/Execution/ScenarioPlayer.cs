@@ -23,7 +23,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
     public void Cancel()
     {
         CancelPendingLua();
-        State = State with { ActiveActions = [], QueuedActions = [], Wait = null, Choice = null };
+        State = State with { ActiveActions = [], QueuedActions = [], Wait = null, Choice = null, Minigame = null };
         Fail("Исполнение отменено.");
     }
 
@@ -96,6 +96,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         var remaining = elapsed.TotalSeconds;
         if (!double.IsFinite(remaining) || remaining < 0) throw new ArgumentOutOfRangeException(nameof(elapsed));
         if (disposed || IsPaused || State.Error is not null) return;
+        if (State.Minigame is not null) return;
         // Pending wall time is never added to scenario time, including the completion frame.
         if (HasPendingLua) { PollLua(); return; }
         // Split at wait boundaries, so a long frame agrees with several short frames.
@@ -202,6 +203,8 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         switch (action)
         {
             case LineEntryAction: break;
+            case StartMinigameAction a: StartMinigame(a); break;
+            case BranchMinigameAction a: if (MatchesMinigame(a)) Jump(a.SceneId, a.ActionId); break;
             case TextAction a:
                 if (!project.Scenes.First(s => s.Id == State.SceneId).Lines.Any(l => l.Id == a.LineId)) throw new InvalidOperationException($"Реплика {a.LineId} отсутствует.");
                 State = State with { LineId = a.LineId, TextStartedAt = State.Time }; Audio(AudioEventKind.Line, a.LineId); break;
@@ -299,6 +302,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         CancelPendingLua();
         ResetPass();
         State = state;
+        MinigameRestored = state.Minigame is not null;
         variableCharacters = state.Variables.Sum(v => v.Key.Length + v.Value.Length);
         audioEvents.Clear();
         Audio(state.Completed || state.Error is not null ? AudioEventKind.Stop : AudioEventKind.Restore);

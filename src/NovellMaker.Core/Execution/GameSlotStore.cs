@@ -193,7 +193,7 @@ public sealed class GameSlotStore : IGameSlotStore
             using var json = JsonDocument.Parse(text);
             var version = json.RootElement.GetProperty("Version").GetInt32();
             string saved;
-            if (version == GameSave.CurrentVersion)
+            if (version is 1 or GameSave.CurrentVersion && json.RootElement.TryGetProperty("State", out _))
             { legacy = true; saved = text; }
             else if (version == CurrentVersion)
             {

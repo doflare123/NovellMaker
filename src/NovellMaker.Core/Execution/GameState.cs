@@ -10,6 +10,8 @@ public sealed record PendingWait(Guid ActionId, string Mode, double Remaining = 
 /// <summary>Serializable game state. Contains no host resources, delegates, Lua VM or Lua stack.</summary>
 public sealed record GameState
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NovellMaker.Core.Minigames.MinigameSnapshot? Minigame { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NovellMaker.Core.Minigames.MinigameOutcome? MinigameOutcome { get; init; }
     public required Guid ProjectId { get; init; }
     public required string Revision { get; init; }
     public required Guid SceneId { get; init; }

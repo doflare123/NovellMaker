@@ -77,3 +77,11 @@ function game.jump(scene, action) end
 function game.jump_line(scene, line) end
 ---@param options NMChoice[] 1..8.
 function game.choice(options) end
+
+---Queue a mini-game barrier. Lua evaluation finishes before the game opens; read its result in a later block.
+---@param sceneId string Stable scene resource ID.
+---@param parameters? NMValue Defaults are taken from the resource.
+function game.start_minigame(sceneId, parameters) end
+---Last committed structured outcome, separate from legacy game.finish(string).
+---@return {status:string,data:NMValue}?
+function game.minigame_result() end

@@ -22,6 +22,8 @@ public static class SceneCopy
             LineEntryAction a => a with { LineId = Map(a.LineId) },
             JumpAction a => a with { SceneId = Map(a.SceneId), ActionId = Map(a.ActionId) },
             BranchAction a => a with { SceneId = Map(a.SceneId), ActionId = Map(a.ActionId) },
+            StartMinigameAction a => a with { SceneId = Map(a.SceneId) },
+            BranchMinigameAction a => a with { SceneId = Map(a.SceneId), ActionId = Map(a.ActionId) },
             ChoiceAction a => a with { Options = a.Options.Select(o => o with { Id = Guid.NewGuid(), TargetSceneId = Map(o.TargetSceneId), TargetActionId = Map(o.TargetActionId) }).ToImmutableArray() },
             WaitAction a => a with { Token = a.Token is { } token ? Map(token) : null },
             HotspotAction a => a with { ObjectId = Map(a.ObjectId) },

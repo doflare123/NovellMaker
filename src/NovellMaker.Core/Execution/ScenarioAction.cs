@@ -21,6 +21,8 @@ namespace NovellMaker.Core.Execution;
 [JsonDerivedType(typeof(RunScriptAction), "runScript")]
 [JsonDerivedType(typeof(HotspotAction), "hotspot")]
 [JsonDerivedType(typeof(LineEntryAction), "lineEntry")]
+[JsonDerivedType(typeof(StartMinigameAction), "startMinigame")]
+[JsonDerivedType(typeof(BranchMinigameAction), "branchMinigame")]
 public abstract record ScenarioAction([property: JsonRequired] Guid Id);
 public sealed record LineEntryAction(Guid Id, [property: JsonRequired] Guid LineId) : ScenarioAction(Id);
 public sealed record TextAction(Guid Id, [property: JsonRequired] Guid LineId) : ScenarioAction(Id);
@@ -45,6 +47,11 @@ public sealed record ScriptAction(Guid Id, [property: JsonRequired] string Sourc
     public ImmutableDictionary<string, Guid> References { get; init; } = ImmutableDictionary<string, Guid>.Empty;
 }
 public sealed record RunScriptAction(Guid Id, [property: JsonRequired] Guid ScriptId) : ScenarioAction(Id);
+public sealed record StartMinigameAction(Guid Id, [property: JsonRequired] Guid SceneId,
+    [property: JsonRequired] NovellMaker.Core.Scripting.LuaValue Parameters) : ScenarioAction(Id);
+public sealed record BranchMinigameAction(Guid Id, [property: JsonRequired] string Field,
+    [property: JsonRequired] NovellMaker.Core.Scripting.LuaValue EqualsValue,
+    [property: JsonRequired] Guid SceneId, [property: JsonRequired] Guid ActionId) : ScenarioAction(Id);
 // Normalized scene rectangle, optionally drawn as a labelled button by the host.
 public sealed record HotspotAction(Guid Id, [property: JsonRequired] Guid ObjectId, [property: JsonRequired] string Label,
     [property: JsonRequired] double X, [property: JsonRequired] double Y, [property: JsonRequired] double Width,

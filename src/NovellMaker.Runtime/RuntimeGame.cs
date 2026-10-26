@@ -89,7 +89,7 @@ internal sealed partial class RuntimeGame : Game
         settingsServices.IsCurrentOrigin = services.IsCurrentOrigin;
         settingsServices.Completed += (origin, result) => serviceFeedbackDelivered = screens.DeliverServiceResult(origin, result);
         screens.Stack.Presentation = PresentComponents;
-        screens.Configure(player.Execution.Project, () => player.Execution.State.Variables, () => session.Generation);
+        screens.Configure(player.Execution.Project, () => player.Execution.State.Variables, () => session.Generation, () => player.Execution);
         session.Resetting += ResetSessionResources;
         if (arguments.SmokePlanPath is { } plan) smokePlan = JsonSerializer.Deserialize<RuntimeSmokeStep[]>(File.ReadAllText(plan)) ?? throw new ArgumentException("Пустой smoke-план.");
         graphics = new GraphicsDeviceManager(this)
@@ -146,7 +146,9 @@ internal sealed partial class RuntimeGame : Game
         if (settingsServices.Poll()) RefreshTextTextures();
         PollSlots();
         screens.SyncScene(player.Execution.State.SceneId);
+        screens.TickMinigame(smokePlan is null ? gameTime.ElapsedGameTime : TimeSpan.Zero, (arguments.SmokeOutputPath is not null || IsActive) && imageCache?.IsPending != true);
         screens.Poll();
+        player.SynchronizePresentation();
         if (screens.Scripts is { } scripts) luaJournal.Publish(scripts.Journal);
         RefreshFrameResources();
         var hostActive = arguments.SmokeOutputPath is not null || IsActive;
@@ -227,6 +229,7 @@ internal sealed partial class RuntimeGame : Game
         if (session.Phase == GameSessionPhase.Ended) { base.Update(gameTime); return; }
         screens.SyncScene(player.Execution.State.SceneId);
         screens.Poll();
+        player.SynchronizePresentation();
         RefreshFrameResources(poll: true);
         RefreshTextTextures();
         var menuDiagnostics = string.Join("\n", screens.Diagnostics.Concat(componentTextures?.Diagnostics ?? []).Concat(dialogueDiagnostics.Values).Concat(luaJournal.Error is { } journalError ? [journalError] : []));
@@ -379,7 +382,10 @@ internal sealed partial class RuntimeGame : Game
         var path = Path.ChangeExtension(arguments.SmokeReportPath!, ".save.json");
         switch (step.Kind)
         {
-            case "tick": player.Tick(TimeSpan.FromSeconds(step.Seconds)); break;
+            case "tick":
+                if (player.Execution.State.Minigame is not null) screens.TickMinigame(TimeSpan.FromSeconds(step.Seconds), true);
+                else player.Tick(TimeSpan.FromSeconds(step.Seconds));
+                break;
             case "next": success = ApplyAction(RuntimeAction.Next); break;
             case "click_now":
             case "click":
@@ -425,7 +431,9 @@ internal sealed partial class RuntimeGame : Game
         return new(kind, success, player.Execution.State, player.Frame.Text)
         {
             ScreenCount = screens.Stack.Instances.Length,
+            ScreenInstanceIds = screens.Stack.Instances.Select(i => i.Id).ToArray(),
             ScreenTexts = screens.Stack.Instances.SelectMany(i => i.Definition.Nodes.Select(n => n.Text)).ToArray(),
+            PresentedScreenTexts = screens.Stack.Instances.SelectMany(i => PresentComponents(i, i.Definition).Nodes.Select(n => n.Text)).ToArray(),
             PausedAudioSources = audioBackend.PausedSources,
             AudioSources = audio?.ActiveSources ?? 0,
             AudioOpenedSources = audioBackend.OpenedSources,
@@ -755,6 +763,8 @@ internal sealed record RuntimeSmokeReport(
 internal sealed record RuntimeSmokeStep(string Kind, double Seconds = 0, int X = 0, int Y = 0, string? Key = null);
 internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState State, string Text)
 {
+    public Guid[] ScreenInstanceIds { get; init; } = [];
+    public string[] PresentedScreenTexts { get; init; } = [];
     public string SessionPhase { get; init; } = "";
     public long SessionGeneration { get; init; }
     public bool PendingLua { get; init; }

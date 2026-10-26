@@ -1,3 +1,8 @@
+using System.Collections.Immutable;
+using NovellMaker.Core.Minigames;
+using NovellMaker.Core.Scripting;
+using NovellMaker.Core.Screens;
+using NovellMaker.Core.Screens.Lua;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -32,6 +37,113 @@ public sealed class UiAppBuilder
 [DoNotParallelize]
 public sealed class EditorWindowTests
 {
+    [TestMethod]
+    [DataRow(LuaValueKind.Null, false)]
+    [DataRow(LuaValueKind.Boolean, false)]
+    [DataRow(LuaValueKind.Number, false)]
+    [DataRow(LuaValueKind.String, false)]
+    [DataRow(LuaValueKind.List, false)]
+    [DataRow(LuaValueKind.Object, false)]
+    [DataRow(LuaValueKind.Boolean, true)]
+    [DataRow(LuaValueKind.String, true)]
+    public Task ChangingMinigameRatePreservesSchemaKindsAndStructuredCompletion(
+        LuaValueKind kind, bool allSchemas) => WithUi(async () =>
+    {
+        using var session = CreateSession(out var dialogs, out _);
+        dialogs.CodeEditor.OpenOnCreation = false;
+        var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); session.AddScene(); session.OpenScreenLibrary();
+        await session.CreateScreenHandlerAsync();
+        var (json, lua) = kind switch
+        {
+            LuaValueKind.Null => ("null", "ui.null"),
+            LuaValueKind.Boolean => ("true", "true"),
+            LuaValueKind.Number => ("42", "42"),
+            LuaValueKind.String => ("\"result\"", "'result'"),
+            LuaValueKind.List => ("[1,2]", "ui.list({1,2})"),
+            _ => ("{\"score\":42}", "{score=42}"),
+        };
+        var value = LuaValue.FromJson(json);
+        var schema = new MinigameSchema { Kind = kind,
+            Fields = kind == LuaValueKind.Object
+                ? ImmutableDictionary<string, LuaValueKind>.Empty.Add("score", LuaValueKind.Number)
+                : ImmutableDictionary<string, LuaValueKind>.Empty };
+        var original = new MinigameDefinition
+        {
+            ParametersSchema = allSchemas ? schema : new(), StateSchema = allSchemas ? schema : new(), ResultSchema = schema,
+            DefaultParameters = allSchemas ? value : LuaValue.FromObject([]),
+            InitialState = allSchemas ? value : LuaValue.FromObject([]),
+        };
+        session.UpdateScreen(session.SelectedScreen! with { Minigame = original });
+        Dispatcher.UIThread.RunJobs();
+        Find<Expander>(window, "MinigameResourceExpander").IsExpanded = true; Dispatcher.UIThread.RunJobs();
+        Find<NumericUpDown>(window, "MinigameUpdateRate").Value = 10;
+        Find<Button>(window, "ApplyMinigameResource").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        var updated = session.SelectedScreen!.Minigame!;
+        Assert.AreEqual(10d, updated.UpdatesPerSecond);
+        Assert.AreEqual(original.ParametersSchema.Kind, updated.ParametersSchema.Kind);
+        Assert.AreEqual(original.StateSchema.Kind, updated.StateSchema.Kind);
+        Assert.AreEqual(original.ResultSchema.Kind, updated.ResultSchema.Kind);
+        CollectionAssert.AreEquivalent(original.ResultSchema.Fields.ToArray(), updated.ResultSchema.Fields.ToArray());
+        Assert.AreEqual(original.DefaultParameters.ToJson(), updated.DefaultParameters.ToJson());
+        Assert.AreEqual(original.InitialState.ToJson(), updated.InitialState.ToJson());
+        session.Undo(); Assert.AreEqual(original, session.SelectedScreen!.Minigame);
+        session.Redo(); Assert.AreEqual(updated, session.SelectedScreen!.Minigame);
+
+        var path = Path.Combine(Path.GetTempPath(), "minigame-schema-" + Guid.NewGuid().ToString("N") + ".novell");
+        try
+        {
+            await new JsonProjectStore().SaveAsync(path, session.Project!);
+            var reloaded = await new JsonProjectStore().LoadAsync(path);
+            var resource = reloaded.Scenes.Single(s => s.Id == session.SelectedScreen.Id).AsScreen();
+            Assert.AreEqual(original.ResultSchema.Kind, resource.Minigame!.ResultSchema.Kind);
+            var stack = new ScreenStack(Guid.NewGuid());
+            var instance = stack.Open(Guid.NewGuid(), resource.Definition());
+            await using var scripts = new ScreenLuaSession(stack);
+            scripts.Attach(instance, "return {on_event=function() ui.complete_minigame(" + lua + ") end}",
+                state: resource.Minigame.InitialState, minigame: resource.Minigame,
+                invocation: new(resource.Minigame.DefaultParameters, false));
+            async Task Drain()
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                while (scripts.HasPending)
+                {
+                    timeout.Token.ThrowIfCancellationRequested(); scripts.Poll();
+                    if (scripts.PendingTask is { } task) await task; else await Task.Delay(1);
+                }
+                Assert.IsEmpty(scripts.Diagnostics);
+            }
+            await Drain();
+            scripts.Enqueue(instance, new("update"), ImmutableDictionary<string, string>.Empty);
+            await Drain();
+            Assert.AreEqual(value.ToJson(), scripts.GetMinigameResult(instance)!.Data.ToJson());
+        }
+        finally { File.Delete(path); }
+        window.Close();
+    });
+
+    [TestMethod]
+    public Task MinigameResourceAndPuzzleCanBeCreatedEditedAndUndoneThroughInspector() => WithUi(async () =>
+    {
+        using var session=CreateSession(out _,out _);var window=CreateWindow(session);window.Show();
+        await session.NewProjectAsync();session.AddScene();session.OpenScreenLibrary();Dispatcher.UIThread.RunJobs();var before=session.Project!;
+        Find<Button>(window,"AddMinigameExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.AreEqual(before.Scenes.Length+3,session.Project!.Scenes.Length);session.Undo();Assert.IsTrue(before.ContentEquals(session.Project));session.Redo();
+        var puzzle=session.Project!.Scenes.Last();session.OpenScreenLibrary(puzzle.Id);Dispatcher.UIThread.RunJobs();
+        Find<Expander>(window,"MinigameResourceExpander").IsExpanded=true;Dispatcher.UIThread.RunJobs();
+        Assert.IsTrue(Find<CheckBox>(window,"MinigameEnabled").IsChecked);
+        Find<NumericUpDown>(window,"MinigameUpdateRate").Value=10;
+        Find<CheckBox>(window,"MinigameCanSave").IsChecked=false;
+        Find<TextBox>(window,"MinigameSaveReason").Text="Сначала закончите раунд";
+        Find<Button>(window,"ApplyMinigameResource").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.AreEqual(10d,session.SelectedScreen!.Minigame!.UpdatesPerSecond);Assert.IsFalse(session.SelectedScreen.Minigame.CanSave);
+        session.Undo();Assert.AreEqual(5d,session.SelectedScreen!.Minigame!.UpdatesPerSecond);session.Redo();
+        window.UpdateLayout();AvaloniaHeadlessPlatform.ForceRenderTimerTick(2);Dispatcher.UIThread.RunJobs();
+        if(Environment.GetEnvironmentVariable("NOVELLMAKER_CAPTURE_DIR") is {} directory)
+        {using var bitmap=new RenderTargetBitmap(new PixelSize((int)window.Bounds.Width,(int)window.Bounds.Height),new Vector(96,96));bitmap.Render(window);bitmap.Save(Path.Combine(directory,"editor-minigame-puzzle.png"),PngBitmapEncoderOptions.Default);}
+        window.Close();
+    });
+
     [TestMethod]
     [DataRow(0)] [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)] [DataRow(5)] [DataRow(6)]
     public Task AuthorExampleCanBeAddedThroughInspectorAndEditedOnCanvas(int exampleKind) => WithUi(async () =>

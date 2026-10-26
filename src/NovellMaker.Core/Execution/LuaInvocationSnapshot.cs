@@ -10,15 +10,21 @@ public sealed record LuaStateSnapshot(double Time, ImmutableDictionary<string, s
     ImmutableArray<Guid> VisibleObjects, ImmutableDictionary<Guid, Guid> ObjectStates,
     ImmutableDictionary<Guid, CharacterPlacement> Placements)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public NovellMaker.Core.Minigames.MinigameOutcome? MinigameOutcome { get; init; }
     internal static LuaStateSnapshot Capture(GameState state) =>
-        new(state.Time, state.Variables, state.VisibleObjects, state.ObjectStates, state.Placements);
+        new(state.Time, state.Variables, state.VisibleObjects, state.ObjectStates, state.Placements) { MinigameOutcome = state.MinigameOutcome };
 }
+
+public sealed record LuaMinigameLaunch(NovellMaker.Core.Minigames.MinigameSchema Schema, NovellMaker.Core.Scripting.LuaValue Defaults);
 
 /// <summary>Reference permissions, independent of novel text and resource payloads.</summary>
 public sealed record LuaCommandCatalog(ImmutableArray<Guid> Lines,
     ImmutableDictionary<Guid, ImmutableArray<Guid>> ObjectStates,
     ImmutableDictionary<Guid, ImmutableArray<Guid>> SceneActions, ImmutableArray<Guid> Scripts)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ImmutableDictionary<Guid, LuaMinigameLaunch>? Minigames { get; init; }
     // Reference identity, not record equality/fingerprint. The cache does not retain old projects.
     private static readonly ConditionalWeakTable<NovelProject, ProjectCache> Cache = new();
 
@@ -80,17 +86,31 @@ public sealed record LuaCommandCatalog(ImmutableArray<Guid> Lines,
             foreach (var script in project.Scripts) { preparation.Checkpoint(); scripts.Add(script.Id); }
             var objectStates = objects.ToImmutable(); var sceneActions = targets.ToImmutable(); var scriptIds = scripts.ToImmutable();
             var result = ImmutableDictionary.CreateBuilder<Guid, LuaCommandCatalog>();
+            var minigames = ImmutableDictionary.CreateBuilder<Guid, LuaMinigameLaunch>();
+            foreach (var scene in project.Scenes)
+            {
+                preparation.Checkpoint();
+                if (scene.Canvas.Minigame is { } resource) minigames.Add(scene.Id, new(resource.ParametersSchema, resource.DefaultParameters));
+            }
             foreach (var (id, sceneLines) in lines)
             {
                 preparation.Checkpoint();
-                result.Add(id, new(sceneLines, objectStates, sceneActions, scriptIds));
+                result.Add(id, new(sceneLines, objectStates, sceneActions, scriptIds) { Minigames = minigames.Count == 0 ? null : minigames.ToImmutable() });
             }
             preparation.Checkpoint();
             return result.ToImmutable();
         }
     }
 
-    internal bool IsValid(ScenarioAction action) => ScenarioProgram.IsValidAction(action,
+    internal bool IsValid(ScenarioAction action)
+    {
+        if (action is StartMinigameAction start)
+        {
+            if (Minigames is not { } games || !games.TryGetValue(start.SceneId, out var resource)) return false;
+            try { resource.Schema.Validate(start.Parameters); return true; } catch (ArgumentException) { return false; }
+        }
+        return ScenarioProgram.IsValidAction(action,
         ObjectStates.ContainsKey, (id, state) => ObjectStates.TryGetValue(id, out var states) && states.Contains(state),
         Lines.Contains, (scene, id) => SceneActions.TryGetValue(scene, out var actions) && actions.Contains(id), Scripts.Contains);
+    }
 }

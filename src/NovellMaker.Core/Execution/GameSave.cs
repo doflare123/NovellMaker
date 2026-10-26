@@ -10,7 +10,7 @@ public sealed record GameSaveSnapshot(GameState State, NovelProject Project);
 
 public static class GameSave
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
     private static readonly SemaphoreSlim PreparationGate = new(2, 2);
     private static int admittedPreparations;
     private sealed record Document([property: JsonRequired] int Version, [property: JsonRequired] GameState State);
@@ -74,7 +74,15 @@ public static class GameSave
         try
         {
             var document = JsonSerializer.Deserialize<Document>(json, Options) ?? throw new ArgumentException("Пустое сохранение.");
-            if (document.Version != CurrentVersion) throw new ArgumentException($"Версия сохранения {document.Version} не поддерживается.");
+            if (document.Version is not (1 or CurrentVersion)) throw new ArgumentException($"Версия сохранения {document.Version} не поддерживается.");
+            if (document.Version == 1)
+            {
+                using var legacy = JsonDocument.Parse(json);
+                var state = legacy.RootElement.GetProperty("State");
+                if (state.TryGetProperty("Minigame", out _) || state.TryGetProperty("MinigameOutcome", out _) ||
+                    document.State.QueuedActions.Any(a => a is StartMinigameAction or BranchMinigameAction))
+                    throw new ArgumentException("Старый формат не поддерживает данные мини-игры.");
+            }
             return document.State;
         }
         catch (JsonException error) { throw new ArgumentException("Некорректный формат сохранения.", error); }
@@ -119,7 +127,26 @@ public static class GameSave
             throw new ArgumentException("Некорректные объекты, переменные или активные действия сохранения.");
         if (state.Hotspots.Any(h => h is null) || state.QueuedActions.Any(a => a is null)) throw new ArgumentException("Сохранение содержит пустые команды.");
         if (!LuaLimits.ValidQueue(state.QueuedActions)) throw new ArgumentException("Превышен бюджет очереди сохранения.");
-        if (state.Wait is { } wait && (wait.ActionId == Guid.Empty || wait.Mode is not ("input" or "timer" or "interaction" or "actions") ||
+        if (state.Minigame is { } minigame)
+        {
+            var definition = project.Scenes.FirstOrDefault(s => s.Id == minigame.SceneId)?.Canvas.Minigame
+                ?? throw new ArgumentException("Ресурс мини-игры сохранения отсутствует.");
+            minigame.Validate(definition);
+            if (!minigame.Initialized || !definition.CanSave || state.Wait is not { Mode: "minigame" } barrier || barrier.ActionId != minigame.ActionId ||
+                program.FirstOrDefault(a => a.Id == minigame.ActionId) is { } origin &&
+                    (origin is not StartMinigameAction launch || launch.SceneId != minigame.SceneId || launch.Parameters.ToJson() != minigame.Parameters.ToJson()) ||
+                state.MinigameOutcome is not null || state.Error is not null || barrier.Remaining != 0 || barrier.Token is not null)
+                throw new ArgumentException("Некорректный барьер мини-игры сохранения.");
+        }
+        else if (state.Wait?.Mode == "minigame") throw new ArgumentException("Нет снимка ожидаемой мини-игры.");
+        if (state.MinigameOutcome is { } outcome)
+        {
+            var definition = project.Scenes.FirstOrDefault(s => s.Id == outcome.SceneId)?.Canvas.Minigame
+                ?? throw new ArgumentException("Ресурс результата мини-игры отсутствует.");
+            if (outcome.Result is null) throw new ArgumentException("Нет результата мини-игры.");
+            outcome.Result.Validate(definition);
+        }
+        if (state.Wait is { } wait && (wait.ActionId == Guid.Empty || wait.Mode is not ("input" or "timer" or "interaction" or "actions" or "minigame") ||
             wait.Mode == "actions" && state.ActiveActions.IsEmpty || wait.Mode == "timer" && wait.Remaining <= 0 ||
             !ScenarioProgram.Duration(wait.Remaining) || wait.Mode == "interaction" && !state.Hotspots.Any(h => (wait.Token is null || h.ObjectId == wait.Token) && h.Enabled)) ||
             state.Choice is not null && state.Wait is not null || state.Completed && (state.NextActionId is not null || state.Wait is not null || state.Choice is not null || !state.QueuedActions.IsEmpty))

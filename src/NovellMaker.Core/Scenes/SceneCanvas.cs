@@ -9,6 +9,7 @@ namespace NovellMaker.Core.Scenes;
 /// <summary>Visual components and event bindings owned by a scene, independent of how it is opened.</summary>
 public sealed record SceneCanvas
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NovellMaker.Core.Minigames.MinigameDefinition? Minigame { get; init; }
     [JsonRequired] public ImmutableArray<ScreenNode> Nodes { get; init; } = [];
     [JsonRequired] public Guid? HandlerScriptId { get; init; }
     [JsonRequired] public ImmutableDictionary<string, Guid> References { get; init; } = ImmutableDictionary<string, Guid>.Empty;
@@ -25,13 +26,13 @@ public sealed record SceneCanvas
 
     public ScreenAsset AsScreen(Guid id, string name) => new(id, name, Nodes)
     {
-        HandlerScriptId = HandlerScriptId, References = References, Buttons = Buttons,
+        HandlerScriptId = HandlerScriptId, References = References, Buttons = Buttons, Minigame = Minigame,
         PauseOnOverlay = PauseOnOverlay, BlockInputOnOverlay = BlockInputOnOverlay
     };
 
     public static SceneCanvas FromScreen(ScreenAsset screen) => new()
     {
-        Nodes = screen.Nodes, HandlerScriptId = screen.HandlerScriptId, References = screen.References,
+        Nodes = screen.Nodes, HandlerScriptId = screen.HandlerScriptId, References = screen.References, Minigame = screen.Minigame,
         Buttons = screen.Buttons, PauseOnOverlay = screen.PauseOnOverlay, BlockInputOnOverlay = screen.BlockInputOnOverlay
     };
 }

@@ -132,6 +132,15 @@ public static class LuaActionScript
         Bind("wait_click", a => Emit(new WaitAction(Guid.NewGuid(), "interaction", Token: a.Count == 0 ? null : Id(a, 0))));
         Bind("hotspot", a => Emit(new HotspotAction(Guid.NewGuid(), Id(a, 0), Str(a, 1), Num(a, 2), Num(a, 3), Num(a, 4), Num(a, 5))));
         Bind("finish", a => Emit(new SetAction(Guid.NewGuid(), "minigame.result", Str(a, 0))));
+        var values = new NovellMaker.Core.Scripting.LuaValueProjection(script);
+        Bind("start_minigame", a =>
+        {
+            var id = Id(a, 0);
+            if (catalog.Minigames is not { } games || !games.TryGetValue(id, out var resource)) throw new ScriptRuntimeException("Ресурс мини-игры отсутствует.");
+            return Emit(new StartMinigameAction(Guid.NewGuid(), id, a.Count < 2 ? resource.Defaults : values.Read(a[1])));
+        });
+        Bind("minigame_result", _ => state.MinigameOutcome is { } result ? values.Write(NovellMaker.Core.Scripting.LuaValue.FromObject(
+            new Dictionary<string, NovellMaker.Core.Scripting.LuaValue> { ["status"] = NovellMaker.Core.Scripting.LuaValue.FromString(result.Result.Phase.ToString().ToLowerInvariant()), ["data"] = result.Result.Data })) : DynValue.Nil);
         Bind("run", a => Emit(new RunScriptAction(Guid.NewGuid(), Id(a, 0))));
         Bind("jump", a => Emit(new JumpAction(Guid.NewGuid(), Id(a, 0), Id(a, 1))));
         Bind("choice", a =>

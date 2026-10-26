@@ -33,6 +33,7 @@ public sealed record ScreenButtonBinding(Guid NodeId, ScreenButtonAction Action,
 /// <summary>Authoring data; live instances and Lua closures never belong to a project snapshot.</summary>
 public sealed record ScreenAsset(Guid Id, string Name, ImmutableArray<ScreenNode> Nodes)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NovellMaker.Core.Minigames.MinigameDefinition? Minigame { get; init; }
     [JsonRequired] public Guid? HandlerScriptId { get; init; }
     [JsonRequired] public ImmutableDictionary<string, Guid> References { get; init; } = ImmutableDictionary<string, Guid>.Empty;
     [JsonRequired] public ImmutableArray<ScreenButtonBinding> Buttons { get; init; } = [];
@@ -44,6 +45,7 @@ public sealed record ScreenAsset(Guid Id, string Name, ImmutableArray<ScreenNode
         with { Id = Id, Name = Name, Canvas = NovellMaker.Core.Scenes.SceneCanvas.FromScreen(this) };
 
     public bool ContentEquals(ScreenAsset other) => Id == other.Id && Name == other.Name && HandlerScriptId == other.HandlerScriptId &&
+        System.Text.Json.JsonSerializer.Serialize(Minigame) == System.Text.Json.JsonSerializer.Serialize(other.Minigame) &&
         PauseOnOverlay == other.PauseOnOverlay && BlockInputOnOverlay == other.BlockInputOnOverlay &&
         Nodes.SequenceEqual(other.Nodes) && Buttons.SequenceEqual(other.Buttons) && References.Count == other.References.Count &&
         References.All(r => other.References.TryGetValue(r.Key, out var id) && id == r.Value);
@@ -75,6 +77,11 @@ public sealed record ScreenAsset(Guid Id, string Name, ImmutableArray<ScreenNode
             if (screen is null || string.IsNullOrWhiteSpace(screen.Name) || screen.Id == Guid.Empty)
                 throw new ArgumentException("Некорректный экран: имя или повторный ID.");
             _ = screen.Definition();
+            if (screen.Minigame is { } minigame)
+            {
+                minigame.Validate();
+                if (screen.HandlerScriptId is null) throw new ArgumentException("Мини-игре нужен обработчик Lua.");
+            }
             if (screen.Nodes.Any(n => n.ImageId is { } image && !project.Images.Any(i => i.Id == image)))
                 throw new ArgumentException($"Экран «{screen.Name}»: изображение отсутствует.");
             if (screen.Nodes.Any(n => !ids.Add(n.Id))) throw new ArgumentException("Повторный ID узла экрана.");

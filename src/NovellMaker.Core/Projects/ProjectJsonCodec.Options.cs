@@ -12,6 +12,8 @@ internal static partial class ProjectJsonCodec
     private static readonly JsonSerializerOptions StrictSerializerOptions =
         CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
     private static readonly JsonSerializerOptions CurrentSerializerOptions =
+        CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow, allowSlots: true, allowMinigames: true);
+    private static readonly JsonSerializerOptions Version18SerializerOptions =
         CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow, allowSlots: true);
 
     private static readonly JsonSerializerOptions VersionProbeSerializerOptions =
@@ -26,6 +28,7 @@ internal static partial class ProjectJsonCodec
     {
         var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
         var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(RemoveMinigameFields);
         resolver.Modifiers.Add(RemoveScenePolicies);
         options.TypeInfoResolver = resolver;
         return options;
@@ -66,6 +69,7 @@ internal static partial class ProjectJsonCodec
     {
         var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
         var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(RemoveMinigameFields);
         resolver.Modifiers.Add(info =>
         {
             RemoveGeometryFields(info);
@@ -79,6 +83,7 @@ internal static partial class ProjectJsonCodec
     {
         var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
         var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(RemoveMinigameFields);
         resolver.Modifiers.Add(info =>
         {
             RemoveGeometryFields(info);
@@ -91,6 +96,7 @@ internal static partial class ProjectJsonCodec
     {
         var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
         var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(RemoveMinigameFields);
         resolver.Modifiers.Add(info =>
         {
             RemoveScenePolicies(info);
@@ -107,6 +113,7 @@ internal static partial class ProjectJsonCodec
     {
         var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
         var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(RemoveMinigameFields);
         resolver.Modifiers.Add(info =>
         {
             if (info.Type == typeof(ScenarioAction) && info.PolymorphismOptions is { } polymorphism)
@@ -120,6 +127,7 @@ internal static partial class ProjectJsonCodec
     {
         var options = CreateSerializerOptions(JsonUnmappedMemberHandling.Disallow);
         var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(RemoveMinigameFields);
         resolver.Modifiers.Add(info =>
         {
             if (info.Type == typeof(ScriptAction))
@@ -132,9 +140,10 @@ internal static partial class ProjectJsonCodec
     }
 
     private static JsonSerializerOptions CreateSerializerOptions(
-        JsonUnmappedMemberHandling unmappedMemberHandling, bool legacyDialogue = false, bool allowSlots = false)
+        JsonUnmappedMemberHandling unmappedMemberHandling, bool legacyDialogue = false, bool allowSlots = false, bool allowMinigames = false)
     {
         var resolver = new DefaultJsonTypeInfoResolver();
+        if (!allowMinigames) resolver.Modifiers.Add(RemoveMinigameFields);
         resolver.Modifiers.Add(info =>
         {
             if (!allowSlots) RemoveSlotFields(info);
@@ -153,6 +162,14 @@ internal static partial class ProjectJsonCodec
             Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
             WriteIndented = true,
         };
+    }
+
+    private static void RemoveMinigameFields(JsonTypeInfo info)
+    {
+        if (info.Type == typeof(NovellMaker.Core.Scenes.SceneCanvas) || info.Type == typeof(NovellMaker.Core.Screens.ScreenAsset))
+            foreach (var property in info.Properties.Where(p => p.Name == "minigame").ToArray()) info.Properties.Remove(property);
+        if (info.Type == typeof(ScenarioAction) && info.PolymorphismOptions is { } polymorphism)
+            foreach (var type in polymorphism.DerivedTypes.Where(t => t.DerivedType == typeof(StartMinigameAction) || t.DerivedType == typeof(BranchMinigameAction)).ToArray()) polymorphism.DerivedTypes.Remove(type);
     }
 
     private static async Task<TDocument> DeserializeRequiredAsync<TDocument>(

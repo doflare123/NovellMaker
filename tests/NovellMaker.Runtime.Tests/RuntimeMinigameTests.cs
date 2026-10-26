@@ -1,0 +1,108 @@
+using System.Collections.Immutable;
+using NovellMaker.Core.Execution;
+using NovellMaker.Core.Minigames;
+using NovellMaker.Core.Projects;
+using NovellMaker.Core.Scenes;
+using NovellMaker.Core.Screens;
+using NovellMaker.Core.Scripting;
+
+namespace NovellMaker.Runtime.Tests;
+
+[TestClass]
+public sealed class RuntimeMinigameTests
+{
+    private static NovelProject Project(string? code=null)
+    {
+        var game=ScreenFixture.Create("Пазл").ToScene();
+        var script=new LuaScriptAsset(Guid.NewGuid(),"puzzle.lua",code??"return {on_load=function() ui.set_text(refs.label,'ready') end,on_event=function(e) if e.kind=='click' then ui.set_state({steps=2}); ui.complete_minigame({won=true}) end end}");
+        game=game with {Canvas=game.Canvas with {Buttons=[],HandlerScriptId=script.Id,References=ImmutableDictionary<string,Guid>.Empty.Add("label",game.Canvas.Nodes[1].Id),
+            Minigame=new(){InitialState=LuaValue.FromJson("{\"steps\":1}")}}};
+        var story=NovelScene.Create("Сюжет") with {Lines=[DialogueLine.Create("ru","После пазла")]};
+        story=story with {ScriptBlocks=[new(null,ScriptPhase.SceneStart,new StartMinigameAction(Guid.NewGuid(),game.Id,LuaValue.FromObject([])))]};
+        return NovelProject.Create("Пазл") with {Scenes=[story,game],Scripts=[script]};
+    }
+    private static async Task Drain(RuntimeScreens screens)
+    {
+        using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        do {timeout.Token.ThrowIfCancellationRequested();screens.Poll();if(screens.Scripts?.PendingTask is {} task)try {await task;}catch(InvalidOperationException){}else await Task.Delay(1);}while(screens.HasPending);
+        screens.Poll();
+    }
+    private static RuntimeScreens Host(NovelProject project,Func<ScenarioPlayer> player,bool lua=true)
+    {
+        var screens=new RuntimeScreens(Guid.NewGuid(),lua);screens.Configure(project,()=>player().State.Variables,execution:player);screens.SyncScene(player().State.SceneId);return screens;
+    }
+
+    [TestMethod]
+    public async Task OwnedChildLayersAreCleanedWithMiniGameWhileIndependentMenuRemains()
+    {
+        var project=Project();var game=project.Scenes[1];var child=ScreenFixture.Create("Дочерний слой").ToScene();
+        game=game with {Canvas=game.Canvas with {Buttons=[new(game.Canvas.Nodes[2].Id,ScreenButtonAction.Open,child.Id)]}};
+        project=project with {Scenes=project.Scenes.SetItem(1,game).Add(child)};
+        using var player=new ScenarioPlayer(project,project.Scenes[0].Id,"ru");await using var host=Host(project,()=>player);await Drain(host);
+        var instance=host.Stack.Instances.Single();host.Route(new(ScreenInputKind.FocusNext));host.Route(new(ScreenInputKind.Activate));
+        var ownedChild=host.Stack.Instances.Last();Assert.AreEqual(instance.OwnerId,ownedChild.OwnerId);
+        var independent=host.Stack.Open(Guid.NewGuid(),ScreenFixture.Create("Независимое меню").Definition());
+        host.Stack.Close(instance);host.Poll();await Drain(host);
+        Assert.AreSame(independent,host.Stack.Instances.Single());Assert.IsNull(host.ActiveMinigame);Assert.IsTrue(player.IsPaused);
+        Assert.AreEqual(MinigamePhase.Cancelled,player.State.MinigameOutcome!.Result.Phase);
+        host.Stack.Close(independent);player.IsPaused=false;player.Tick(TimeSpan.FromSeconds(.01));Assert.AreEqual(project.Scenes[0].Lines[0].Id,player.State.LineId);
+    }
+
+    [TestMethod]
+    public async Task CompletesOnceOwnsInstanceAndSaveBarrierPreservesCommittedSnapshot()
+    {
+        var project=Project();using var player=new ScenarioPlayer(project,project.Scenes[0].Id,"ru");await using var host=Host(project,()=>player);
+        host.Poll();Assert.Throws<InvalidOperationException>(()=>GameSave.Capture(player));await Drain(host);
+        var run=host.ActiveMinigame!;Assert.AreEqual(MinigamePhase.Running,run.Phase);Assert.AreEqual("{\"steps\":1}",player.State.Minigame!.State.ToJson());
+        var saved=GameSave.Serialize(player);Assert.IsTrue(host.Stack.PausesScenario);Assert.HasCount(1,host.Stack.Instances);
+        host.Route(new(ScreenInputKind.FocusNext));host.Route(new(ScreenInputKind.Activate));await Drain(host);
+        Assert.IsNull(host.ActiveMinigame);Assert.AreEqual(MinigamePhase.Disposed,run.Phase);Assert.AreEqual(MinigamePhase.Completed,run.Result!.Phase);
+        Assert.IsEmpty(host.Stack.Instances);Assert.IsNull(player.State.Minigame);Assert.AreEqual(project.Scenes[0].Lines[0].Id,player.State.LineId);
+        Assert.IsFalse(player.FinishMinigame(run.Snapshot.RunId,run.Result));
+        GameSave.Load(player,saved);host.Poll();await Drain(host);
+        Assert.AreNotSame(run,host.ActiveMinigame);Assert.AreEqual("{\"steps\":1}",player.State.Minigame!.State.ToJson());
+        host.Route(new(ScreenInputKind.Back));host.Poll();await Drain(host);
+        Assert.AreEqual(MinigamePhase.Cancelled,player.State.MinigameOutcome!.Result.Phase);Assert.IsEmpty(host.Stack.Instances);
+    }
+
+    [TestMethod]
+    public async Task UpdateRateCoalescesElapsedAndFocusOrOverlayPausesWithoutAccumulatingPausedTime()
+    {
+        var project=Project("return {on_event=function(e) if e.kind=='update' then local s=ui.get_state();s.steps=s.steps+e.seconds;ui.set_state(s) end end}");
+        using var player=new ScenarioPlayer(project,project.Scenes[0].Id,"ru");await using var host=Host(project,()=>player);await Drain(host);
+        host.TickMinigame(TimeSpan.FromSeconds(0.1),true);Assert.IsFalse(host.HasPending);
+        host.TickMinigame(TimeSpan.FromSeconds(0.1),true);await Drain(host);Assert.AreEqual(1.2,player.State.Minigame!.State.Properties!["steps"].Number,0.00001);
+        host.TickMinigame(TimeSpan.FromSeconds(5),false);Assert.AreEqual(MinigamePhase.Paused,host.ActiveMinigame!.Phase);
+        host.TickMinigame(TimeSpan.Zero,true);Assert.AreEqual(MinigamePhase.Running,host.ActiveMinigame.Phase);
+        var overlay=host.Stack.Open(Guid.NewGuid(),ScreenFixture.Create("Меню").Definition());
+        host.TickMinigame(TimeSpan.FromSeconds(5),true);Assert.AreEqual(MinigamePhase.Paused,host.ActiveMinigame.Phase);
+        host.Stack.Close(overlay);host.TickMinigame(TimeSpan.FromSeconds(10),true);await Drain(host);
+        Assert.AreEqual(2.2,player.State.Minigame!.State.Properties!["steps"].Number,0.00001);
+        Assert.Throws<ArgumentOutOfRangeException>(()=>host.TickMinigame(TimeSpan.FromSeconds(-1),true));
+    }
+
+    [TestMethod]
+    [DataRow(false)][DataRow(true)]
+    public async Task WorkerFailureOrMissingWorkerCleansOwnerAndContinuesWithFailedResult(bool enabled)
+    {
+        var project=Project("return {on_load=function() missing() end,on_event=function() end}");using var player=new ScenarioPlayer(project,project.Scenes[0].Id,"ru");
+        await using var host=Host(project,()=>player,enabled);await Drain(host);
+        Assert.IsNull(host.ActiveMinigame);Assert.IsEmpty(host.Stack.Instances);Assert.AreEqual(MinigamePhase.Failed,player.State.MinigameOutcome!.Result.Phase);
+        Assert.AreEqual(project.Scenes[0].Lines[0].Id,player.State.LineId);Assert.IsNull(player.MinigameSaveBarrier);
+    }
+
+    [TestMethod]
+    public async Task RepeatedResetAndPlayerReplacementDoNotKeepHandlersOwnersOrSaveBarriers()
+    {
+        var project=Project();using var session=new GameSession(project,project.Scenes[0].Id,"ru");await using var host=Host(project,()=>session.Player.Execution);
+        for(var i=0;i<6;i++)
+        {
+            await Drain(host);var oldPlayer=session.Player.Execution;var oldRun=host.ActiveMinigame!;var saved=GameSave.Serialize(oldPlayer);
+            session.LoadSave(saved);host.SyncScene(session.Player.Execution.State.SceneId,afterLoad:true);host.Poll();await Drain(host);
+            Assert.IsNull(oldPlayer.MinigameSaveBarrier);Assert.AreEqual(MinigamePhase.Disposed,oldRun.Phase);Assert.HasCount(1,host.Stack.Instances);
+            Assert.AreNotSame(oldRun,host.ActiveMinigame);
+        }
+        var run=host.ActiveMinigame!;host.Reset();host.Reset();Assert.AreEqual(MinigamePhase.Disposed,run.Phase);
+        Assert.IsEmpty(host.Stack.Instances);Assert.IsNull(session.Player.Execution.MinigameSaveBarrier);
+    }
+}

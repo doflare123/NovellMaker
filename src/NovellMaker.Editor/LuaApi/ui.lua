@@ -1,5 +1,5 @@
 ---@meta NovellMaker.ui
--- NovellMaker screen API, wire 13 / Lua 5.2. Tooling only; never execute this file.
+-- NovellMaker screen API, wire 14 / Lua 5.2. Tooling only; never execute this file.
 -- Calls enqueue one atomic batch. A handler must return; waits do not suspend Lua.
 
 ---@alias NMHandle string Opaque resource/instance/node identity, valid only in its live instance.
@@ -170,3 +170,15 @@ function ui.get_persistent(key) end
 ---@param value? string nil removes; empty string is a value.
 ---@return string request_id
 function ui.set_persistent(key, value) end
+
+---Parameters captured by the scenario launch; only available inside a mini-game handler.
+---@return NMValue
+function ui.minigame_parameters() end
+---True for a restored instance. on_load must only rebuild visuals from saved data.
+---@return boolean
+function ui.is_restoring() end
+---Complete this mini-game once with schema-checked structured data. Last command in the batch.
+---@param result NMValue
+function ui.complete_minigame(result) end
+---Cancel this mini-game and continue the scenario with status cancelled.
+function ui.cancel_minigame() end

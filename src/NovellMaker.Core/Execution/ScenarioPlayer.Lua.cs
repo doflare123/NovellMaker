@@ -89,6 +89,13 @@ public sealed partial class ScenarioPlayer
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (HasPendingLua) throw new InvalidOperationException("Lua ещё выполняется. Повторите сохранение после завершения операции.");
+        if (State.Minigame is { } active)
+        {
+            if (!active.Initialized) throw new InvalidOperationException("Мини-игра ещё запускается. Повторите сохранение после запуска.");
+            var definition = project.Scenes.Single(s => s.Id == active.SceneId).Canvas.Minigame!;
+            if (!definition.CanSave) throw new InvalidOperationException(definition.SaveDisabledReason);
+            if (MinigameSaveBarrier?.Invoke() is { } reason) throw new InvalidOperationException(reason);
+        }
     }
 
     public void Dispose() { if (disposed) return; disposed = true; CancelPendingLua(); }

@@ -48,6 +48,8 @@ public static class LuaLimits
                 ChoiceAction a => a.Options.IsDefault ? MaximumQueueCharacters + 1 : a.Options.Sum(o => Size(o?.Text)),
                 HotspotAction a => Size(a.Label),
                 BranchAction a => Size(a.Variable) + Size(a.EqualsValue),
+                StartMinigameAction a => a.Parameters?.JsonByteCount ?? MaximumQueueCharacters + 1,
+                BranchMinigameAction a => Size(a.Field) + (a.EqualsValue?.JsonByteCount ?? MaximumQueueCharacters + 1),
                 WaitAction a => Size(a.Mode),
                 _ => 0
             };

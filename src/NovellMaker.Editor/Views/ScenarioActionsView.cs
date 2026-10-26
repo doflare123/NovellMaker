@@ -63,6 +63,8 @@ public sealed class ScenarioActionsView : UserControl
                 item.Click += (_, _) => Add(index); addMenu.Items.Add(item);
             }
             menu.Items.Add(addMenu);
+            var minigame = new MenuItem { Header = "Запустить мини-игру" }; minigame.Click += (_, _) => Add(13); addMenu.Items.Add(minigame);
+            var result = new MenuItem { Header = "Ветвление по результату мини-игры" }; result.Click += (_, _) => Add(14); addMenu.Items.Add(result);
             var lua = new MenuItem { Header = "Создать Lua-скрипт…", Name = "CreatePhraseLuaMenu" }; lua.Click += (_, _) => Add(11); menu.Items.Add(lua);
             var call = new MenuItem { Header = "Вызвать существующий скрипт" }; call.Click += (_, _) => Add(12); menu.Items.Add(call);
             var delete = new MenuItem { Header = "Удалить" }; delete.Click += async (_, _) =>
@@ -231,6 +233,12 @@ public sealed class ScenarioActionsView : UserControl
 
     private Func<JsonNode?> Editor(JsonNode? value, StackPanel parent, string name, ScenarioAction action)
     {
+        if (name is "Parameters" or "EqualsValue" && action is StartMinigameAction or BranchMinigameAction)
+        {
+            parent.Children.Add(new TextBlock { Text = name == "Parameters" ? "Параметры (JSON)" : "Ожидаемое значение (JSON)" });
+            var json = new TextBox { Text = value?.ToJsonString() ?? "null", AcceptsReturn = true, MinHeight = 65 };
+            parent.Children.Add(json); return () => JsonNode.Parse(json.Text ?? "null");
+        }
         if (name is "Id" or "kind" or "IsValid") return () => value?.DeepClone();
         if (name == "References") return () => value?.DeepClone();
         if (name == "Source" && action is ScriptAction inline)
@@ -345,6 +353,9 @@ public sealed class ScenarioActionsView : UserControl
         var id = Guid.NewGuid(); var actor = project.Characters.FirstOrDefault(); var line = scene.Lines.FirstOrDefault();
         if (kind is >= 0 and <= 4 && actor is null) { error.Text = "Сначала создайте персонажа в библиотеке."; return; }
         if (kind is 6 or 7 or 9 && line is null) { error.Text = "Сначала добавьте фразу для перехода."; return; }
+        if (kind == 14 && line is null) { error.Text = "Сначала добавьте фразу для перехода."; return; }
+        var resource = project.Scenes.FirstOrDefault(s => s.Canvas.Minigame is not null);
+        if (kind == 13 && resource is null) { error.Text = "Сначала настройте мини-игру в свойствах сцены."; return; }
         var target = line is null ? Guid.Empty : ScenarioProgram.LineEntryId(line.Id);
         if (kind == 11)
         {
@@ -371,6 +382,8 @@ public sealed class ScenarioActionsView : UserControl
             8 => new SetAction(id, "flag", "true"), 9 => new BranchAction(id, "flag", "true", scene.Id, target),
             10 => new HotspotAction(id, Guid.NewGuid(), "Предмет", 0.4, 0.4, 0.2, 0.1),
             12 => new RunScriptAction(id, project.Scripts[0].Id),
+            13 => new StartMinigameAction(id, resource!.Id, resource.Canvas.Minigame!.DefaultParameters),
+            14 => new BranchMinigameAction(id, "$status", NovellMaker.Core.Scripting.LuaValue.FromString("completed"), scene.Id, target),
             _ => new ScriptAction(id, "-- Поведение выбранной фразы\n-- game.move(refs.actor, 0.75, 1, 1, 0, 2)", "phrase.lua")
         };
         var anchor = (Anchor)anchors.SelectedItem!; var phase = ((Phase)phases.SelectedItem!).Value;
@@ -418,10 +431,12 @@ public sealed class ScenarioActionsView : UserControl
         ChoiceAction c => string.Join(" / ", c.Options.Select(o => o.Text)), SetAction s => s.Variable + " = " + s.Value,
         ScriptAction s => s.Source.Split('\n').FirstOrDefault(l => !l.TrimStart().StartsWith("--") && l.Trim().Length > 0) ?? "Свой код Lua",
         RunScriptAction s => Friendly(s.ScriptId),
+        StartMinigameAction s => Friendly(s.SceneId),
+        BranchMinigameAction s => $"Если результат {s.Field} = {s.EqualsValue.ToJson()} → {Friendly(s.ActionId)}",
         HotspotAction h => h.Label, _ => "Команда сценария"
     };
     private static string PhaseLabel(ScriptPhase phase) => phase switch { ScriptPhase.BeforeLine => "До фразы", ScriptPhase.DuringLine => "Во время фразы", ScriptPhase.AfterLine => "После продолжения", ScriptPhase.SceneEnd => "Конец сцены", _ => "Начало сцены" };
-    private static string ActionLabel(ScenarioAction action) => action switch { TextAction => "Показать текст", ShowAction => "Показать", HideAction => "Скрыть", StateAction => "Сменить состояние", PlaceAction => "Разместить", MoveAction => "Двигать", WaitAction => "Ожидать", ChoiceAction => "Выбор", JumpAction => "Переход", SetAction => "Переменная", BranchAction => "Условие", ScriptAction => "Lua", RunScriptAction => "Вызвать Lua-скрипт", HotspotAction => "Предмет", _ => "Действие" };
+    private static string ActionLabel(ScenarioAction action) => action switch { StartMinigameAction => "Мини-игра", BranchMinigameAction => "Результат мини-игры", TextAction => "Показать текст", ShowAction => "Показать", HideAction => "Скрыть", StateAction => "Сменить состояние", PlaceAction => "Разместить", MoveAction => "Двигать", WaitAction => "Ожидать", ChoiceAction => "Выбор", JumpAction => "Переход", SetAction => "Переменная", BranchAction => "Условие", ScriptAction => "Lua", RunScriptAction => "Вызвать Lua-скрипт", HotspotAction => "Предмет", _ => "Действие" };
     private static string Label(string name) => name switch
     {
         "LineId" => "Фраза", "ObjectId" => "Персонаж / предмет", "StateId" => "Состояние", "SceneId" or "TargetSceneId" => "Сцена", "ActionId" or "TargetActionId" => "Целевая фраза",

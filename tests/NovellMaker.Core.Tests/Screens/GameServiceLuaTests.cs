@@ -276,7 +276,7 @@ public sealed class GameServiceLuaTests
             File.WriteAllText(path, doc.ToJsonString()); await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
             binding["action"] = (int)ScreenButtonAction.Load; doc["inputBindings"] = new JsonArray();
             var legacy = doc.ToJsonString(); File.WriteAllText(path, legacy);
-            var migrated = await store.LoadAsync(path); Assert.AreEqual(18, migrated.FormatVersion); Assert.AreEqual(legacy, File.ReadAllText(path));
+            var migrated = await store.LoadAsync(path); Assert.AreEqual(NovelProject.CurrentFormatVersion, migrated.FormatVersion); Assert.AreEqual(legacy, File.ReadAllText(path));
         }
         finally { File.Delete(path); }
     }

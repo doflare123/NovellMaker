@@ -29,6 +29,10 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         internal LuaValue State = LuaValue.Null;
         internal LuaRandomState RandomState = LuaRandomState.Initial;
         internal LuaModuleLibrary? Modules;
+        internal NovellMaker.Core.Minigames.MinigameDefinition? Minigame;
+        internal MinigameInvocation? Invocation;
+        internal NovellMaker.Core.Minigames.MinigameResult? MinigameResult;
+        internal long? SuspendedAt;
         internal ImmutableHashSet<Guid> DiagnosticScripts = [];
     }
     private sealed record Work(Entry Entry, string Kind, ScreenLuaEvent? Event,
@@ -55,6 +59,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     private readonly Dictionary<Guid, ServiceReply> serviceReplies = [];
     private Conversation conversation;
     private Pending? pending;
+    private readonly Dictionary<Guid, Pending> held = [];
     private bool disposed;
     private bool faulted;
 
@@ -71,13 +76,32 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     public int AppliedBatches { get; private set; }
     public int QueuedEvents => queue.Count;
     public int ReservedServiceReplies => serviceReplies.Count;
-    public bool HasPending => pending is not null || queue.Count != 0 || closes.Count != 0;
+    public bool HasPending => pending is not null || queue.Count != 0 || closes.Count != 0 || held.Count != 0;
+    public bool HasRunnablePending => pending is { Work.Entry.SuspendedAt: null } || closes.Count != 0 ||
+        queue.Any(w => w.Entry.SuspendedAt is null) || held.Values.Any(p => p.Work.Entry.SuspendedAt is null || p.Work.Entry.Closing);
     public Task? PendingTask => pending?.Task;
     public ImmutableArray<string> Diagnostics => [.. diagnostics];
     public ImmutableArray<ScreenLuaIssue> Issues => [.. issues];
     public LuaDiagnosticJournal Journal { get; } = new();
     public bool IsAvailable(ScreenInstance instance) => !disposed && entries.TryGetValue(instance.Id, out var entry) &&
         ReferenceEquals(entry.Instance, instance) && entry.Error is null && !entry.Closing && Current(instance);
+
+    public bool IsSettled(ScreenInstance instance) => IsAvailable(instance) && entries[instance.Id].Loaded &&
+        pending?.Work.Entry.Instance.Id != instance.Id && !held.ContainsKey(instance.Id) && !queue.Any(w => w.Entry.Instance.Id == instance.Id);
+    public NovellMaker.Core.Minigames.MinigameResult? GetMinigameResult(ScreenInstance instance) =>
+        IsAvailable(instance) ? entries[instance.Id].MinigameResult : null;
+    public void Suspend(ScreenInstance instance, bool suspended)
+    {
+        if (!IsAvailable(instance)) return;
+        var entry = entries[instance.Id];
+        if (suspended) entry.SuspendedAt ??= clock.GetTimestamp();
+        else if (entry.SuspendedAt is { } start)
+        {
+            var duration = clock.GetTimestamp() - start; entry.SuspendedAt = null;
+            for (var item = queue.First; item is not null; item = item.Next)
+                if (ReferenceEquals(item.Value.Entry, entry)) item.Value = item.Value with { Submitted = item.Value.Submitted + duration };
+        }
+    }
 
     /// <summary>Last host-committed explicit data, including after a handler failure. Never the pending VM state.</summary>
     public LuaValue GetState(ScreenInstance instance)
@@ -115,7 +139,8 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     }
 
     public void Attach(ScreenInstance instance, string source, ImmutableDictionary<string, Guid>? references = null,
-        ImmutableDictionary<string, string>? snapshot = null, LuaValue? state = null, LuaModuleLibrary? modules = null, LuaRandomState? randomState = null)
+        ImmutableDictionary<string, string>? snapshot = null, LuaValue? state = null, LuaModuleLibrary? modules = null, LuaRandomState? randomState = null,
+        NovellMaker.Core.Minigames.MinigameDefinition? minigame = null, MinigameInvocation? invocation = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         LuaLimits.CheckSource(source);
@@ -125,8 +150,12 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             !LuaActionScript.ValidReferences(references) || references.Any(r => !instance.Definition.Nodes.Any(n => n.Id == r.Value)) ||
             !LuaLimits.ValidVariables(snapshot)) throw new ArgumentException("Неверный владелец, ссылки или снимок экранного Lua.");
         if (faulted) Reset();
+        if ((minigame is null) != (invocation is null)) throw new ArgumentException("Нет контекста мини-игры.");
+        if (minigame is not null)
+        { minigame.Validate(); minigame.ParametersSchema.Validate(invocation!.Parameters); minigame.StateSchema.Validate(state!); }
         if (queue.Count + serviceReplies.Count >= MaximumQueuedEvents) throw new InvalidOperationException("Очередь событий экрана заполнена.");
-        var entry = new Entry(instance, source, references, snapshot) { State = state ?? LuaValue.Null, Modules = modules, RandomState = randomState ?? LuaRandomState.Initial };
+        var entry = new Entry(instance, source, references, snapshot) { State = state ?? LuaValue.Null, Modules = modules, RandomState = randomState ?? LuaRandomState.Initial,
+            Minigame = minigame, Invocation = invocation };
         entries.Add(instance.Id, entry);
         queue.AddLast(new Work(entry, "load", null, snapshot, clock.GetTimestamp()));
     }
@@ -175,8 +204,13 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     {
         if (disposed) return false;
         Reconcile();
+        // Hold completed data, not the conversation. A menu above a paused mini-game can keep using Lua.
+        if (pending is { Task.IsCompleted: true, Work.Entry.SuspendedAt: not null } suspended && !suspended.Work.Entry.Closing)
+        { held.Add(suspended.Work.Entry.Instance.Id, suspended); pending = null; }
+        if (pending is null && held.Values.FirstOrDefault(p => p.Work.Entry.SuspendedAt is null || p.Work.Entry.Closing) is { } resumed)
+        { held.Remove(resumed.Work.Entry.Instance.Id); pending = resumed; }
         var changed = false;
-        if (pending is { } ready && ready.Task.IsCompleted)
+        if (pending is { } ready && ready.Task.IsCompleted && (ready.Work.Entry.SuspendedAt is null || ready.Work.Entry.Closing))
         {
             pending = null;
             try
@@ -219,6 +253,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                             stack.Commit(entry.Instance, ready.Stamp.Version, result.Batch!.Definition);
                             if (result.Batch.State is { } state) entry.State = state;
                             if (result.Batch.RandomState is { } random) entry.RandomState = random;
+                            if (result.Batch.MinigameResult is { } completion) entry.MinigameResult = completion;
                             AppliedBatches++;
                             foreach (var trigger in result.Batch.Triggers)
                                 queue.AddLast(new Work(entry, "event", new("trigger") { Trigger = trigger }, ready.Work.Snapshot,
@@ -257,7 +292,12 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         Work? work = null;
         if (closes.TryDequeue(out var closing))
             work = new(closing, "close", null, ImmutableDictionary<string, string>.Empty, clock.GetTimestamp());
-        else if (queue.First is { } first) { work = first.Value; queue.RemoveFirst(); }
+        else
+        {
+            var first = queue.First;
+            while (first is not null && first.Value.Entry.SuspendedAt is not null) first = first.Next;
+            if (first is not null) { work = first.Value; queue.Remove(first); }
+        }
         if (work is null) return;
         var entry = work.Entry;
         if (clock.GetElapsedTime(work.Submitted) >= TimeSpan.FromSeconds(5))
@@ -334,7 +374,8 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         var request = new ScreenLuaRequest(ScreenLuaProtocol.Version, work.Kind, stamp, definition.Id,
             work.Kind == "load" ? definition.Nodes : [], work.Kind == "load" ? entry.Source : null,
             work.Kind == "load" ? entry.References : ImmutableDictionary<string, Guid>.Empty, work.Event, work.Snapshot)
-        { State = work.Kind == "close" ? null : state, Modules = modules, RandomState = work.Kind == "close" ? null : random };
+        { State = work.Kind == "close" ? null : state, Modules = modules, RandomState = work.Kind == "close" ? null : random,
+            Minigame = work.Kind == "load" ? entry.Invocation : null };
         request = await ScreenLuaProtocol.FitServiceResultAsync(request, token).ConfigureAwait(false);
         CheckDeadline();
         exchangeStarted = true;
@@ -347,6 +388,21 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         foreach (var log in result.Logs.Concat(result.Fault is { } fault ? [fault] : []))
             if (log.ScriptId is { } id && !sourceIds.Contains(id)) throw new IOException("Журнал ссылается на чужой Lua-ресурс.");
         var batch = result.Error is null && work.Kind != "close" ? ScreenLuaProtocol.Prepare(definition, result.Changes) : null;
+        if (batch is not null)
+        {
+            if (batch.MinigameResult is { } completion)
+            {
+                if (entry.Minigame is null) throw new InvalidOperationException("Завершение вне мини-игры.");
+                completion.Validate(entry.Minigame);
+            }
+            if (entry.Minigame is { } minigame)
+            {
+                if (batch.State is { } data) minigame.StateSchema.Validate(data);
+                if (work.Kind == "load" && entry.Invocation!.Restoring &&
+                    (batch.State is { } restored && restored.ToJson() != state.ToJson() || batch.RandomState is { } rng && rng != random || batch.MinigameResult is not null || batch.Close || batch.Service is not null || !batch.Triggers.IsEmpty))
+                    throw new InvalidOperationException("Восстановление мини-игры должно только построить представление из снимка.");
+            }
+        }
         CheckDeadline();
         return new(result, batch, sourceIds);
     }
@@ -396,7 +452,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         entry.Closing = true;
         entries.Remove(entry.Instance.Id);
         RemoveQueued(entry);
-        if (pending?.Work.Entry != entry) ScheduleClose(entry);
+        if (pending?.Work.Entry != entry && !held.ContainsKey(entry.Instance.Id)) ScheduleClose(entry);
     }
     private void Reconcile()
     {
@@ -430,6 +486,8 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     {
         retiring.RemoveAll(task => task.IsCompleted);
         conversation.Cancellation.Cancel();
+        foreach (var item in held.Values) { retiring.Add(item.Task); ScreenLuaConnection.Observe(item.Task); }
+        held.Clear();
         if (pending is { } old) { retiring.Add(old.Task); ScreenLuaConnection.Observe(old.Task); pending = null; }
         var previous = conversation;
         var cleanup = Task.Run(async () =>

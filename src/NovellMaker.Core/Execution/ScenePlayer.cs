@@ -21,6 +21,9 @@ public sealed class ScenePlayer : IDisposable, IAsyncDisposable
     public bool IsGamePlayback => mode == PlaybackMode.Game;
     private bool CanNavigate => !IsGamePlayback && !UsesActions && Execution.State.SceneId == scene.Id;
     public SceneFrame Frame { get; private set; } = null!;
+    private GameState? presentedState;
+    /// <summary>Refresh after a host-owned lifecycle completion; executes no commands and advances no time.</summary>
+    public void SynchronizePresentation() { if (!ReferenceEquals(presentedState, Execution.State)) UpdateFrame(); }
 
     public ScenePlayer(NovelProject project, Guid sceneId, string language, Guid? startLineId = null, PlaybackMode mode = PlaybackMode.AuthorPreview, bool startImmediately = true)
         : this(project, sceneId, language, startLineId, mode, startImmediately, LuaActionScript.RequestCommandsAsync) { }
@@ -97,6 +100,7 @@ public sealed class ScenePlayer : IDisposable, IAsyncDisposable
 
     private void UpdateFrame()
     {
+        presentedState = Execution.State;
         var frame = Execution.Frame;
         Frame = frame with { CanPrevious = CanNavigate && frame.LineIndex > 0,
             CanNext = CanNavigate ? frame.LineIndex >= 0 && frame.LineIndex < scene.Lines.Length - 1 : frame.CanNext };

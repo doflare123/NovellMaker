@@ -19,14 +19,16 @@ internal sealed class ScreenLuaVm
     private LuaValue state = LuaValue.Null;
     private int stateBytes;
     private bool handling;
+    private readonly MinigameInvocation? minigame;
     internal LuaLogBuffer Log { get; set; }
     internal ScreenDefinition Definition { get; private set; }
 
-    internal ScreenLuaVm(ScreenDefinition definition, Guid instanceId, string source, ImmutableDictionary<string, Guid> references, LuaModuleBundle? modules = null, LuaLogBuffer? log = null)
+    internal ScreenLuaVm(ScreenDefinition definition, Guid instanceId, string source, ImmutableDictionary<string, Guid> references, LuaModuleBundle? modules = null, LuaLogBuffer? log = null, MinigameInvocation? minigame = null)
     {
         Log = log ?? new();
         Definition = definition;
         this.instanceId = instanceId;
+        this.minigame = minigame;
         library = new(script);
         random = new(library);
         LuaLimits.CheckSource(source);
@@ -66,6 +68,17 @@ internal sealed class ScreenLuaVm
         Bind("close", _ => Add(new("close", null, null, null)));
         Bind("get", a => snapshot.TryGetValue(Str(a, 0), out var value) ? DynValue.NewString(value) : DynValue.Nil);
         var projection = new LuaValueProjection(script);
+        Bind("minigame_parameters", _ => handling && this.minigame is { } invocation ? projection.Write(invocation.Parameters) :
+            throw new ScriptRuntimeException("Нет активного обработчика мини-игры."));
+        Bind("is_restoring", _ => handling && this.minigame is not null ? DynValue.NewBoolean(this.minigame.Restoring) :
+            throw new ScriptRuntimeException("Нет активного обработчика мини-игры."));
+        DynValue Complete(NovellMaker.Core.Minigames.MinigamePhase phase, LuaValue result, string message)
+        {
+            if (!handling || this.minigame is null) throw new ScriptRuntimeException("Нет активного обработчика мини-игры.");
+            return Add(new("minigame_result", null, null, null) { MinigameResult = new(phase, result, message) });
+        }
+        Bind("complete_minigame", a => Complete(NovellMaker.Core.Minigames.MinigamePhase.Completed, projection.Read(a[0]), ""));
+        Bind("cancel_minigame", _ => Complete(NovellMaker.Core.Minigames.MinigamePhase.Cancelled, LuaValue.Null, "Отменено автором."));
         ui.Set("null", projection.Null);
         Bind("list", a => projection.Mark(a[0], true));
         Bind("object", a => projection.Mark(a[0], false));
@@ -256,7 +269,7 @@ internal sealed class ScreenLuaWorkerService
         if (request.Kind == "handshake")
         {
             if (identity is not null || stamp.OwnerId != Guid.Empty || stamp.InstanceId != Guid.Empty || stamp.Version != 0 ||
-                request.ResourceId != Guid.Empty || !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Event is not null || !request.Snapshot.IsEmpty || request.State is not null || request.Modules is not null || request.RandomState is not null)
+                request.ResourceId != Guid.Empty || !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Event is not null || !request.Snapshot.IsEmpty || request.State is not null || request.Modules is not null || request.RandomState is not null || request.Minigame is not null)
                 throw new ArgumentException("Неверное приветствие экранного worker.");
             identity = (stamp.SessionId, stamp.Generation);
             return Reply("ready", []);
@@ -270,7 +283,7 @@ internal sealed class ScreenLuaWorkerService
                 throw new ArgumentException("Недопустимая загрузка или бюджет экранного worker.");
             var definition = new ScreenDefinition(request.ResourceId, request.Nodes);
             if (request.References.Any(r => !definition.Nodes.Any(n => n.Id == r.Value))) throw new ArgumentException("Чужая именованная ссылка экрана.");
-            var vm = new ScreenLuaVm(definition, stamp.InstanceId, request.Source, request.References, request.Modules, log);
+            var vm = new ScreenLuaVm(definition, stamp.InstanceId, request.Source, request.References, request.Modules, log, request.Minigame);
             var changes = vm.Handle(null, request.Snapshot, request.State ?? LuaValue.Null, request.RandomState ?? LuaRandomState.Initial);
             _ = ScreenLuaProtocol.Prepare(definition, changes);
             if (entries.Values.Sum(e => e.Vm.Definition.Nodes.Length) + vm.Definition.Nodes.Length > ScreenStack.MaxSessionNodes)
@@ -280,7 +293,7 @@ internal sealed class ScreenLuaWorkerService
         }
         if (!entries.TryGetValue(stamp.InstanceId, out var entry) || entry.Stamp.OwnerId != stamp.OwnerId ||
             entry.Version != stamp.Version || entry.ResourceId != request.ResourceId ||
-            !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Modules is not null)
+            !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Modules is not null || request.Minigame is not null)
             throw new ArgumentException("Устаревшие данные или чужой владелец экрана.");
         if (request.Kind == "close" && request.Event is null && request.Snapshot.IsEmpty && request.State is null && request.RandomState is null)
         { entries.Remove(stamp.InstanceId); return Reply("closed", []); }

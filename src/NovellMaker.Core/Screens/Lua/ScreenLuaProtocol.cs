@@ -16,6 +16,7 @@ public sealed record ScreenLuaEvent(string Kind, Guid? NodeId = null, double X =
 }
 public sealed record ScreenChange(string Kind, Guid? NodeId, string? Text, bool? Value)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NovellMaker.Core.Minigames.MinigameResult? MinigameResult { get; init; }
     public ScreenNodePatch? Patch { get; init; }
     public Guid? ParentId { get; init; }
     public ImmutableDictionary<Guid, Guid>? Ids { get; init; }
@@ -30,6 +31,7 @@ internal sealed record ScreenLuaRequest(int Protocol, string Kind, ScreenLuaStam
     ImmutableArray<ScreenNode> Nodes, string? Source, ImmutableDictionary<string, Guid> References,
     ScreenLuaEvent? Event, ImmutableDictionary<string, string> Snapshot)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public MinigameInvocation? Minigame { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public LuaValue? State { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -45,15 +47,17 @@ internal sealed record ScreenLuaResponse(int Protocol, string Kind, ScreenLuaSta
 }
 internal sealed record ScreenPreparedBatch(ScreenDefinition Definition, bool Close, GameServiceCommand? Service = null)
 {
+    public NovellMaker.Core.Minigames.MinigameResult? MinigameResult { get; init; }
     public ImmutableArray<AuthorTrigger> Triggers { get; init; } = [];
     public LuaValue? State { get; init; }
     public LuaRandomState? RandomState { get; init; }
 }
 public sealed record ScreenServiceInvocation(ScreenInstance Instance, GameServiceCommand Command);
+public sealed record MinigameInvocation(LuaValue Parameters, bool Restoring);
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 13;
+    internal const int Version = 14;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {
@@ -186,10 +190,16 @@ internal static class ScreenLuaProtocol
         var stateBytes = 0;
         LuaValue? state = null;
         LuaRandomState? random = null;
+        NovellMaker.Core.Minigames.MinigameResult? minigameResult = null;
         foreach (var change in changes)
         {
             if (change is null || close) throw new InvalidOperationException("Некорректный пакет экрана.");
             var extra = change.Patch is not null || change.ParentId is not null || change.Ids is not null;
+            if (change.Kind == "minigame_result" && change.MinigameResult is { } completion && minigameResult is null &&
+                !extra && change.NodeId is null && change.Text is null && change.Value is null && change.State is null && change.RandomState is null && change.Service is null && change.Trigger is null)
+            { minigameResult = completion; continue; }
+            if (change.MinigameResult is not null || minigameResult is not null)
+                throw new InvalidOperationException("Лишние команды после завершения мини-игры.");
             if (change.Kind == "random" && change.RandomState is { } rng && random is null && !extra && change.NodeId is null && change.Text is null &&
                 change.Value is null && change.Service is null && change.Trigger is null && change.State is null)
             { random = rng; continue; }
@@ -240,8 +250,10 @@ internal static class ScreenLuaProtocol
         }
         // Still advance protocol versions for successful no-ops, but preserve view identity.
         if (close && service is not null) throw new InvalidOperationException("Нельзя закрыть экран и запросить сервис одним пакетом.");
+        if (minigameResult is not null && (close || service is not null || triggers.Count != 0))
+            throw new InvalidOperationException("Завершение мини-игры несовместимо с закрытием, сервисом и триггерами.");
         if (triggers.Count != 0 && (close || service is not null)) throw new InvalidOperationException("Триггеры нельзя совмещать с закрытием или сервисом в одном пакете.");
         return new(current.Nodes.SequenceEqual(definition.Nodes) && current.RetiredNodeIds.SetEquals(definition.RetiredNodeIds) ? definition : current, close, service)
-        { Triggers = triggers.ToImmutable(), State = state, RandomState = random };
+        { Triggers = triggers.ToImmutable(), State = state, RandomState = random, MinigameResult = minigameResult };
     }
 }

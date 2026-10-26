@@ -107,6 +107,13 @@ public static class ScenarioProgram
 
     internal static bool IsValidAction(NovelProject project, NovelScene scene, ScenarioAction action)
     {
+        if (action is StartMinigameAction start)
+        {
+            var definition = project.Scenes.FirstOrDefault(s => s.Id == start.SceneId)?.Canvas.Minigame;
+            if (definition is null) return false;
+            try { definition.Validate(); definition.ParametersSchema.Validate(start.Parameters); return true; }
+            catch (ArgumentException) { return false; }
+        }
         return IsValidAction(action, id => project.Characters.Any(c => c.Id == id),
             (id, state) => project.Characters.Any(c => c.Id == id && c.States.Any(s => s.Id == state)),
             id => scene.Lines.Any(l => l.Id == id),
@@ -133,6 +140,7 @@ public static class ScenarioProgram
                 !string.IsNullOrWhiteSpace(o.Text) && o.Text.Length <= LuaLimits.MaximumValueLength && TargetExists(o.TargetSceneId, o.TargetActionId)) && a.Options.Select(o => o.Id).Distinct().Count() == a.Options.Length,
             JumpAction a => TargetExists(a.SceneId, a.ActionId),
             BranchAction a => LuaLimits.ValidVariable(a.Variable, a.EqualsValue) && TargetExists(a.SceneId, a.ActionId),
+            BranchMinigameAction a => a.Field is { Length: > 0 and <= 128 } && a.EqualsValue is not null && TargetExists(a.SceneId, a.ActionId),
             SetAction a => LuaLimits.ValidVariable(a.Variable, a.Value),
             RunScriptAction a => ScriptExists(a.ScriptId),
             ScriptAction a => !string.IsNullOrWhiteSpace(a.Name) && a.Source is not null && a.Source.Length <= LuaActionScript.MaximumSourceLength && a.References is not null &&

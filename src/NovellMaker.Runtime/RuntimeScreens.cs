@@ -8,7 +8,7 @@ using NovellMaker.Core.Scripting;
 namespace NovellMaker.Runtime;
 
 /// <summary>Project-owned scene instances and input. Contains no game menus or predefined shortcuts.</summary>
-internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
+internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
 {
     private readonly Guid ownerId;
     private readonly Action<ScreenButtonBinding>? hostAction;
@@ -34,10 +34,12 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
     public bool HasOverlays => Stack.Instances.Any(i => !ReferenceEquals(i, sceneInstance));
     public bool IsSceneInstance(ScreenInstance instance) => ReferenceEquals(instance, sceneInstance);
     public IEnumerable<string> Diagnostics => errors.Concat(Scripts?.Diagnostics ?? []);
-    public bool HasPending => Scripts?.HasPending ?? false;
+    public bool HasPending => Scripts?.HasRunnablePending ?? false;
     public bool Poll()
     {
+        SyncMinigame();
         var changed = Scripts?.Poll() ?? false;
+        CommitMinigame();
         foreach (var invocation in Scripts?.DrainServices() ?? [])
             if (instanceGenerations.TryGetValue(invocation.Instance.Id, out var captured))
                 hostService?.Invoke(invocation.Instance, invocation.Command, captured);
@@ -51,9 +53,10 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
         return Scripts.Enqueue(origin, new("service_result") { Result = result }, snapshot()) == ScreenEventAdmission.Accepted;
     }
 
-    public void Configure(NovelProject value, Func<ImmutableDictionary<string, string>> capture, Func<long>? captureGeneration = null)
+    public void Configure(NovelProject value, Func<ImmutableDictionary<string, string>> capture, Func<long>? captureGeneration = null,
+        Func<ScenarioPlayer>? execution = null)
     {
-        ScreenAsset.ValidateProject(value); Reset(); project = value; snapshot = capture; generation = captureGeneration ?? (() => 0);
+        ScreenAsset.ValidateProject(value); Reset(); project = value; snapshot = capture; generation = captureGeneration ?? (() => 0); this.execution = execution;
     }
     public void SyncScene(Guid id, bool afterLoad = false)
     {
@@ -81,10 +84,10 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
         catch (Exception error) when (error is ArgumentException or InvalidOperationException)
         { Report(asset.Name + ": " + error.Message); }
     }
-    private void Open(ScreenAsset asset, ScreenInstance? replace = null)
+    private void Open(ScreenAsset asset, ScreenInstance? replace = null, Guid? openingOwner = null)
     {
         var policy = new ScreenPolicy(asset.BlockInputOnOverlay, asset.PauseOnOverlay);
-        var instance = replace is null ? Stack.Open(ownerId, asset.Definition(), policy) : Stack.Replace(replace, asset.Definition(), policy);
+        var instance = replace is null ? Stack.Open(openingOwner ?? ownerId, asset.Definition(), policy) : Stack.Replace(replace, asset.Definition(), policy);
         AttachHandler(asset, instance);
     }
     public bool RouteKey(string key)
@@ -138,7 +141,7 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
                     if (binding.Action == ScreenButtonAction.Toggle && Stack.Instances.LastOrDefault() is { } top &&
                         !IsSceneInstance(top) && top.Definition.Id == target.Id) Stack.Close(top);
                     else if (binding.Action == ScreenButtonAction.Replace && ReferenceEquals(instance, sceneInstance)) NavigationRequested = target.Id;
-                    else Open(target, binding.Action == ScreenButtonAction.Replace ? instance : null);
+                    else Open(target, binding.Action == ScreenButtonAction.Replace ? instance : null, instance?.OwnerId);
                     break;
                 case ScreenButtonAction.Lua:
                     if (instance is not null && Scripts?.Enqueue(instance, new("click", binding.NodeId), snapshot())
@@ -152,7 +155,7 @@ internal sealed class RuntimeScreens : IDisposable, IAsyncDisposable
         { Report("Команда проекта не выполнена: " + error.Message); }
     }
     public void Reset()
-    { Stack.Clear(); Scripts?.Reset(); instanceGenerations.Clear(); errors.Clear(); sceneId = null; sceneInstance = null; deferredHandler = false; NavigationRequested = null; }
-    public void Dispose() { Stack.Clear(); Scripts?.Dispose(); }
+    { DisposeMinigame(); Stack.Clear(); Scripts?.Reset(); instanceGenerations.Clear(); errors.Clear(); sceneId = null; sceneInstance = null; deferredHandler = false; NavigationRequested = null; }
+    public void Dispose() { DisposeMinigame(); Stack.Clear(); Scripts?.Dispose(); }
     public async ValueTask DisposeAsync() { Dispose(); if (Scripts is { } scripts) await scripts.DisposeAsync(); }
 }

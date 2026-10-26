@@ -141,6 +141,14 @@ public sealed partial class EditorSession
         EditProject(Examples.ExampleLuaDiagnosticsModule.AddTo(project));
     }
 
+    public void AddMinigameExample()
+    {
+        if (!CanEdit || project is null) return;
+        var added = Examples.ExampleMinigameModule.AddTo(project);
+        EditProject(added);
+        OpenScene(added.Scenes[^3].Id);
+    }
+
     public void DuplicateScreen()
     {
         if (!CanEdit || project is null || SelectedScreen is not { } source) return;

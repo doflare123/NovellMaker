@@ -50,7 +50,8 @@ internal static partial class ProjectJsonCodec
             15 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken, Version15SerializerOptions).ConfigureAwait(false), false),
             16 => MapVersion14(await DeserializeRequiredAsync<Version14ProjectDocument>(stream, cancellationToken).ConfigureAwait(false), false),
             17 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
-            18 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false), allowSlots: true),
+            18 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken, Version18SerializerOptions).ConfigureAwait(false), allowSlots: true),
+            19 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false), allowSlots: true),
             10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
             8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
             _ => throw new ProjectFormatException(
