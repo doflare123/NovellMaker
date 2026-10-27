@@ -146,7 +146,7 @@ internal sealed partial class RuntimeGame : Game
         if (settingsServices.Poll()) RefreshTextTextures();
         PollSlots();
         screens.SyncScene(player.Execution.State.SceneId);
-        screens.TickMinigame(smokePlan is null ? gameTime.ElapsedGameTime : TimeSpan.Zero, (arguments.SmokeOutputPath is not null || IsActive) && imageCache?.IsPending != true);
+        screens.Tick(smokePlan is null ? gameTime.ElapsedGameTime : TimeSpan.Zero, (arguments.SmokeOutputPath is not null || IsActive) && imageCache?.IsPending != true);
         screens.Poll();
         player.SynchronizePresentation();
         if (screens.Scripts is { } scripts) luaJournal.Publish(scripts.Journal);
@@ -383,8 +383,8 @@ internal sealed partial class RuntimeGame : Game
         switch (step.Kind)
         {
             case "tick":
-                if (player.Execution.State.Minigame is not null) screens.TickMinigame(TimeSpan.FromSeconds(step.Seconds), true);
-                else player.Tick(TimeSpan.FromSeconds(step.Seconds));
+                screens.Tick(TimeSpan.FromSeconds(step.Seconds), true);
+                if (player.Execution.State.Minigame is null) player.Tick(TimeSpan.FromSeconds(step.Seconds));
                 break;
             case "next": success = ApplyAction(RuntimeAction.Next); break;
             case "click_now":
@@ -433,6 +433,8 @@ internal sealed partial class RuntimeGame : Game
             ScreenCount = screens.Stack.Instances.Length,
             ScreenInstanceIds = screens.Stack.Instances.Select(i => i.Id).ToArray(),
             ScreenTexts = screens.Stack.Instances.SelectMany(i => i.Definition.Nodes.Select(n => n.Text)).ToArray(),
+            ScreenNodes = screens.Stack.Instances.SelectMany(i => i.Definition.Nodes).ToArray(),
+            ActiveAnimations = screens.Scripts?.ActiveAnimations ?? 0,
             PresentedScreenTexts = screens.Stack.Instances.SelectMany(i => PresentComponents(i, i.Definition).Nodes.Select(n => n.Text)).ToArray(),
             PausedAudioSources = audioBackend.PausedSources,
             AudioSources = audio?.ActiveSources ?? 0,
@@ -776,6 +778,8 @@ internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState S
     public bool Fullscreen { get; init; }
     public int ScreenCount { get; init; }
     public IReadOnlyList<string> ScreenTexts { get; init; } = [];
+    public ScreenNode[] ScreenNodes { get; init; } = [];
+    public int ActiveAnimations { get; init; }
     public int PausedAudioSources { get; init; }
     public int AudioSources { get; init; }
     public int AudioOpenedSources { get; init; }

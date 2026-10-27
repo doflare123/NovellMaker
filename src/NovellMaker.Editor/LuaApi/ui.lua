@@ -1,5 +1,5 @@
 ---@meta NovellMaker.ui
--- NovellMaker screen API, wire 14 / Lua 5.2. Tooling only; never execute this file.
+-- NovellMaker screen API, wire 15 / Lua 5.2. Tooling only; never execute this file.
 -- Calls enqueue one atomic batch. A handler must return; waits do not suspend Lua.
 
 ---@alias NMHandle string Opaque resource/instance/node identity, valid only in its live instance.
@@ -44,7 +44,10 @@
 ---@field saved_at? string UTC ISO 8601.
 ---@field game_time? number
 ---@class NMEvent
----@field kind 'click'|'move'|'hover'|'update'|'trigger'|'service_result'
+---@field kind 'click'|'move'|'hover'|'update'|'trigger'|'service_result'|'animation_result'
+---@field animation_id? string ID returned by ui.animate.
+---@field status? 'completed'|'cancelled'|'failed'
+---@field reason? string finished/requested/replaced/property_set/removed/reparented/invalid_geometry.
 ---@field node? NMHandle
 ---@field x number Logical viewport coordinates.
 ---@field y number
@@ -85,6 +88,38 @@ function ui.set_enabled(node, enabled) end
 ---@param node NMHandle
 ---@param patch NMGeometry
 function ui.set_geometry(node, patch) end
+---@alias NMAnimation string Opaque description, valid only in the current handler.
+---@alias NMEasing 'linear'|'in_quad'|'out_quad'|'in_out_quad'|'in_cubic'|'out_cubic'|'in_out_cubic'
+---@class NMTweenProperties
+---@field x? number
+---@field y? number
+---@field width? number
+---@field height? number
+---@field anchor_x? number
+---@field anchor_y? number
+---@field pivot_x? number
+---@field pivot_y? number
+---@field scale_x? number
+---@field scale_y? number
+---@field rotation? number
+---@field opacity? number
+---@param node NMHandle Own live component.
+---@param properties NMTweenProperties Numeric target values.
+---@param seconds number Positive, at most 3600.
+---@param easing? NMEasing Defaults to linear.
+---@return NMAnimation
+function ui.tween(node, properties, seconds, easing) end
+---@param children NMAnimation[] Nonempty dense list.
+---@return NMAnimation
+function ui.sequence(children) end
+---@param children NMAnimation[] Overlapping writes to a property are rejected.
+---@return NMAnimation
+function ui.parallel(children) end
+---@param description NMAnimation
+---@return string animation_id Completion arrives as animation_result.
+function ui.animate(description) end
+---@param animation_id string Own running group; absent/already finished is a no-op.
+function ui.cancel_animation(animation_id) end
 ---@param node NMHandle
 ---@param parent NMHandle Own live node; cycles/depth rejected.
 function ui.set_parent(node, parent) end

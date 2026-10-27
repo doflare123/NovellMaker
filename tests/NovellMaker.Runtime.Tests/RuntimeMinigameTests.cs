@@ -11,6 +11,66 @@ namespace NovellMaker.Runtime.Tests;
 [TestClass]
 public sealed class RuntimeMinigameTests
 {
+    [TestMethod]
+    [DataRow(.2, 5d)] [DataRow(.5, 5d)] [DataRow(.05, 20d)] [DataRow(1d, 20d)]
+    public async Task FrameAdvancesAnimationsBeforeFrequentMinigameUpdatesAndUnblocksSave(double frameSeconds, double updatesPerSecond)
+    {
+        var project = Project("""
+            return {on_load=function() ui.animate(ui.tween(refs.label,{x=100},1)) end,
+              on_event=function(e)
+                local s=ui.get_state()
+                if e.kind=='update' then s.updates=(s.updates or 0)+1
+                elseif e.kind=='animation_result' then
+                  s.completions=(s.completions or 0)+1;s.status=e.status
+                end
+                ui.set_state(s)
+              end}
+            """);
+        var game = project.Scenes[1];
+        project = project with { Scenes = project.Scenes.SetItem(1, game with { Canvas = game.Canvas with
+            { Minigame = game.Canvas.Minigame! with { UpdatesPerSecond = updatesPerSecond } } }) };
+        using var player = new ScenarioPlayer(project, project.Scenes[0].Id, "ru"); await using var host = Host(project, () => player); await Drain(host);
+        var instance = host.Stack.Instances.Single(); Assert.AreEqual(40, instance.Definition.Nodes[1].Bounds.X);
+        Assert.Throws<InvalidOperationException>(() => GameSave.Capture(player));
+        for (var i = 0; i < Math.Ceiling(2 / frameSeconds); i++)
+        { host.Tick(TimeSpan.FromSeconds(frameSeconds), true); await Drain(host); }
+        Assert.AreEqual(100, instance.Definition.Nodes[1].Bounds.X);
+        Assert.IsFalse(host.Scripts!.HasAnimations(instance));
+        var state = host.Scripts.GetState(instance).Properties!;
+        Assert.AreEqual(1, state["completions"].Number); Assert.AreEqual("completed", state["status"].String);
+        Assert.IsTrue(state["updates"].Number > 0); Assert.IsNotNull(GameSave.Capture(player)); Assert.IsEmpty(host.Diagnostics);
+    }
+
+    [TestMethod]
+    public async Task FrameSynchronizesFocusAndMenuPauseBeforeAdvancingAnimations()
+    {
+        var project = Project("return {on_load=function() ui.animate(ui.tween(refs.label,{x=100},1)) end,on_event=function() end}");
+        using var player = new ScenarioPlayer(project, project.Scenes[0].Id, "ru"); await using var host = Host(project, () => player); await Drain(host);
+        var instance = host.Stack.Instances.Single();
+        host.Tick(TimeSpan.FromSeconds(.2), false); await Drain(host); Assert.AreEqual(40, instance.Definition.Nodes[1].Bounds.X);
+        host.Tick(TimeSpan.FromSeconds(.2), true); await Drain(host); Assert.AreEqual(52, instance.Definition.Nodes[1].Bounds.X, 1e-8);
+        var menu = host.Stack.Open(Guid.NewGuid(), ScreenFixture.Create("Меню").Definition());
+        host.Tick(TimeSpan.FromSeconds(2), true); await Drain(host); Assert.AreEqual(52, instance.Definition.Nodes[1].Bounds.X, 1e-8);
+        host.Stack.Close(menu); host.Tick(TimeSpan.FromSeconds(.2), true); await Drain(host); Assert.AreEqual(64, instance.Definition.Nodes[1].Bounds.X, 1e-8);
+        host.Tick(TimeSpan.FromSeconds(1), true); await Drain(host); Assert.IsNotNull(GameSave.Capture(player));
+    }
+    [TestMethod]
+    public async Task AnimationsBlockSavePauseUnderMenusAndRestoreWithoutReplay()
+    {
+        var project = Project("return {on_load=function() if not ui.is_restoring() then ui.animate(ui.tween(refs.label,{x=100},1)) end end,on_event=function() end}");
+        using var player = new ScenarioPlayer(project, project.Scenes[0].Id, "ru"); await using var host = Host(project, () => player); await Drain(host);
+        Assert.Throws<InvalidOperationException>(() => GameSave.Capture(player));
+        var instance = host.Stack.Instances.Single();
+        host.TickAnimations(TimeSpan.FromSeconds(.5), true); Assert.AreEqual(70, instance.Definition.Nodes[1].Bounds.X);
+        host.TickAnimations(TimeSpan.FromSeconds(10), false); Assert.AreEqual(70, instance.Definition.Nodes[1].Bounds.X);
+        var menu = host.Stack.Open(Guid.NewGuid(), ScreenFixture.Create("Меню").Definition());
+        host.TickAnimations(TimeSpan.FromSeconds(10), true); Assert.AreEqual(70, instance.Definition.Nodes[1].Bounds.X);
+        host.Stack.Close(menu); host.TickAnimations(TimeSpan.FromSeconds(.5), true);
+        Assert.Throws<InvalidOperationException>(() => GameSave.Capture(player)); await Drain(host);
+        Assert.IsFalse(host.Scripts!.HasAnimations(instance)); var saved = GameSave.Serialize(player);
+        GameSave.Load(player, saved); host.Poll(); await Drain(host);
+        Assert.AreEqual(0, host.Scripts.ActiveAnimations); Assert.IsEmpty(host.Diagnostics);
+    }
     private static NovelProject Project(string? code=null)
     {
         var game=ScreenFixture.Create("Пазл").ToScene();

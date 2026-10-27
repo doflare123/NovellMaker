@@ -149,6 +149,12 @@ public sealed partial class EditorSession
         OpenScene(added.Scenes[^3].Id);
     }
 
+    public void AddAnimationsExample()
+    {
+        if (!CanEdit || project is null) return;
+        EditProject(Examples.ExampleAnimationsModule.AddTo(project));
+    }
+
     public void DuplicateScreen()
     {
         if (!CanEdit || project is null || SelectedScreen is not { } source) return;

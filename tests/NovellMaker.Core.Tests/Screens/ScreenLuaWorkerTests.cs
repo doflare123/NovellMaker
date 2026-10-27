@@ -170,7 +170,7 @@ public sealed class ScreenLuaWorkerTests
         {
             "owner" => request with { Stamp = request.Stamp with { OwnerId = Guid.NewGuid() } },
             "version" => request with { Stamp = request.Stamp with { Version = 0 } },
-            "resource" => request with { ResourceId = Guid.NewGuid() }, "nodes" => request with { Nodes = load.Nodes },
+            "resource" => request with { ResourceId = Guid.NewGuid() }, "nodes" => request with { Nodes = load.Nodes.SetItem(0, load.Nodes[0] with { Name = "forged" }) },
             "source" => request with { Source = Empty }, "refs" => request with { References = load.References },
             "kind" => request with { Kind = "run" }, "event" => request with { Event = null },
             _ => request with { Event = new("click", Guid.NewGuid()) }

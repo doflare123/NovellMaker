@@ -5,17 +5,21 @@ using System.Text.Json.Serialization;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Triggers;
 using NovellMaker.Core.Scripting;
+using NovellMaker.Core.Screens.Animations;
 
 namespace NovellMaker.Core.Screens.Lua;
 
 public sealed record ScreenLuaStamp(Guid RequestId, Guid SessionId, long Generation, Guid OwnerId, Guid InstanceId, long Version);
 public sealed record ScreenLuaEvent(string Kind, Guid? NodeId = null, double X = 0, double Y = 0, double Seconds = 0)
 {
+    public ScreenAnimationResult? Animation { get; init; }
     public GameServiceResult? Result { get; init; }
     public AuthorTrigger? Trigger { get; init; }
 }
 public sealed record ScreenChange(string Kind, Guid? NodeId, string? Text, bool? Value)
 {
+    public ScreenAnimation? Animation { get; init; }
+    public Guid? AnimationId { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NovellMaker.Core.Minigames.MinigameResult? MinigameResult { get; init; }
     public ScreenNodePatch? Patch { get; init; }
     public Guid? ParentId { get; init; }
@@ -47,6 +51,7 @@ internal sealed record ScreenLuaResponse(int Protocol, string Kind, ScreenLuaSta
 }
 internal sealed record ScreenPreparedBatch(ScreenDefinition Definition, bool Close, GameServiceCommand? Service = null)
 {
+    public ImmutableArray<ScreenChange> AnimationChanges { get; init; } = [];
     public NovellMaker.Core.Minigames.MinigameResult? MinigameResult { get; init; }
     public ImmutableArray<AuthorTrigger> Triggers { get; init; } = [];
     public LuaValue? State { get; init; }
@@ -57,7 +62,7 @@ public sealed record MinigameInvocation(LuaValue Parameters, bool Restoring);
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 14;
+    internal const int Version = 15;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {
@@ -139,6 +144,13 @@ internal static class ScreenLuaProtocol
 
     internal static void ValidateEvent(ScreenDefinition definition, ScreenLuaEvent value, bool worker = false)
     {
+        if (value.Kind == "animation_result")
+        {
+            if (value.Animation is null || value.NodeId is not null || value.X != 0 || value.Y != 0 || value.Seconds != 0 || value.Result is not null || value.Trigger is not null)
+                throw new ArgumentException("Некорректное событие анимации.");
+            value.Animation.Validate(); return;
+        }
+        if (value.Animation is not null) throw new ArgumentException("Лишние данные анимации.");
         if (value.Kind == "trigger")
         {
             if (value.Trigger is null || value.NodeId is not null || value.X != 0 || value.Y != 0 || value.Seconds != 0 || value.Result is not null)
@@ -194,6 +206,19 @@ internal static class ScreenLuaProtocol
         foreach (var change in changes)
         {
             if (change is null || close) throw new InvalidOperationException("Некорректный пакет экрана.");
+            if (change.Kind is "animate" or "cancel_animation")
+            {
+                if (minigameResult is not null || change.NodeId is not null || change.Text is not null || change.Value is not null ||
+                    change.Patch is not null || change.ParentId is not null || change.Ids is not null || change.Service is not null ||
+                    change.Trigger is not null || change.State is not null || change.RandomState is not null || change.MinigameResult is not null)
+                    throw new InvalidOperationException("Лишние данные команды анимации.");
+                if (change.Kind == "animate" && change.Animation is { } animation && change.AnimationId is null)
+                    animation.Validate(current);
+                else if (change.Kind != "cancel_animation" || change.Animation is not null || change.AnimationId is not { } animationId || animationId == Guid.Empty)
+                    throw new InvalidOperationException("Некорректная команда анимации.");
+                continue;
+            }
+            if (change.Animation is not null || change.AnimationId is not null) throw new InvalidOperationException("Лишние данные анимации.");
             var extra = change.Patch is not null || change.ParentId is not null || change.Ids is not null;
             if (change.Kind == "minigame_result" && change.MinigameResult is { } completion && minigameResult is null &&
                 !extra && change.NodeId is null && change.Text is null && change.Value is null && change.State is null && change.RandomState is null && change.Service is null && change.Trigger is null)
@@ -254,6 +279,6 @@ internal static class ScreenLuaProtocol
             throw new InvalidOperationException("Завершение мини-игры несовместимо с закрытием, сервисом и триггерами.");
         if (triggers.Count != 0 && (close || service is not null)) throw new InvalidOperationException("Триггеры нельзя совмещать с закрытием или сервисом в одном пакете.");
         return new(current.Nodes.SequenceEqual(definition.Nodes) && current.RetiredNodeIds.SetEquals(definition.RetiredNodeIds) ? definition : current, close, service)
-        { Triggers = triggers.ToImmutable(), State = state, RandomState = random, MinigameResult = minigameResult };
+        { Triggers = triggers.ToImmutable(), State = state, RandomState = random, MinigameResult = minigameResult, AnimationChanges = changes };
     }
 }

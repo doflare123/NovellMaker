@@ -16,6 +16,15 @@ internal sealed partial class RuntimeScreens
     private double minigameElapsed;
     private int observedBatches;
 
+    /// <summary>Advance this frame before admitting its Lua update; an idle handler cannot starve a tween.</summary>
+    public void Tick(TimeSpan elapsed, bool hostActive)
+    {
+        minigameHostActive = hostActive;
+        SyncMinigame();
+        TickAnimations(elapsed, hostActive);
+        TickMinigame(elapsed, hostActive);
+    }
+
     /// <summary>One coalesced elapsed update, at the resource rate. Busy time accumulates up to one second.</summary>
     public void TickMinigame(TimeSpan elapsed, bool hostActive)
     {
@@ -53,7 +62,9 @@ internal sealed partial class RuntimeScreens
                 Scripts.Attach(instance, script.Source, asset.References, snapshot(), saved.State,
                     new LuaModuleLibrary(script.Id, project.Scripts), saved.RandomState, asset.Minigame, new(saved.Parameters, player.MinigameRestored));
                 observedBatches = Scripts.AppliedBatches;
-                player.MinigameSaveBarrier = () => minigameInstance is null || Scripts?.IsSettled(minigameInstance) != true || ActiveMinigame?.Phase == MinigamePhase.Starting
+                player.MinigameSaveBarrier = () => minigameInstance is not null && Scripts?.HasAnimations(minigameInstance) == true
+                    ? "Дождитесь завершения анимации мини-игры перед сохранением."
+                    : minigameInstance is null || Scripts?.IsSettled(minigameInstance) != true || ActiveMinigame?.Phase == MinigamePhase.Starting
                     ? "Обработчик мини-игры ещё выполняется. Повторите сохранение после завершения операции." : null;
             }
             catch (Exception error) when (error is ArgumentException or InvalidOperationException)

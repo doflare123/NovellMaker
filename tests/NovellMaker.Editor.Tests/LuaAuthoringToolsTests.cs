@@ -7,6 +7,19 @@ namespace NovellMaker.Editor.Tests;
 public sealed partial class ExternalScriptTests
 {
     [TestMethod]
+    public async Task AnimationExampleHistorySaveAsAndReferencesRoundTrip()
+    {
+        using var root = new TestRoot(); var dialogs = new Dialogs(root.Path); using var session = await Session(dialogs, editor: new CodeEditor());
+        var before = session.Project!; session.AddAnimationsExample(); var added = session.Project!;
+        session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo(); Assert.IsTrue(added.ContentEquals(session.Project));
+        await session.SaveAsync(); dialogs.SavePath = Path.Combine(root.Path, "copy", "animations.novell"); await session.SaveAsync(true);
+        var copy = await new JsonProjectStore().LoadAsync(dialogs.SavePath); Assert.IsTrue(added.ContentEquals(copy));
+        var script = copy.Scripts.Last(); Assert.AreEqual(script.Source, await File.ReadAllTextAsync(ScriptFiles.Resolve(Path.GetDirectoryName(dialogs.SavePath)!, script.Id)));
+        Assert.AreEqual(copy.Scenes.Last().Id, copy.InputBindings.Single(b => b.Key == "F11").TargetSceneId);
+        Assert.IsTrue(copy.Scenes.Last().Canvas.References.Values.All(id => copy.Scenes.Last().Canvas.Nodes.Any(n => n.Id == id)));
+        Assert.IsEmpty(dialogs.Errors);
+    }
+    [TestMethod]
     public async Task AnnotationToolsPreserveSourceProjectAndUserConfigurationAndOpenJournal()
     {
         using var root = new TestRoot(); var dialogs = new Dialogs(root.Path); var editor = new CodeEditor();

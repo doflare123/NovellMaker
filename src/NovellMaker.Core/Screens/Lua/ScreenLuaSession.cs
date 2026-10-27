@@ -3,6 +3,7 @@ using System.Text.Json;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Triggers;
 using NovellMaker.Core.Scripting;
+using NovellMaker.Core.Screens.Animations;
 
 namespace NovellMaker.Core.Screens.Lua;
 
@@ -34,6 +35,8 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         internal NovellMaker.Core.Minigames.MinigameResult? MinigameResult;
         internal long? SuspendedAt;
         internal ImmutableHashSet<Guid> DiagnosticScripts = [];
+        internal ScreenAnimator Animator = new();
+        internal bool AnimationDirty;
     }
     private sealed record Work(Entry Entry, string Kind, ScreenLuaEvent? Event,
         ImmutableDictionary<string, string> Snapshot, long Submitted, int ChainDepth = 0);
@@ -76,6 +79,36 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     public int AppliedBatches { get; private set; }
     public int QueuedEvents => queue.Count;
     public int ReservedServiceReplies => serviceReplies.Count;
+    private int Occupancy => queue.Count + serviceReplies.Count + entries.Values.Sum(e => e.Animator.Reserved);
+    public bool HasAnimations(ScreenInstance instance) => IsAvailable(instance) &&
+        (entries[instance.Id].Animator.Busy || queue.Any(w => ReferenceEquals(w.Entry.Instance, instance) && w.Event?.Animation is not null) ||
+         pending is { } p && ReferenceEquals(p.Work.Entry.Instance, instance) && p.Work.Event?.Animation is not null ||
+         held.TryGetValue(instance.Id, out var h) && h.Work.Event?.Animation is not null);
+    public int ActiveAnimations => entries.Values.Where(e => IsAvailable(e.Instance)).Sum(e => e.Animator.ActiveCount);
+
+    /// <summary>Virtual active time, called once per host frame. No RPC or user callbacks per frame.</summary>
+    public bool AdvanceAnimations(TimeSpan elapsed, Func<ScreenInstance, bool> active,
+        ImmutableDictionary<string, string>? snapshot = null)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        var seconds = elapsed.TotalSeconds;
+        if (!double.IsFinite(seconds) || seconds < 0) throw new ArgumentOutOfRangeException(nameof(elapsed));
+        Reconcile(); var changed = false;
+        foreach (var entry in entries.Values)
+        {
+            if (!IsAvailable(entry.Instance) || entry.SuspendedAt is not null || !active(entry.Instance) || !IsSettled(entry.Instance)) continue;
+            var before = entry.Instance.Definition;
+            var after = entry.Animator.Tick(before, seconds);
+            if (!ReferenceEquals(before, after)) { stack.Commit(entry.Instance, entry.Instance.Version, after, animationFrame: true); entry.AnimationDirty = true; changed = true; }
+            DrainAnimations(entry, snapshot ?? entry.Snapshot);
+        }
+        return changed;
+    }
+    private void DrainAnimations(Entry entry, ImmutableDictionary<string, string> snapshot)
+    {
+        foreach (var result in entry.Animator.Drain())
+            queue.AddLast(new Work(entry, "event", new("animation_result") { Animation = result }, snapshot, clock.GetTimestamp()));
+    }
     public bool HasPending => pending is not null || queue.Count != 0 || closes.Count != 0 || held.Count != 0;
     public bool HasRunnablePending => pending is { Work.Entry.SuspendedAt: null } || closes.Count != 0 ||
         queue.Any(w => w.Entry.SuspendedAt is null) || held.Values.Any(p => p.Work.Entry.SuspendedAt is null || p.Work.Entry.Closing);
@@ -132,7 +165,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         command.Validate();
         Reconcile();
         if (!IsAvailable(instance)) return ScreenEventAdmission.Unavailable;
-        if (queue.Count + serviceReplies.Count >= MaximumQueuedEvents || serviceReplies.ContainsKey(command.RequestId))
+        if (Occupancy >= MaximumQueuedEvents || serviceReplies.ContainsKey(command.RequestId))
             return ScreenEventAdmission.Busy;
         serviceReplies.Add(command.RequestId, new(entries[instance.Id], command.Action, 1));
         return ScreenEventAdmission.Accepted;
@@ -153,7 +186,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         if ((minigame is null) != (invocation is null)) throw new ArgumentException("Нет контекста мини-игры.");
         if (minigame is not null)
         { minigame.Validate(); minigame.ParametersSchema.Validate(invocation!.Parameters); minigame.StateSchema.Validate(state!); }
-        if (queue.Count + serviceReplies.Count >= MaximumQueuedEvents) throw new InvalidOperationException("Очередь событий экрана заполнена.");
+        if (Occupancy >= MaximumQueuedEvents) throw new InvalidOperationException("Очередь событий экрана заполнена.");
         var entry = new Entry(instance, source, references, snapshot) { State = state ?? LuaValue.Null, Modules = modules, RandomState = randomState ?? LuaRandomState.Initial,
             Minigame = minigame, Invocation = invocation };
         entries.Add(instance.Id, entry);
@@ -194,7 +227,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         if (value.Kind is "move" or "hover" && queue.Last is { } last &&
             ReferenceEquals(last.Value.Entry, entry) && last.Value.Event?.Kind == value.Kind && last.Value.Event.NodeId == value.NodeId)
         { last.Value = work; return ScreenEventAdmission.Coalesced; }
-        if (queue.Count + serviceReplies.Count >= MaximumQueuedEvents)
+        if (Occupancy >= MaximumQueuedEvents)
         { Report("Очередь событий экрана заполнена: событие не принято.", ScreenLuaIssueKind.Busy, instance.Id); return ScreenEventAdmission.Busy; }
         queue.AddLast(work);
         return ScreenEventAdmission.Accepted;
@@ -244,17 +277,23 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                             if (result.Batch!.Service is not null && services.Count >= MaximumQueuedEvents)
                                 throw new InvalidOperationException("Очередь сервисов экрана заполнена.");
                             if (result.Batch.Service is { } request && (serviceReplies.ContainsKey(request.RequestId) ||
-                                queue.Count + serviceReplies.Count >= MaximumQueuedEvents))
+                                Occupancy >= MaximumQueuedEvents))
                                 throw new InvalidOperationException("Нельзя зарезервировать ответ сервиса экрана.");
                             if ((!result.Batch.Triggers.IsEmpty || result.Batch.Service is not null) && ready.Work.ChainDepth >= AuthorTrigger.MaximumChainDepth)
                                 throw new InvalidOperationException("Превышен бюджет глубины цепочки триггеров и сервисов.");
-                            if (!result.Batch.Triggers.IsEmpty && queue.Count + serviceReplies.Count + result.Batch.Triggers.Length > MaximumQueuedEvents)
+                            if (!result.Batch.Triggers.IsEmpty && Occupancy + result.Batch.Triggers.Length > MaximumQueuedEvents)
                                 throw new InvalidOperationException("Превышен бюджет очереди или глубины цепочки триггеров.");
+                            var animator = entry.Animator.Prepare(entry.Instance.Definition, result.Batch.AnimationChanges);
+                            if (Occupancy - entry.Animator.Reserved + animator.Reserved + result.Batch.Triggers.Length + (result.Batch.Service is null ? 0 : 1) > MaximumQueuedEvents)
+                                throw new InvalidOperationException("Нет места для событий завершения анимаций.");
                             stack.Commit(entry.Instance, ready.Stamp.Version, result.Batch!.Definition);
+                            entry.Animator = animator;
+                            entry.AnimationDirty = false;
                             if (result.Batch.State is { } state) entry.State = state;
                             if (result.Batch.RandomState is { } random) entry.RandomState = random;
                             if (result.Batch.MinigameResult is { } completion) entry.MinigameResult = completion;
                             AppliedBatches++;
+                            DrainAnimations(entry, ready.Work.Snapshot);
                             foreach (var trigger in result.Batch.Triggers)
                                 queue.AddLast(new Work(entry, "event", new("trigger") { Trigger = trigger }, ready.Work.Snapshot,
                                     clock.GetTimestamp(), ready.Work.ChainDepth + 1));
@@ -319,13 +358,14 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         var state = entry.State;
         var random = entry.RandomState;
         var eventDefinition = work.Event is null ? definition : stack.VisualDefinition(entry.Instance);
-        var task = Task.Run(() => PrepareAsync(context, captured, stamp, definition, eventDefinition, state, random, clock));
+        var synchronizeAnimation = entry.AnimationDirty;
+        var task = Task.Run(() => PrepareAsync(context, captured, stamp, definition, eventDefinition, state, random, clock, synchronizeAnimation));
         ScreenLuaConnection.Observe(task);
         pending = new(work, stamp, task);
     }
 
     private static async Task<Prepared> PrepareAsync(Conversation conversation, Work work, ScreenLuaStamp stamp,
-        ScreenDefinition definition, ScreenDefinition eventDefinition, LuaValue state, LuaRandomState random, TimeProvider clock)
+        ScreenDefinition definition, ScreenDefinition eventDefinition, LuaValue state, LuaRandomState random, TimeProvider clock, bool synchronizeAnimation)
     {
         var remaining = TimeSpan.FromSeconds(5) - clock.GetElapsedTime(work.Submitted);
         // Task scheduling is part of queue time. No exchange has touched the conversation yet.
@@ -372,7 +412,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         }
         if (work.Event is not null) ScreenLuaProtocol.ValidateEvent(eventDefinition, work.Event);
         var request = new ScreenLuaRequest(ScreenLuaProtocol.Version, work.Kind, stamp, definition.Id,
-            work.Kind == "load" ? definition.Nodes : [], work.Kind == "load" ? entry.Source : null,
+            work.Kind == "load" || work.Kind == "event" && synchronizeAnimation ? definition.Nodes : [], work.Kind == "load" ? entry.Source : null,
             work.Kind == "load" ? entry.References : ImmutableDictionary<string, Guid>.Empty, work.Event, work.Snapshot)
         { State = work.Kind == "close" ? null : state, Modules = modules, RandomState = work.Kind == "close" ? null : random,
             Minigame = work.Kind == "load" ? entry.Invocation : null };
@@ -399,7 +439,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             {
                 if (batch.State is { } data) minigame.StateSchema.Validate(data);
                 if (work.Kind == "load" && entry.Invocation!.Restoring &&
-                    (batch.State is { } restored && restored.ToJson() != state.ToJson() || batch.RandomState is { } rng && rng != random || batch.MinigameResult is not null || batch.Close || batch.Service is not null || !batch.Triggers.IsEmpty))
+                    (batch.State is { } restored && restored.ToJson() != state.ToJson() || batch.RandomState is { } rng && rng != random || batch.MinigameResult is not null || batch.Close || batch.Service is not null || !batch.Triggers.IsEmpty || batch.AnimationChanges.Any(c => c.Kind is "animate" or "cancel_animation")))
                     throw new InvalidOperationException("Восстановление мини-игры должно только построить представление из снимка.");
             }
         }
@@ -428,15 +468,16 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         if (Current(entry.Instance) && !entry.Closing)
             Report(message, ScreenLuaIssueKind.QueueExpired, entry.Instance.Id);
         // Nothing was sent: the remote VM and its version are still valid.
-        if (work.Kind == "load" || work.Event?.Kind == "service_result")
+        if (work.Kind == "load" || work.Event?.Kind is "service_result" or "animation_result")
         {
-            entry.Error = work.Kind == "load" ? "Истёк срок загрузки экрана." : "Истёк срок обработки ответа сервиса.";
+            entry.Error = work.Kind == "load" ? "Истёк срок загрузки экрана." : "Истёк срок обработки ответа сервиса или анимации.";
             RemoveQueued(entry); ScheduleClose(entry);
         }
         if (entry.Closing) ScheduleClose(entry);
     }
     private void RemoveQueued(Entry entry)
     {
+        entry.Animator = new();
         var node = queue.First;
         while (node is not null) { var next = node.Next; if (ReferenceEquals(node.Value.Entry, entry)) queue.Remove(node); node = next; }
         foreach (var id in serviceReplies.Where(p => ReferenceEquals(p.Value.Entry, entry)).Select(p => p.Key).ToArray()) serviceReplies.Remove(id);
@@ -477,7 +518,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         services.Clear();
         serviceReplies.Clear();
         faulted = true;
-        foreach (var entry in entries.Values) { entry.Error = message; entry.Loaded = false; }
+        foreach (var entry in entries.Values) { entry.Error = message; entry.Loaded = false; entry.Animator = new(); }
         queue.Clear(); closes.Clear();
         Report(message, context: context);
         Retire();

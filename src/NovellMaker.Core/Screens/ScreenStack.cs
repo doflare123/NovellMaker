@@ -75,7 +75,7 @@ public sealed class ScreenStack
     /// <summary>Load/new game invalidates every old instance and pressed control.</summary>
     public void Clear() { instances = []; ResetInput(); }
 
-    internal void Commit(ScreenInstance instance, long version, ScreenDefinition definition)
+    internal void Commit(ScreenInstance instance, long version, ScreenDefinition definition, bool animationFrame = false)
     {
         RequireOwned(instance);
         if (instance.Version != version) throw new InvalidOperationException("Устаревшая версия экрана.");
@@ -86,7 +86,7 @@ public sealed class ScreenStack
         if (capture?.InstanceId == instance.Id && !buttons.Any(n => n.Id == capture.NodeId)) capture = null;
         if (focus?.InstanceId == instance.Id && !buttons.Any(n => n.Id == focus.NodeId)) focus = null;
         instance.Definition = definition;
-        instance.Version++;
+        if (!animationFrame) instance.Version++;
     }
 
     public void SetActive(bool value)

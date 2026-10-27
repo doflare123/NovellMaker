@@ -35,6 +35,8 @@ internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
     public bool IsSceneInstance(ScreenInstance instance) => ReferenceEquals(instance, sceneInstance);
     public IEnumerable<string> Diagnostics => errors.Concat(Scripts?.Diagnostics ?? []);
     public bool HasPending => Scripts?.HasRunnablePending ?? false;
+    public bool TickAnimations(TimeSpan elapsed, bool hostActive) => Scripts?.AdvanceAnimations(elapsed, instance =>
+        hostActive && !Stack.Instances.SkipWhile(i => !ReferenceEquals(i, instance)).Skip(1).Any(i => i.Policy.PauseScenario), snapshot()) ?? false;
     public bool Poll()
     {
         SyncMinigame();

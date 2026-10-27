@@ -12,6 +12,7 @@ internal sealed class ScreenLuaVm
     private readonly Script script = new(CoreModules.None);
     private readonly LuaStandardLibrary library;
     private readonly LuaRandomApi random;
+    private readonly LuaAnimationApi animations = new();
     private readonly DynValue handlers;
     private readonly Guid instanceId;
     private ImmutableArray<ScreenChange>.Builder changes = ImmutableArray.CreateBuilder<ScreenChange>();
@@ -22,6 +23,14 @@ internal sealed class ScreenLuaVm
     private readonly MinigameInvocation? minigame;
     internal LuaLogBuffer Log { get; set; }
     internal ScreenDefinition Definition { get; private set; }
+    internal void Synchronize(ImmutableArray<ScreenNode> nodes)
+    {
+        if (nodes.IsEmpty) return;
+        if (nodes.Length != Definition.Nodes.Length || nodes.Where((n, i) => n is null ||
+            n with { Bounds = Definition.Nodes[i].Bounds, Geometry = Definition.Nodes[i].Geometry } != Definition.Nodes[i]).Any())
+            throw new ArgumentException("Синхронизация анимации может менять только геометрию существующих узлов.");
+        Definition = new(Definition.Id, nodes, Definition.RetiredNodeIds);
+    }
 
     internal ScreenLuaVm(ScreenDefinition definition, Guid instanceId, string source, ImmutableDictionary<string, Guid> references, LuaModuleBundle? modules = null, LuaLogBuffer? log = null, MinigameInvocation? minigame = null)
     {
@@ -49,6 +58,7 @@ internal sealed class ScreenLuaVm
             Definition = ScreenLuaProtocol.Prepare(Definition, [change]).Definition;
             changes.Add(change); return DynValue.Nil;
         }
+        animations.Install(script, ui, () => handling, a => Node(a), () => Definition, Add);
         Bind("set_text", a => Add(new("text", Node(a), Str(a, 1), null)));
         Bind("set_visible", a => Add(new("visible", Node(a), null, a.AsType(1, "ui", DataType.Boolean, false).Boolean)));
         Bind("set_enabled", a => Add(new("enabled", Node(a), null, a.AsType(1, "ui", DataType.Boolean, false).Boolean)));
@@ -138,6 +148,7 @@ internal sealed class ScreenLuaVm
         if (componentState is not null) state = componentState;
         stateBytes = 0;
         changes = ImmutableArray.CreateBuilder<ScreenChange>();
+        animations.Reset();
         random.Begin(randomState);
         var function = handlers.Table.Get(value is null ? "on_load" : "on_event");
         var argument = new Table(script);
@@ -147,6 +158,13 @@ internal sealed class ScreenLuaVm
             argument.Set("node", value.NodeId is { } node ? DynValue.NewString(new ScreenNodeHandle(Definition.Id, instanceId, node).ToString()) : DynValue.Nil);
             argument.Set("x", DynValue.NewNumber(value.X)); argument.Set("y", DynValue.NewNumber(value.Y));
             argument.Set("seconds", DynValue.NewNumber(value.Seconds));
+            if (value.Animation is { } animation)
+            {
+                animation.Validate();
+                argument.Set("animation_id", DynValue.NewString(animation.Id.ToString("N")));
+                argument.Set("status", DynValue.NewString(animation.Status));
+                argument.Set("reason", DynValue.NewString(animation.Reason));
+            }
             if (value.Trigger is { } trigger)
             {
                 trigger.Validate();
@@ -293,11 +311,12 @@ internal sealed class ScreenLuaWorkerService
         }
         if (!entries.TryGetValue(stamp.InstanceId, out var entry) || entry.Stamp.OwnerId != stamp.OwnerId ||
             entry.Version != stamp.Version || entry.ResourceId != request.ResourceId ||
-            !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Modules is not null || request.Minigame is not null)
+            request.Source is not null || !request.References.IsEmpty || request.Modules is not null || request.Minigame is not null)
             throw new ArgumentException("Устаревшие данные или чужой владелец экрана.");
-        if (request.Kind == "close" && request.Event is null && request.Snapshot.IsEmpty && request.State is null && request.RandomState is null)
+        if (request.Kind == "close" && request.Nodes.IsEmpty && request.Event is null && request.Snapshot.IsEmpty && request.State is null && request.RandomState is null)
         { entries.Remove(stamp.InstanceId); return Reply("closed", []); }
         if (request.Kind != "event" || request.Event is null) throw new ArgumentException("Неизвестное сообщение экрана.");
+        entry.Vm.Synchronize(request.Nodes);
         ScreenLuaProtocol.ValidateEvent(entry.Vm.Definition, request.Event, worker: true);
         try
         {
