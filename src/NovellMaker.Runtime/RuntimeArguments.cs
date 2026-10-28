@@ -13,6 +13,7 @@ internal sealed record RuntimeArguments(
     string? SmokeReportPath)
 {
     public string? SmokePlanPath { get; init; }
+    public TimeSpan? SmokeRealtimeDuration { get; init; }
     public GamePackage? Package { get; init; }
     public static RuntimeArguments Parse(IReadOnlyList<string> arguments, string? packageDirectory = null)
     {
@@ -28,7 +29,7 @@ internal sealed record RuntimeArguments(
             }
 
             if (option is not ("--project" or "--assets-root" or "--scene" or "--line" or
-                "--language" or "--smoke-output" or "--smoke-report" or "--smoke-plan"))
+                "--language" or "--smoke-output" or "--smoke-report" or "--smoke-plan" or "--smoke-realtime-seconds"))
             {
                 throw new ArgumentException($"Неизвестный параметр «{option}».\n{Usage}");
             }
@@ -44,7 +45,7 @@ internal sealed record RuntimeArguments(
         {
             var directory = Path.GetFullPath(packageDirectory ?? AppContext.BaseDirectory);
             package = GamePackage.Load(directory);
-            if (values.Keys.Any(k => k is not ("--smoke-output" or "--smoke-report" or "--smoke-plan")))
+            if (values.Keys.Any(k => k is not ("--smoke-output" or "--smoke-report" or "--smoke-plan" or "--smoke-realtime-seconds")))
                 throw new ArgumentException("Упакованная игра использует стартовую сцену и язык из game.json.");
             values.Add("--project", Path.Combine(directory, GamePackage.ProjectName));
             values.Add("--assets-root", directory);
@@ -69,6 +70,15 @@ internal sealed record RuntimeArguments(
         }
 
         if (values.ContainsKey("--smoke-plan") && smokeOutput is null) throw new ArgumentException("--smoke-plan требует smoke-output/report.");
+        TimeSpan? realtime = null;
+        if (values.TryGetValue("--smoke-realtime-seconds", out var duration))
+        {
+            if (smokeOutput is null || values.ContainsKey("--smoke-plan") ||
+                !double.TryParse(duration, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) ||
+                !double.IsFinite(seconds) || seconds is < 1 or > 30)
+                throw new ArgumentException("--smoke-realtime-seconds требует smoke-output/report, 1–30 секунд и отсутствие smoke-plan.");
+            realtime = TimeSpan.FromSeconds(seconds);
+        }
         return new RuntimeArguments(
             projectPath,
             assetsRoot,
@@ -76,7 +86,8 @@ internal sealed record RuntimeArguments(
             lineId,
             language,
             smokeOutput,
-            smokeReport) { Package = package, SmokePlanPath = values.ContainsKey("--smoke-plan") ? RequiredPath(values, "--smoke-plan", true) : null };
+            smokeReport) { Package = package, SmokePlanPath = values.ContainsKey("--smoke-plan") ? RequiredPath(values, "--smoke-plan", true) : null,
+                SmokeRealtimeDuration = realtime };
     }
 
     public static string Usage =>

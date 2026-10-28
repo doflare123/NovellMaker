@@ -81,11 +81,13 @@ internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
         try
         {
             if (asset.HandlerScriptId is { } id && project?.Scripts.FirstOrDefault(s => s.Id == id) is { } script)
-                Scripts?.Attach(instance, script.Source, asset.References, snapshot(), modules: new LuaModuleLibrary(id, project.Scripts));
+                Scripts?.Attach(instance, script.Source, asset.References, snapshot(), modules: new LuaModuleLibrary(id, project.Scripts), audioReferences: AudioReferences(script));
         }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException)
         { Report(asset.Name + ": " + error.Message); }
     }
+    private ImmutableDictionary<string, Guid> AudioReferences(LuaScriptAsset script) => script.References
+        .Where(r => project!.Audio.Assets.Any(a => a.Id == r.Value)).ToImmutableDictionary();
     private void Open(ScreenAsset asset, ScreenInstance? replace = null, Guid? openingOwner = null)
     {
         var policy = new ScreenPolicy(asset.BlockInputOnOverlay, asset.PauseOnOverlay);

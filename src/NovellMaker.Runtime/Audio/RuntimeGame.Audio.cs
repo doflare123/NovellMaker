@@ -11,7 +11,11 @@ internal sealed partial class RuntimeGame
     private AudioService? audio;
     private readonly MonoGameAudioBackend audioBackend = new();
     private bool ShouldPauseAudio => screens.Stack.PausesScenario || player.Execution.HasPendingLua || player.Execution.IsPaused;
-    private void InitializeAudio() => audio = new(player.Execution.Project, arguments.AssetsRoot, arguments.Language, audioBackend);
+    private void InitializeAudio()
+    {
+        audio = new(player.Execution.Project, arguments.AssetsRoot, arguments.Language, audioBackend);
+        screens.Scripts?.ConnectAudio(audio);
+    }
     private void ApplyPlayerSettings(PlayerSettings value)
     {
         value.Validate();
@@ -44,7 +48,10 @@ internal sealed partial class RuntimeGame
         var diagnosticCount = audio.Diagnostics.Count;
         audio.Pause(ShouldPauseAudio);
         foreach (var cue in player.DrainAudioEvents()) audio.Handle(cue);
-        audio.Update();
+        if (screens.Scripts is { } scripts)
+            scripts.PollAudio(instance => (arguments.SmokeOutputPath is not null || IsActive) && imageCache?.IsPending != true &&
+                !screens.Stack.Instances.SkipWhile(i => !ReferenceEquals(i, instance)).Skip(1).Any(i => i.Policy.PauseScenario), player.Execution.State.Variables);
+        else audio.Update();
         if (audio.Diagnostics.Count != diagnosticCount) RefreshTextTextures();
     }
     private void ApplyProjectCommand(NovellMaker.Core.Screens.ScreenButtonBinding command)

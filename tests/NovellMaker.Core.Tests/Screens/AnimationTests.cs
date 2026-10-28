@@ -10,6 +10,51 @@ namespace NovellMaker.Core.Tests.Screens;
 [TestClass]
 public sealed class AnimationTests
 {
+    [TestMethod]
+    [DataRow("requested")] [DataRow("property_set")] [DataRow("removed")] [DataRow("reparented")] [DataRow("replaced")]
+    public void CancellationPreservesBothLaunchAndCancellingCauseAndRejectsOverBudgetAtomically(string reason)
+    {
+        var d = ScreenLuaProtocolTests.Definition(); var id = Guid.NewGuid();
+        var start = new ScreenChange("animate", null, null, null) { Animation = new(id, [new(d.Nodes[1].Id, "x", 50, 0, 1, "linear")]) };
+        var command = reason switch
+        {
+            "requested" => new ScreenChange("cancel_animation", null, null, null) { AnimationId = id },
+            "property_set" => new ScreenChange("geometry", d.Nodes[1].Id, null, null) { Patch = new() { X = 20 } },
+            "removed" => new ScreenChange("remove", d.Nodes[1].Id, null, null),
+            "reparented" => new ScreenChange("parent", d.Nodes[1].Id, null, null) { ParentId = d.Nodes[0].Id },
+            _ => start with { Animation = start.Animation! with { Id = Guid.NewGuid() } }
+        };
+        var a = new ScreenAnimator().Prepare(d, [start], 2);
+        Assert.AreEqual(32, a.Prepare(d, [command], 31).Drain().Single().ChainDepth);
+        Assert.Throws<InvalidOperationException>(() => a.Prepare(d, [command], 32));
+        Assert.AreEqual(1, a.ActiveCount); Assert.IsEmpty(a.Drain());
+        var deep = new ScreenAnimator().Prepare(d, [start], 31);
+        Assert.AreEqual(32, deep.Prepare(d, [command], 0).Drain().Single().ChainDepth);
+    }
+
+    [TestMethod]
+    public void CompletedAnimationRetainsOriginThroughPreparationAndDepthIsHostOnly()
+    {
+        var d = ScreenLuaProtocolTests.Definition(); var start = Start(Animation(d));
+        var a = new ScreenAnimator().Prepare(d, [start], 31);
+        a = a.Prepare(d, [new("text", d.Nodes[1].Id, "unrelated", null)], 0);
+        a.Tick(d, 2); var result = a.Drain().Single(); Assert.AreEqual(32, result.ChainDepth);
+        var json = JsonSerializer.Serialize(result, ScreenLuaProtocol.Json); Assert.IsFalse(json.Contains("ChainDepth", StringComparison.Ordinal));
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<ScreenAnimationResult>(json[..^1] + ",\"ChainDepth\":0}", ScreenLuaProtocol.Json));
+        Assert.Throws<InvalidOperationException>(() => new ScreenAnimator().Prepare(d, [start], 32));
+    }
+
+    [TestMethod]
+    public async Task ActualWorkerAnimationOnlyChainHasTheSameBudget()
+    {
+        var (stack, instance) = ScreenLuaSessionTests.Fixture(); await using var session = new ScreenLuaSession(stack);
+        session.Attach(instance, "local function go() ui.animate(ui.tween(refs.target,{x=20},0.001)) end; return {on_load=go,on_event=go}",
+            ImmutableDictionary<string, Guid>.Empty.Add("target", instance.Definition.Nodes[1].Id));
+        await ScreenLuaSessionTests.Drain(session);
+        for (var i = 0; i < 40 && session.IsAvailable(instance); i++)
+        { session.AdvanceAnimations(TimeSpan.FromSeconds(1), _ => true); await ScreenLuaSessionTests.Drain(session); }
+        Assert.IsFalse(session.IsAvailable(instance)); StringAssert.Contains(session.Diagnostics.Single(), "глубина"); Assert.AreEqual(0, session.ActiveAnimations);
+    }
     private static ScreenDefinition LargeScaledNode()
     {
         var root = new ScreenNode(Guid.NewGuid(), null, ScreenNodeKind.Panel, new(0, 0, 100, 100)) { Geometry = new() { ScaleX = 1000 } };
@@ -195,9 +240,10 @@ public sealed class AnimationTests
         var d = ScreenLuaProtocolTests.Definition(); var root = d.Nodes[0] with { Geometry = new() { ScaleX = 1000 } };
         var child = d.Nodes[1] with { Bounds = new(0, 0, 10000, 30), Geometry = new() { ScaleX = .001 } };
         d = new(d.Id, [root, child]);
-        var a = Play(d, new(Guid.NewGuid(), [new(root.Id, "scale_x", .001, 0, 1, "linear"), new(child.Id, "scale_x", 1000, 0, 1, "linear")]));
+        var a = new ScreenAnimator().Prepare(d, [Start(new(Guid.NewGuid(), [new(root.Id, "scale_x", .001, 0, 1, "linear"), new(child.Id, "scale_x", 1000, 0, 1, "linear")]))], 17);
         var after = a.Tick(d, .5); Assert.AreEqual(d.Nodes[0], after.Nodes[0]); Assert.AreEqual(d.Nodes[1], after.Nodes[1]);
-        Assert.AreEqual("failed", a.Drain().Single().Status); Assert.IsEmpty(a.Drain()); Assert.AreEqual(0, a.ActiveCount);
+        var result = a.Drain().Single(); Assert.AreEqual("failed", result.Status); Assert.AreEqual(18, result.ChainDepth);
+        Assert.IsEmpty(a.Drain()); Assert.AreEqual(0, a.ActiveCount);
     }
 
     private static ScreenLuaVm Vm(ScreenDefinition d, string body) => new(d, Guid.NewGuid(), "return {on_load=function() " + body + " end,on_event=function() end}",

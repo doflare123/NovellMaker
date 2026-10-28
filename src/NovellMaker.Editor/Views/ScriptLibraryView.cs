@@ -34,7 +34,7 @@ public sealed class ScriptLibraryView : UserControl
     public ScriptLibraryView() : this(false) { }
     public ScriptLibraryView(bool propertiesOnly)
     {
-        ToolTip.SetTip(references, "Ссылка на Lua-ресурс доступна в обработчике как modules.<имя>: ui.import(modules.counter). refs узлов задаются у холста. Сценарный game.run(refs.<имя>) сохраняет прежний API.");
+        ToolTip.SetTip(references, "Lua-ресурс: modules.<имя> для ui.import; звук: audio.<имя> для ui.play_audio. refs узлов задаются у холста. Сценарный game.run(refs.<имя>) сохраняет прежний API.");
         var root = new DockPanel { Margin = new Thickness(12) };
         var toolbar = new WrapPanel();
         void Button(string label, string id, Func<Task> run)
@@ -163,6 +163,7 @@ public sealed class ScriptLibraryView : UserControl
             var options = ReferenceTargets().ToArray(); targets.ItemsSource = options;
             references.Text = script is null ? "" : string.Join("\n", script.References.Select(r =>
                 $"refs.{r.Key}" + (session?.Project?.Scripts.Any(s => s.Id == r.Value) == true ? $" / modules.{r.Key}" : "") +
+                (session?.Project?.Audio.Assets.Any(s => s.Id == r.Value) == true ? $" / audio.{r.Key}" : "") +
                 $" → {options.FirstOrDefault(t => t.Id == r.Value)?.Label ?? "Объект удалён"}"));
             targets.SelectedItem = options.FirstOrDefault(t => t.Id == oldTarget) ?? options.FirstOrDefault();
             var sceneOptions = session?.Project?.Scenes.Where(s => !s.HasLegacyActionScript).Select(s => new Target(s.Id, s.Name)).ToArray() ?? [];
@@ -186,5 +187,6 @@ public sealed class ScriptLibraryView : UserControl
             foreach (var hotspot in scene.Actions.Concat(scene.ScriptBlocks.Select(b => b.Action)).OfType<HotspotAction>()) yield return new(hotspot.ObjectId, "Предмет: " + hotspot.Label);
         }
         foreach (var script in project.Scripts) yield return new(script.Id, "Lua: " + script.Name);
+        foreach (var asset in project.Audio.Assets) yield return new(asset.Id, "Звук: " + asset.Name);
     }
 }

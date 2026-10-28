@@ -1,5 +1,5 @@
 ---@meta NovellMaker.ui
--- NovellMaker screen API, wire 15 / Lua 5.2. Tooling only; never execute this file.
+-- NovellMaker screen API, wire 16 / Lua 5.2. Tooling only; never execute this file.
 -- Calls enqueue one atomic batch. A handler must return; waits do not suspend Lua.
 
 ---@alias NMHandle string Opaque resource/instance/node identity, valid only in its live instance.
@@ -44,9 +44,10 @@
 ---@field saved_at? string UTC ISO 8601.
 ---@field game_time? number
 ---@class NMEvent
----@field kind 'click'|'move'|'hover'|'update'|'trigger'|'service_result'|'animation_result'
+---@field kind 'click'|'move'|'hover'|'update'|'trigger'|'service_result'|'animation_result'|'audio_result'
+---@field audio_id? string ID returned by ui.play_audio.
 ---@field animation_id? string ID returned by ui.animate.
----@field status? 'completed'|'cancelled'|'failed'
+---@field status? 'completed'|'cancelled'|'stopped'|'failed'
 ---@field reason? string finished/requested/replaced/property_set/removed/reparented/invalid_geometry.
 ---@field node? NMHandle
 ---@field x number Logical viewport coordinates.
@@ -72,8 +73,22 @@
 refs = {}
 ---@type table<string,string> Registered Lua resource aliases belonging to the current file.
 modules = {}
+---@type table<string,string> Registered WAV aliases of the root handler; modules receive them as arguments.
+audio = {}
 
 ui = {}
+---@param asset string Registered audio.<alias>, never a file path.
+---@param group 'sound'|'effect'|'voice'
+---@param loop boolean
+---@param volume number Source gain 0..1, multiplied by group and Master.
+---@return string id Owned source ID; audio_result reports completed/stopped/failed once.
+-- Existing playback continues while an ordinary update awaits Lua; input/results and explicit pause still hold it.
+function ui.play_audio(asset, group, loop, volume) end
+---@param id string Live source belonging to this handler instance.
+function ui.stop_audio(id) end
+---@param id string Live source belonging to this handler instance.
+---@param volume number Source gain 0..1; no profile write.
+function ui.set_audio_volume(id, volume) end
 ---@type NMNull Explicit null in lists/dictionaries; immutable, no CLR reflection.
 ui.null = nil
 ---@param node NMHandle

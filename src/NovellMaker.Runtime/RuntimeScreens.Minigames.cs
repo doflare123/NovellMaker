@@ -60,10 +60,12 @@ internal sealed partial class RuntimeScreens
                 var script = project.Scripts.Single(s => s.Id == asset.HandlerScriptId);
                 if (Scripts is null) throw new InvalidOperationException("Lua-worker мини-игры недоступен.");
                 Scripts.Attach(instance, script.Source, asset.References, snapshot(), saved.State,
-                    new LuaModuleLibrary(script.Id, project.Scripts), saved.RandomState, asset.Minigame, new(saved.Parameters, player.MinigameRestored));
+                    new LuaModuleLibrary(script.Id, project.Scripts), saved.RandomState, asset.Minigame, new(saved.Parameters, player.MinigameRestored), AudioReferences(script));
                 observedBatches = Scripts.AppliedBatches;
                 player.MinigameSaveBarrier = () => minigameInstance is not null && Scripts?.HasAnimations(minigameInstance) == true
                     ? "Дождитесь завершения анимации мини-игры перед сохранением."
+                    : minigameInstance is not null && Scripts?.HasAudio(minigameInstance) == true
+                    ? "Остановите звук мини-игры и дождитесь результата перед сохранением."
                     : minigameInstance is null || Scripts?.IsSettled(minigameInstance) != true || ActiveMinigame?.Phase == MinigamePhase.Starting
                     ? "Обработчик мини-игры ещё выполняется. Повторите сохранение после завершения операции." : null;
             }

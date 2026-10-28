@@ -51,11 +51,12 @@ public sealed class MinigameLuaTests
     [DataRow("ui.main_menu()")]
     [DataRow("ui.trigger('again')")]
     [DataRow("ui.animate(ui.tween(refs.target,{x=50},1))")]
+    [DataRow("ui.play_audio(audio.sample,'effect',true,0.5)")]
     public async Task RestoreCannotChangeStateRngOrProduceEffects(string code)
     {
         var (stack,instance)=ScreenLuaSessionTests.Fixture();var before=instance.Definition;await using var session=new ScreenLuaSession(stack);
         session.Attach(instance,"return {on_load=function() "+code+" end,on_event=function() end}",ImmutableDictionary<string,Guid>.Empty.Add("target",before.Nodes[1].Id),state:MinigameTests.Data,
-            minigame:MinigameTests.Definition,invocation:new(MinigameTests.Data,true));
+            minigame:MinigameTests.Definition,invocation:new(MinigameTests.Data,true),audioReferences:ImmutableDictionary<string,Guid>.Empty.Add("sample",Guid.NewGuid()));
         await ScreenLuaSessionTests.Drain(session);Assert.IsFalse(session.IsAvailable(instance));Assert.AreSame(before,instance.Definition);
         Assert.AreEqual(MinigameTests.Data.ToJson(),session.GetState(instance).ToJson());Assert.AreEqual(LuaRandomState.Initial,session.GetRandomState(instance));
     }

@@ -11,6 +11,65 @@ namespace NovellMaker.Runtime.Tests;
 [TestClass]
 public sealed class RuntimeMinigameTests
 {
+    private sealed class AudioBackend : NovellMaker.Core.Audio.IAudioBackend
+    {
+        internal int Opened, Disposed;
+        internal bool Finished;
+        public NovellMaker.Core.Audio.IAudioSource Open(string path, bool loop) { Opened++; return new Source(this); }
+        private sealed class Source(AudioBackend backend) : NovellMaker.Core.Audio.IAudioSource
+        {
+            public float Volume { set { } }
+            public bool Finished => backend.Finished;
+            public void Update() { }
+            public void Pause(bool paused) { }
+            public void Dispose() => backend.Disposed++;
+        }
+    }
+
+    [TestMethod]
+    [DataRow(false)] [DataRow(true)]
+    public async Task OwnedAudioAndItsPendingResultBlockSaveAndLoadNeverReplaysIt(bool finishNaturally)
+    {
+        var project = Project("""
+            local source=nil
+            return {on_load=function() if not ui.is_restoring() then source=ui.play_audio(audio.sample,'effect',false,0.25) end end,
+              on_event=function(e)
+                if e.kind=='click' then ui.stop_audio(source)
+                elseif e.kind=='audio_result' then ui.set_text(refs.label,e.status) end
+              end}
+            """);
+        var id = Guid.NewGuid(); project = project with { Audio = new() { Assets = [new(id, "sample.wav", $"Assets/Audio/{id:N}.wav")] },
+            Scripts = [project.Scripts[0] with { References = ImmutableDictionary<string, Guid>.Empty.Add("sample", id) }] };
+        using var player = new ScenarioPlayer(project, project.Scenes[0].Id, "ru"); await using var host = Host(project, () => player);
+        var backend = new AudioBackend(); using var audio = new NovellMaker.Core.Audio.AudioService(project, Path.GetTempPath(), "ru", backend);
+        host.Scripts!.ConnectAudio(audio); await Drain(host); Assert.AreEqual(1, audio.ActiveSources);
+        StringAssert.Contains(Assert.Throws<InvalidOperationException>(() => GameSave.Capture(player)).Message, "звук");
+        Assert.Throws<ArgumentException>(() => GameSave.Load(player, "{}")); host.Poll(); Assert.AreEqual(1, audio.ActiveSources);
+        if (finishNaturally) { backend.Finished = true; host.Scripts.PollAudio(_ => true); }
+        else
+        {
+            var instance = host.Stack.Instances.Single(); host.Scripts.EnqueueUsingInstanceSnapshot(instance, new("click", instance.Definition.Nodes[2].Id));
+            await Drain(host); Assert.Throws<InvalidOperationException>(() => GameSave.Capture(player)); host.Scripts.PollAudio(_ => true);
+        }
+        Assert.Throws<InvalidOperationException>(() => GameSave.Capture(player)); await Drain(host);
+        var saved = GameSave.Serialize(player); Assert.AreEqual(0, audio.ActiveSources);
+        GameSave.Load(player, saved); host.Poll(); await Drain(host); Assert.AreEqual(1, backend.Opened); Assert.AreEqual(1, backend.Disposed);
+        Assert.IsNotNull(GameSave.Capture(player)); Assert.IsEmpty(host.Diagnostics);
+    }
+
+    [TestMethod]
+    [DataRow("ui.complete_minigame({})")] [DataRow("ui.cancel_minigame()")]
+    public async Task CompletingOrCancellingMiniGameDisposesItsOwnSound(string completion)
+    {
+        var project = Project("return {on_load=function() ui.play_audio(audio.sample,'sound',true,1) end,on_event=function(e) if e.kind=='click' then " + completion + " end end}");
+        var id = Guid.NewGuid(); project = project with { Audio = new() { Assets = [new(id, "sample.wav", $"Assets/Audio/{id:N}.wav")] },
+            Scripts = [project.Scripts[0] with { References = ImmutableDictionary<string, Guid>.Empty.Add("sample", id) }] };
+        using var player = new ScenarioPlayer(project, project.Scenes[0].Id, "ru"); await using var host = Host(project, () => player);
+        var backend = new AudioBackend(); using var audio = new NovellMaker.Core.Audio.AudioService(project, Path.GetTempPath(), "ru", backend);
+        host.Scripts!.ConnectAudio(audio); await Drain(host); Assert.AreEqual(1, audio.ActiveSources);
+        host.Route(new(ScreenInputKind.FocusNext)); host.Route(new(ScreenInputKind.Activate)); await Drain(host);
+        Assert.AreEqual(0, audio.ActiveSources); Assert.AreEqual(1, backend.Disposed); Assert.IsNull(host.ActiveMinigame); Assert.IsEmpty(host.Diagnostics);
+    }
     [TestMethod]
     [DataRow(.2, 5d)] [DataRow(.5, 5d)] [DataRow(.05, 20d)] [DataRow(1d, 20d)]
     public async Task FrameAdvancesAnimationsBeforeFrequentMinigameUpdatesAndUnblocksSave(double frameSeconds, double updatesPerSecond)

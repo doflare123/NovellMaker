@@ -69,6 +69,8 @@ public sealed record ScreenAnimation(Guid Id, ImmutableArray<ScreenTween> Tracks
 
 public sealed record ScreenAnimationResult(Guid Id, string Status, string Reason)
 {
+    // Trusted host causality only: never serialized to, or accepted from, the worker.
+    internal int ChainDepth { get; init; }
     internal void Validate()
     {
         if (Id == Guid.Empty || Status is not ("completed" or "cancelled" or "failed") || Reason is null || Reason.Length > 128)
@@ -79,12 +81,13 @@ public sealed record ScreenAnimationResult(Guid Id, string Status, string Reason
 /// <summary>Host-thread timeline. Preparation clones state; rejection never partially starts/cancels a group.</summary>
 internal sealed class ScreenAnimator
 {
-    private sealed class Running(ScreenAnimation animation)
+    private sealed class Running(ScreenAnimation animation, int chainDepth = 0)
     {
         internal readonly ScreenAnimation Animation = animation;
+        internal readonly int ChainDepth = chainDepth;
         internal double Time;
         internal double?[] From = new double?[animation.Tracks.Length];
-        internal Running Copy() => new(Animation) { Time = Time, From = (double?[])From.Clone() };
+        internal Running Copy() => new(Animation, ChainDepth) { Time = Time, From = (double?[])From.Clone() };
     }
     private readonly List<Running> active = [];
     private readonly Queue<ScreenAnimationResult> results = [];
@@ -96,7 +99,7 @@ internal sealed class ScreenAnimator
         var group = new Running(animation with { Tracks = [.. animation.Tracks.OrderBy(t => t.Start)] });
         Advance(group, ref definition, animation.Duration);
     }
-    internal ScreenAnimator Prepare(ScreenDefinition before, ImmutableArray<ScreenChange> changes)
+    internal ScreenAnimator Prepare(ScreenDefinition before, ImmutableArray<ScreenChange> changes, int chainDepth = 0)
     {
         // The usual non-animated handler keeps its prevalidated background batch:
         // do not replay text/tree preparation on the host just to retain an empty timeline.
@@ -110,26 +113,36 @@ internal sealed class ScreenAnimator
             if (change.Animation is { } animation)
             {
                 animation.Validate(current);
+                CheckDepth(chainDepth + 1);
                 if (copy.active.Any(a => a.Animation.Id == animation.Id) || copy.results.Any(r => r.Id == animation.Id))
                     throw new InvalidOperationException("Повторный ID анимации.");
-                copy.Cancel(a => a.Animation.Tracks.Any(t => animation.Tracks.Any(n => n.NodeId == t.NodeId && n.Property == t.Property)), "replaced");
+                copy.Cancel(a => a.Animation.Tracks.Any(t => animation.Tracks.Any(n => n.NodeId == t.NodeId && n.Property == t.Property)), "replaced", chainDepth);
                 // Parallel children may flatten later property intervals before earlier ones.
                 // Apply expired intervals first so they cannot overwrite the currently active track.
-                copy.active.Add(new(animation with { Tracks = [.. animation.Tracks.OrderBy(t => t.Start)] }));
+                copy.active.Add(new(animation with { Tracks = [.. animation.Tracks.OrderBy(t => t.Start)] }, chainDepth + 1));
             }
-            else if (change.Kind == "cancel_animation") copy.Cancel(a => a.Animation.Id == change.AnimationId, "requested");
-            else if (change.Kind == "geometry") copy.Cancel(a => a.Animation.Tracks.Any(t => t.NodeId == change.NodeId && ScreenAnimation.Touches(change.Patch!, t.Property)), "property_set");
-            else if (change.Kind == "parent") copy.Cancel(_ => true, "reparented");
-            copy.Cancel(a => a.Animation.Tracks.Any(t => !current.Nodes.Any(n => n.Id == t.NodeId)), "removed");
+            else if (change.Kind == "cancel_animation") copy.Cancel(a => a.Animation.Id == change.AnimationId, "requested", chainDepth);
+            else if (change.Kind == "geometry") copy.Cancel(a => a.Animation.Tracks.Any(t => t.NodeId == change.NodeId && ScreenAnimation.Touches(change.Patch!, t.Property)), "property_set", chainDepth);
+            else if (change.Kind == "parent") copy.Cancel(_ => true, "reparented", chainDepth);
+            copy.Cancel(a => a.Animation.Tracks.Any(t => !current.Nodes.Any(n => n.Id == t.NodeId)), "removed", chainDepth);
         }
         if (copy.active.Count > 16 || copy.active.Sum(a => a.Animation.Tracks.Length) > 256 || copy.Reserved > 128)
             throw new InvalidOperationException("Превышен бюджет живых анимаций.");
         return copy;
     }
-    private void Cancel(Func<Running, bool> predicate, string reason)
+    private static void CheckDepth(int depth)
+    {
+        if (depth > NovellMaker.Core.Triggers.AuthorTrigger.MaximumChainDepth)
+            throw new InvalidOperationException("Превышена глубина цепочки результатов анимаций.");
+    }
+    private void Cancel(Func<Running, bool> predicate, string reason, int chainDepth)
     {
         foreach (var group in active.Where(predicate).ToArray())
-        { active.Remove(group); results.Enqueue(new(group.Animation.Id, "cancelled", reason)); }
+        {
+            var depth = Math.Max(group.ChainDepth, chainDepth + 1);
+            CheckDepth(depth);
+            active.Remove(group); results.Enqueue(new(group.Animation.Id, "cancelled", reason) { ChainDepth = depth });
+        }
     }
     internal ScreenDefinition Tick(ScreenDefinition definition, double seconds)
     {
@@ -140,10 +153,10 @@ internal sealed class ScreenAnimator
             {
                 Advance(group, ref definition, seconds);
                 if (group.Time >= group.Animation.Duration)
-                { active.Remove(group); results.Enqueue(new(group.Animation.Id, "completed", "finished")); }
+                { active.Remove(group); results.Enqueue(new(group.Animation.Id, "completed", "finished") { ChainDepth = group.ChainDepth }); }
             }
             catch (Exception error) when (error is ArgumentException or KeyNotFoundException)
-            { active.Remove(group); results.Enqueue(new(group.Animation.Id, "failed", "invalid_geometry")); }
+            { active.Remove(group); results.Enqueue(new(group.Animation.Id, "failed", "invalid_geometry") { ChainDepth = group.ChainDepth }); }
         }
         return definition;
     }

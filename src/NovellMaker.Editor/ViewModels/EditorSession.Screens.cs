@@ -155,6 +155,14 @@ public sealed partial class EditorSession
         EditProject(Examples.ExampleAnimationsModule.AddTo(project));
     }
 
+    public void AddAudioExample()
+    {
+        if (!CanEdit || project is null) return;
+        if (project.Audio.Assets.IsEmpty) { ReportScreenError("Сначала импортируйте PCM WAV на вкладке «Звук»."); return; }
+        EditProject(Examples.ExampleAudioModule.AddTo(project));
+        ReportScreenError("");
+    }
+
     public void DuplicateScreen()
     {
         if (!CanEdit || project is null || SelectedScreen is not { } source) return;

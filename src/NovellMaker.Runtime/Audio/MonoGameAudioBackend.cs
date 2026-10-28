@@ -1,5 +1,6 @@
 using Microsoft.Xna.Framework.Audio;
 using NovellMaker.Core.Audio;
+using System.Diagnostics;
 
 namespace NovellMaker.Runtime.Audio;
 
@@ -8,9 +9,14 @@ internal sealed class MonoGameAudioBackend : IAudioBackend
     public long SubmittedBytes { get; private set; }
     public int OpenedSources { get; private set; }
     public int PausedSources { get; private set; }
+    public float LastSourceVolume { get; private set; }
+    public int PlaybackPauseCount { get; private set; }
+    public double PlaybackPausedSeconds { get; private set; }
+    public double LongestPlaybackPauseSeconds { get; private set; }
+    public int BufferUnderruns { get; private set; }
     public IAudioSource Open(string path, bool loop)
     {
-        try { var source = new WaveSource(path, loop, count => SubmittedBytes += count, delta => PausedSources += delta); OpenedSources++; return source; }
+        try { var source = new WaveSource(path, loop, this); OpenedSources++; return source; }
         catch (Exception e) when (e is NoAudioHardwareException or InstancePlayLimitException)
         { throw new InvalidOperationException("Аудиоустройство недоступно: " + e.Message, e); }
     }
@@ -24,14 +30,14 @@ internal sealed class MonoGameAudioBackend : IAudioBackend
         private readonly byte[] buffer;
         private int remaining;
         private bool paused;
-        private readonly Action<int> submitted;
-        private readonly Action<int> pausedChanged;
-        public float Volume { set => sound.Volume = value; }
+        private readonly MonoGameAudioBackend metrics;
+        private bool started;
+        private long? playbackPausedAt;
+        public float Volume { set { AudioOperation(() => sound.Volume = value); metrics.LastSourceVolume = value; } }
         public bool Finished => !loop && remaining == 0 && sound.PendingBufferCount == 0;
-        public WaveSource(string path, bool loop, Action<int> submitted, Action<int> pausedChanged)
+        public WaveSource(string path, bool loop, MonoGameAudioBackend metrics)
         {
-            this.submitted = submitted;
-            this.pausedChanged = pausedChanged;
+            this.metrics = metrics;
             stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             try
             {
@@ -45,9 +51,17 @@ internal sealed class MonoGameAudioBackend : IAudioBackend
             }
             catch { stream.Dispose(); throw; }
         }
-        public void Update()
+        private static void AudioOperation(Action action)
+        {
+            try { action(); }
+            catch (Exception error) when (error is NoAudioHardwareException or InstancePlayLimitException)
+            { throw new InvalidOperationException("Аудиоустройство недоступно: " + error.Message, error); }
+        }
+        public void Update() => AudioOperation(UpdateCore);
+        private void UpdateCore()
         {
             if (paused) return;
+            if (started && loop && sound.State == SoundState.Stopped && sound.PendingBufferCount == 0) metrics.BufferUnderruns++;
             while (sound.PendingBufferCount < 3)
             {
                 if (remaining == 0)
@@ -64,17 +78,31 @@ internal sealed class MonoGameAudioBackend : IAudioBackend
                     if (remaining == 0 && loop) { stream.Position = wave.Offset; remaining = wave.Length; }
                 } while (loop && count < buffer.Length);
                 sound.SubmitBuffer(buffer, 0, count);
-                submitted(count);
+                metrics.SubmittedBytes += count;
             }
-            if (sound.PendingBufferCount > 0 && sound.State == SoundState.Stopped) sound.Play();
+            if (sound.PendingBufferCount > 0 && sound.State == SoundState.Stopped) { sound.Play(); started = true; }
         }
-        public void Pause(bool value)
+        public void Pause(bool value) => AudioOperation(() => PauseCore(value));
+        private void PauseCore(bool value)
         {
-            if (paused != value) pausedChanged(value ? 1 : -1);
+            if (paused != value) metrics.PausedSources += value ? 1 : -1;
             paused = value;
-            if (value && sound.State == SoundState.Playing) sound.Pause();
-            else if (!value && sound.State == SoundState.Paused) sound.Resume();
+            if (value && sound.State == SoundState.Playing)
+            { sound.Pause(); metrics.PlaybackPauseCount++; playbackPausedAt = Stopwatch.GetTimestamp(); }
+            else if (!value && sound.State == SoundState.Paused) { sound.Resume(); EndPlaybackPause(); }
         }
-        public void Dispose() { if (paused) { pausedChanged(-1); paused = false; } sound.Dispose(); stream.Dispose(); }
+        private void EndPlaybackPause()
+        {
+            if (playbackPausedAt is not { } start) return;
+            var seconds = Stopwatch.GetElapsedTime(start).TotalSeconds; playbackPausedAt = null;
+            metrics.PlaybackPausedSeconds += seconds;
+            metrics.LongestPlaybackPauseSeconds = Math.Max(metrics.LongestPlaybackPauseSeconds, seconds);
+        }
+        public void Dispose()
+        {
+            if (paused) { metrics.PausedSources--; paused = false; }
+            EndPlaybackPause();
+            try { AudioOperation(sound.Dispose); } finally { stream.Dispose(); }
+        }
     }
 }

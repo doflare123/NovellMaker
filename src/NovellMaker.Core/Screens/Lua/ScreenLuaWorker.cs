@@ -32,7 +32,8 @@ internal sealed class ScreenLuaVm
         Definition = new(Definition.Id, nodes, Definition.RetiredNodeIds);
     }
 
-    internal ScreenLuaVm(ScreenDefinition definition, Guid instanceId, string source, ImmutableDictionary<string, Guid> references, LuaModuleBundle? modules = null, LuaLogBuffer? log = null, MinigameInvocation? minigame = null)
+    internal ScreenLuaVm(ScreenDefinition definition, Guid instanceId, string source, ImmutableDictionary<string, Guid> references, LuaModuleBundle? modules = null, LuaLogBuffer? log = null, MinigameInvocation? minigame = null,
+        ImmutableDictionary<string, Guid>? audioReferences = null)
     {
         Log = log ?? new();
         Definition = definition;
@@ -59,6 +60,7 @@ internal sealed class ScreenLuaVm
             changes.Add(change); return DynValue.Nil;
         }
         animations.Install(script, ui, () => handling, a => Node(a), () => Definition, Add);
+        LuaAudioApi.Install(script, ui, audioReferences ?? ImmutableDictionary<string, Guid>.Empty, () => handling, Add);
         Bind("set_text", a => Add(new("text", Node(a), Str(a, 1), null)));
         Bind("set_visible", a => Add(new("visible", Node(a), null, a.AsType(1, "ui", DataType.Boolean, false).Boolean)));
         Bind("set_enabled", a => Add(new("enabled", Node(a), null, a.AsType(1, "ui", DataType.Boolean, false).Boolean)));
@@ -158,6 +160,13 @@ internal sealed class ScreenLuaVm
             argument.Set("node", value.NodeId is { } node ? DynValue.NewString(new ScreenNodeHandle(Definition.Id, instanceId, node).ToString()) : DynValue.Nil);
             argument.Set("x", DynValue.NewNumber(value.X)); argument.Set("y", DynValue.NewNumber(value.Y));
             argument.Set("seconds", DynValue.NewNumber(value.Seconds));
+            if (value.Audio is { } audio)
+            {
+                audio.Validate();
+                argument.Set("audio_id", DynValue.NewString(audio.Id.ToString("N")));
+                argument.Set("status", DynValue.NewString(audio.Status));
+                argument.Set("message", DynValue.NewString(audio.Message));
+            }
             if (value.Animation is { } animation)
             {
                 animation.Validate();
@@ -281,13 +290,14 @@ internal sealed class ScreenLuaWorkerService
     {
         var stamp = request.Stamp;
         if (request.Protocol != ScreenLuaProtocol.Version || stamp.RequestId == Guid.Empty || stamp.SessionId == Guid.Empty || stamp.Generation < 1 || stamp.Version < 0 ||
-            request.Nodes.IsDefault || !LuaLimits.ValidVariables(request.Snapshot) || !LuaActionScript.ValidReferences(request.References))
+            request.Nodes.IsDefault || !LuaLimits.ValidVariables(request.Snapshot) || !LuaActionScript.ValidReferences(request.References) ||
+            request.AudioReferences is { } audioReferences && !LuaActionScript.ValidReferences(audioReferences))
             throw new ArgumentException("Неверная версия или данные протокола экрана.");
         ScreenLuaResponse Reply(string kind, ImmutableArray<ScreenChange> changes) => new(ScreenLuaProtocol.Version, kind, stamp, null, changes);
         if (request.Kind == "handshake")
         {
             if (identity is not null || stamp.OwnerId != Guid.Empty || stamp.InstanceId != Guid.Empty || stamp.Version != 0 ||
-                request.ResourceId != Guid.Empty || !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Event is not null || !request.Snapshot.IsEmpty || request.State is not null || request.Modules is not null || request.RandomState is not null || request.Minigame is not null)
+                request.ResourceId != Guid.Empty || !request.Nodes.IsEmpty || request.Source is not null || !request.References.IsEmpty || request.Event is not null || !request.Snapshot.IsEmpty || request.State is not null || request.Modules is not null || request.RandomState is not null || request.Minigame is not null || request.AudioReferences is not null)
                 throw new ArgumentException("Неверное приветствие экранного worker.");
             identity = (stamp.SessionId, stamp.Generation);
             return Reply("ready", []);
@@ -301,7 +311,7 @@ internal sealed class ScreenLuaWorkerService
                 throw new ArgumentException("Недопустимая загрузка или бюджет экранного worker.");
             var definition = new ScreenDefinition(request.ResourceId, request.Nodes);
             if (request.References.Any(r => !definition.Nodes.Any(n => n.Id == r.Value))) throw new ArgumentException("Чужая именованная ссылка экрана.");
-            var vm = new ScreenLuaVm(definition, stamp.InstanceId, request.Source, request.References, request.Modules, log, request.Minigame);
+            var vm = new ScreenLuaVm(definition, stamp.InstanceId, request.Source, request.References, request.Modules, log, request.Minigame, request.AudioReferences);
             var changes = vm.Handle(null, request.Snapshot, request.State ?? LuaValue.Null, request.RandomState ?? LuaRandomState.Initial);
             _ = ScreenLuaProtocol.Prepare(definition, changes);
             if (entries.Values.Sum(e => e.Vm.Definition.Nodes.Length) + vm.Definition.Nodes.Length > ScreenStack.MaxSessionNodes)
@@ -311,7 +321,7 @@ internal sealed class ScreenLuaWorkerService
         }
         if (!entries.TryGetValue(stamp.InstanceId, out var entry) || entry.Stamp.OwnerId != stamp.OwnerId ||
             entry.Version != stamp.Version || entry.ResourceId != request.ResourceId ||
-            request.Source is not null || !request.References.IsEmpty || request.Modules is not null || request.Minigame is not null)
+            request.Source is not null || !request.References.IsEmpty || request.Modules is not null || request.Minigame is not null || request.AudioReferences is not null)
             throw new ArgumentException("Устаревшие данные или чужой владелец экрана.");
         if (request.Kind == "close" && request.Nodes.IsEmpty && request.Event is null && request.Snapshot.IsEmpty && request.State is null && request.RandomState is null)
         { entries.Remove(stamp.InstanceId); return Reply("closed", []); }

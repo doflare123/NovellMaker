@@ -12,7 +12,7 @@ public enum ScreenLuaIssueKind { StaleEvent, QueueExpired, Busy, Handler, Conver
 public sealed record ScreenLuaIssue(ScreenLuaIssueKind Kind, Guid? InstanceId, string Message);
 
 /// <summary>Single-host-thread lifecycle/queue. Only Poll commits asynchronously prepared batches.</summary>
-public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
+public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
 {
     public const int MaximumQueuedEvents = 128;
     private sealed class QueueExpiredException() : IOException("Превышен срок ожидания события экрана (5 секунд): событие не исполнено.");
@@ -37,6 +37,9 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         internal ImmutableHashSet<Guid> DiagnosticScripts = [];
         internal ScreenAnimator Animator = new();
         internal bool AnimationDirty;
+        internal NovellMaker.Core.Audio.AudioOwner AudioOwner = null!;
+        internal ImmutableDictionary<string, Guid> AudioReferences = ImmutableDictionary<string, Guid>.Empty;
+        internal readonly Dictionary<Guid, AudioTicket> Audio = [];
     }
     private sealed record Work(Entry Entry, string Kind, ScreenLuaEvent? Event,
         ImmutableDictionary<string, string> Snapshot, long Submitted, int ChainDepth = 0);
@@ -79,7 +82,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     public int AppliedBatches { get; private set; }
     public int QueuedEvents => queue.Count;
     public int ReservedServiceReplies => serviceReplies.Count;
-    private int Occupancy => queue.Count + serviceReplies.Count + entries.Values.Sum(e => e.Animator.Reserved);
+    private int Occupancy => queue.Count + serviceReplies.Count + entries.Values.Sum(e => e.Animator.Reserved + e.Audio.Values.Count(t => !t.Queued));
     public bool HasAnimations(ScreenInstance instance) => IsAvailable(instance) &&
         (entries[instance.Id].Animator.Busy || queue.Any(w => ReferenceEquals(w.Entry.Instance, instance) && w.Event?.Animation is not null) ||
          pending is { } p && ReferenceEquals(p.Work.Entry.Instance, instance) && p.Work.Event?.Animation is not null ||
@@ -107,7 +110,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     private void DrainAnimations(Entry entry, ImmutableDictionary<string, string> snapshot)
     {
         foreach (var result in entry.Animator.Drain())
-            queue.AddLast(new Work(entry, "event", new("animation_result") { Animation = result }, snapshot, clock.GetTimestamp()));
+            queue.AddLast(new Work(entry, "event", new("animation_result") { Animation = result }, snapshot, clock.GetTimestamp(), result.ChainDepth));
     }
     public bool HasPending => pending is not null || queue.Count != 0 || closes.Count != 0 || held.Count != 0;
     public bool HasRunnablePending => pending is { Work.Entry.SuspendedAt: null } || closes.Count != 0 ||
@@ -173,11 +176,14 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
 
     public void Attach(ScreenInstance instance, string source, ImmutableDictionary<string, Guid>? references = null,
         ImmutableDictionary<string, string>? snapshot = null, LuaValue? state = null, LuaModuleLibrary? modules = null, LuaRandomState? randomState = null,
-        NovellMaker.Core.Minigames.MinigameDefinition? minigame = null, MinigameInvocation? invocation = null)
+        NovellMaker.Core.Minigames.MinigameDefinition? minigame = null, MinigameInvocation? invocation = null,
+        ImmutableDictionary<string, Guid>? audioReferences = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         LuaLimits.CheckSource(source);
         references ??= ImmutableDictionary<string, Guid>.Empty;
+        audioReferences ??= ImmutableDictionary<string, Guid>.Empty;
+        if (!LuaActionScript.ValidReferences(audioReferences)) throw new ArgumentException("Неверные ссылки звука Lua.");
         snapshot ??= ImmutableDictionary<string, string>.Empty;
         if (!Current(instance) || instance.Version != 0 || entries.ContainsKey(instance.Id) ||
             !LuaActionScript.ValidReferences(references) || references.Any(r => !instance.Definition.Nodes.Any(n => n.Id == r.Value)) ||
@@ -188,7 +194,8 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         { minigame.Validate(); minigame.ParametersSchema.Validate(invocation!.Parameters); minigame.StateSchema.Validate(state!); }
         if (Occupancy >= MaximumQueuedEvents) throw new InvalidOperationException("Очередь событий экрана заполнена.");
         var entry = new Entry(instance, source, references, snapshot) { State = state ?? LuaValue.Null, Modules = modules, RandomState = randomState ?? LuaRandomState.Initial,
-            Minigame = minigame, Invocation = invocation };
+            Minigame = minigame, Invocation = invocation, AudioReferences = audioReferences,
+            AudioOwner = new(stack.SessionId, Generation, instance.OwnerId, instance.Id) };
         entries.Add(instance.Id, entry);
         queue.AddLast(new Work(entry, "load", null, snapshot, clock.GetTimestamp()));
     }
@@ -204,6 +211,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         if (!IsAvailable(instance)) return ScreenEventAdmission.Unavailable;
         var entry = entries[instance.Id];
         ScreenLuaProtocol.ValidateEvent(stack.VisualDefinition(instance), value);
+        if (value.Audio is not null) return ScreenEventAdmission.Unavailable; // Host-owned reserved events only.
         ArgumentNullException.ThrowIfNull(snapshot);
         if (!LuaLimits.ValidVariables(snapshot)) throw new ArgumentException("Превышен бюджет снимка события.");
         if (value.Result is { } result)
@@ -283,8 +291,9 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                                 throw new InvalidOperationException("Превышен бюджет глубины цепочки триггеров и сервисов.");
                             if (!result.Batch.Triggers.IsEmpty && Occupancy + result.Batch.Triggers.Length > MaximumQueuedEvents)
                                 throw new InvalidOperationException("Превышен бюджет очереди или глубины цепочки триггеров.");
-                            var animator = entry.Animator.Prepare(entry.Instance.Definition, result.Batch.AnimationChanges);
-                            if (Occupancy - entry.Animator.Reserved + animator.Reserved + result.Batch.Triggers.Length + (result.Batch.Service is null ? 0 : 1) > MaximumQueuedEvents)
+                            var animator = entry.Animator.Prepare(entry.Instance.Definition, result.Batch.AnimationChanges, ready.Work.ChainDepth);
+                            var audioReservations = ValidateAudio(entry, result.Batch.AnimationChanges, ready.Work.ChainDepth);
+                            if (Occupancy - entry.Animator.Reserved + animator.Reserved + audioReservations + result.Batch.Triggers.Length + (result.Batch.Service is null ? 0 : 1) > MaximumQueuedEvents)
                                 throw new InvalidOperationException("Нет места для событий завершения анимаций.");
                             stack.Commit(entry.Instance, ready.Stamp.Version, result.Batch!.Definition);
                             entry.Animator = animator;
@@ -293,6 +302,8 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
                             if (result.Batch.RandomState is { } random) entry.RandomState = random;
                             if (result.Batch.MinigameResult is { } completion) entry.MinigameResult = completion;
                             AppliedBatches++;
+                            CommitAudio(entry, result.Batch.AnimationChanges, ready.Work.ChainDepth);
+                            if (ready.Work.Event?.Audio is { } audioResult) entry.Audio.Remove(audioResult.Id);
                             DrainAnimations(entry, ready.Work.Snapshot);
                             foreach (var trigger in result.Batch.Triggers)
                                 queue.AddLast(new Work(entry, "event", new("trigger") { Trigger = trigger }, ready.Work.Snapshot,
@@ -415,7 +426,8 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             work.Kind == "load" || work.Kind == "event" && synchronizeAnimation ? definition.Nodes : [], work.Kind == "load" ? entry.Source : null,
             work.Kind == "load" ? entry.References : ImmutableDictionary<string, Guid>.Empty, work.Event, work.Snapshot)
         { State = work.Kind == "close" ? null : state, Modules = modules, RandomState = work.Kind == "close" ? null : random,
-            Minigame = work.Kind == "load" ? entry.Invocation : null };
+            Minigame = work.Kind == "load" ? entry.Invocation : null,
+            AudioReferences = work.Kind == "load" ? entry.AudioReferences : null };
         request = await ScreenLuaProtocol.FitServiceResultAsync(request, token).ConfigureAwait(false);
         CheckDeadline();
         exchangeStarted = true;
@@ -439,7 +451,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
             {
                 if (batch.State is { } data) minigame.StateSchema.Validate(data);
                 if (work.Kind == "load" && entry.Invocation!.Restoring &&
-                    (batch.State is { } restored && restored.ToJson() != state.ToJson() || batch.RandomState is { } rng && rng != random || batch.MinigameResult is not null || batch.Close || batch.Service is not null || !batch.Triggers.IsEmpty || batch.AnimationChanges.Any(c => c.Kind is "animate" or "cancel_animation")))
+                    (batch.State is { } restored && restored.ToJson() != state.ToJson() || batch.RandomState is { } rng && rng != random || batch.MinigameResult is not null || batch.Close || batch.Service is not null || !batch.Triggers.IsEmpty || batch.AnimationChanges.Any(c => c.Kind is "animate" or "cancel_animation" || c.Audio is not null)))
                     throw new InvalidOperationException("Восстановление мини-игры должно только построить представление из снимка.");
             }
         }
@@ -468,7 +480,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         if (Current(entry.Instance) && !entry.Closing)
             Report(message, ScreenLuaIssueKind.QueueExpired, entry.Instance.Id);
         // Nothing was sent: the remote VM and its version are still valid.
-        if (work.Kind == "load" || work.Event?.Kind is "service_result" or "animation_result")
+        if (work.Kind == "load" || work.Event?.Kind is "service_result" or "animation_result" or "audio_result")
         {
             entry.Error = work.Kind == "load" ? "Истёк срок загрузки экрана." : "Истёк срок обработки ответа сервиса или анимации.";
             RemoveQueued(entry); ScheduleClose(entry);
@@ -477,6 +489,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     }
     private void RemoveQueued(Entry entry)
     {
+        ClearAudio(entry);
         entry.Animator = new();
         var node = queue.First;
         while (node is not null) { var next = node.Next; if (ReferenceEquals(node.Value.Entry, entry)) queue.Remove(node); node = next; }
@@ -518,7 +531,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         services.Clear();
         serviceReplies.Clear();
         faulted = true;
-        foreach (var entry in entries.Values) { entry.Error = message; entry.Loaded = false; entry.Animator = new(); }
+        foreach (var entry in entries.Values) { entry.Error = message; entry.Loaded = false; entry.Animator = new(); ClearAudio(entry); }
         queue.Clear(); closes.Clear();
         Report(message, context: context);
         Retire();
@@ -546,6 +559,7 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         Retire();
+        foreach (var entry in entries.Values) ClearAudio(entry);
         entries.Clear(); queue.Clear(); closes.Clear(); diagnostics.Clear(); issues.Clear();
         services.Clear();
         serviceReplies.Clear();
@@ -558,6 +572,8 @@ public sealed class ScreenLuaSession : IDisposable, IAsyncDisposable
         if (disposed) return;
         disposed = true;
         Retire();
+        foreach (var entry in entries.Values) ClearAudio(entry);
+        if (audio is not null) audio.PlaybackEnded -= AudioEnded;
         entries.Clear(); queue.Clear(); closes.Clear();
         services.Clear();
         serviceReplies.Clear();

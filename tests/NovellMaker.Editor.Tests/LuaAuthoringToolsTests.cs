@@ -7,6 +7,27 @@ namespace NovellMaker.Editor.Tests;
 public sealed partial class ExternalScriptTests
 {
     [TestMethod]
+    public async Task AudioExampleHistorySaveAsKeepsWavAndStableReferences()
+    {
+        using var root = new TestRoot(); var dialogs = new Dialogs(root.Path); using var session = await Session(dialogs, editor: new CodeEditor());
+        var initial = session.Project!; session.AddAudioExample(); Assert.AreSame(initial, session.Project); StringAssert.Contains(session.ScreenAuthoringError, "WAV");
+        var id = Guid.NewGuid(); var relative = $"Assets/Audio/{id:N}.wav"; Directory.CreateDirectory(Path.Combine(root.Path, "Assets", "Audio"));
+        await File.WriteAllBytesAsync(Path.Combine(root.Path, relative), NovellMaker.Testing.AudioFixture.Wave());
+        session.UpdateAudio(session.Project!.Audio with { Assets = [new(id, "sample.wav", relative)] });
+        var before = session.Project!; session.AddAudioExample(); var added = session.Project!;
+        Assert.AreEqual(before.Scenes.Length + 1, added.Scenes.Length); session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project));
+        session.Redo(); Assert.IsTrue(added.ContentEquals(session.Project));
+        await session.SaveAsync(); Assert.IsEmpty(dialogs.Errors);
+        dialogs.SavePath = Path.Combine(root.Path, "copy", "audio.novell"); Directory.CreateDirectory(Path.GetDirectoryName(dialogs.SavePath)!); await session.SaveAsync(true);
+        Assert.IsEmpty(dialogs.Errors);
+        var copy = await new JsonProjectStore().LoadAsync(dialogs.SavePath); Assert.IsTrue(added.ContentEquals(copy));
+        Assert.AreEqual(copy.Audio.Assets[0].Id, copy.Scripts.Last().References["sample"]);
+        CollectionAssert.AreEqual(await File.ReadAllBytesAsync(Path.Combine(root.Path, copy.Audio.Assets[0].RelativePath)),
+            await File.ReadAllBytesAsync(Path.Combine(Path.GetDirectoryName(dialogs.SavePath)!, copy.Audio.Assets[0].RelativePath)));
+        Assert.AreEqual(copy.Scripts.Last().Source, await File.ReadAllTextAsync(ScriptFiles.Resolve(Path.GetDirectoryName(dialogs.SavePath)!, copy.Scripts.Last().Id)));
+        Assert.AreEqual(copy.Scenes.Last().Id, copy.InputBindings.Single(b => b.Key == "F10").TargetSceneId); Assert.IsEmpty(dialogs.Errors);
+    }
+    [TestMethod]
     public async Task AnimationExampleHistorySaveAsAndReferencesRoundTrip()
     {
         using var root = new TestRoot(); var dialogs = new Dialogs(root.Path); using var session = await Session(dialogs, editor: new CodeEditor());

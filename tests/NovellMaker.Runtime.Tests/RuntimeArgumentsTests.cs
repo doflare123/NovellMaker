@@ -3,6 +3,35 @@ namespace NovellMaker.Runtime.Tests;
 [TestClass]
 public sealed class RuntimeArgumentsTests
 {
+    [TestMethod]
+    public void OrdinarySmokeReportSerializesItsMissingMinigameAsExplicitLuaNull()
+    {
+        var report = new RuntimeSmokeReport(true, 1, null, null, null, false, false, false, 0, 0, 0, []);
+        using var json = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(report));
+        Assert.AreEqual(System.Text.Json.JsonValueKind.Null, json.RootElement.GetProperty("MinigameState").ValueKind);
+    }
+    [TestMethod]
+    [DataRow("1")] [DataRow("5")] [DataRow("30")]
+    public void RealtimeProbeUsesBoundedRealDurationWithoutAnActionPlan(string duration)
+    {
+        var file = Path.Combine(temporaryDirectory, "probe.novell"); File.WriteAllText(file, "{}");
+        var args = RuntimeArguments.Parse(["--project", file, "--assets-root", temporaryDirectory, "--scene", Guid.NewGuid().ToString(), "--language", "ru",
+            "--smoke-output", Path.Combine(temporaryDirectory, "probe.png"), "--smoke-report", Path.Combine(temporaryDirectory, "probe.json"), "--smoke-realtime-seconds", duration]);
+        Assert.AreEqual(double.Parse(duration), args.SmokeRealtimeDuration!.Value.TotalSeconds); Assert.IsNull(args.SmokePlanPath);
+    }
+
+    [TestMethod]
+    [DataRow("0")] [DataRow("31")] [DataRow("NaN")] [DataRow("Infinity")] [DataRow("bad")]
+    [DataRow("missing-output")] [DataRow("with-plan")]
+    public void RealtimeProbeRejectsInvalidOrMixedModes(string mutation)
+    {
+        var file = Path.Combine(temporaryDirectory, "probe.novell"); File.WriteAllText(file, "{}");
+        var args = new List<string> { "--project", file, "--assets-root", temporaryDirectory, "--scene", Guid.NewGuid().ToString(), "--language", "ru" };
+        if (mutation != "missing-output") args.AddRange(["--smoke-output", Path.Combine(temporaryDirectory, "probe.png"), "--smoke-report", Path.Combine(temporaryDirectory, "probe.json")]);
+        if (mutation == "with-plan") args.AddRange(["--smoke-plan", file]);
+        args.AddRange(["--smoke-realtime-seconds", mutation is "missing-output" or "with-plan" ? "5" : mutation]);
+        Assert.Throws<ArgumentException>(() => RuntimeArguments.Parse(args));
+    }
     private readonly string temporaryDirectory = Path.Combine(
         Path.GetTempPath(),
         "NovellMaker.Runtime.Tests",

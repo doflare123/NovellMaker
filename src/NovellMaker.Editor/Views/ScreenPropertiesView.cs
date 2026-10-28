@@ -116,6 +116,7 @@ public sealed class ScreenPropertiesView : UserControl
         Button(settings, "AddLuaDiagnosticsExample", "Добавить пример журнала Lua (F1)", () => session?.AddLuaDiagnosticsExample());
         Button(settings, "AddMinigameExample", "Добавить карточный пазл и запуск в сюжете", () => session?.AddMinigameExample());
         Button(settings, "AddAnimationsExample", "Добавить пример анимаций (F11)", () => session?.AddAnimationsExample());
+        Button(settings, "AddAudioExample", "Добавить пример звука Lua (F10, импортированный WAV)", () => session?.AddAudioExample());
         var minigameProperties = new MinigamePropertiesView();
         minigameProperties.Bind(DataContextProperty, new Avalonia.Data.Binding());
         settings.Children.Add(new Expander { Name = "MinigameResourceExpander", Header = "Мини-игра", Content = minigameProperties, HorizontalAlignment = HorizontalAlignment.Stretch });

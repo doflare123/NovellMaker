@@ -6,18 +6,21 @@ using NovellMaker.Core.Execution;
 using NovellMaker.Core.Triggers;
 using NovellMaker.Core.Scripting;
 using NovellMaker.Core.Screens.Animations;
+using NovellMaker.Core.Audio;
 
 namespace NovellMaker.Core.Screens.Lua;
 
 public sealed record ScreenLuaStamp(Guid RequestId, Guid SessionId, long Generation, Guid OwnerId, Guid InstanceId, long Version);
 public sealed record ScreenLuaEvent(string Kind, Guid? NodeId = null, double X = 0, double Y = 0, double Seconds = 0)
 {
+    public ScriptAudioResult? Audio { get; init; }
     public ScreenAnimationResult? Animation { get; init; }
     public GameServiceResult? Result { get; init; }
     public AuthorTrigger? Trigger { get; init; }
 }
 public sealed record ScreenChange(string Kind, Guid? NodeId, string? Text, bool? Value)
 {
+    public ScriptAudioCommand? Audio { get; init; }
     public ScreenAnimation? Animation { get; init; }
     public Guid? AnimationId { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NovellMaker.Core.Minigames.MinigameResult? MinigameResult { get; init; }
@@ -35,6 +38,7 @@ internal sealed record ScreenLuaRequest(int Protocol, string Kind, ScreenLuaStam
     ImmutableArray<ScreenNode> Nodes, string? Source, ImmutableDictionary<string, Guid> References,
     ScreenLuaEvent? Event, ImmutableDictionary<string, string> Snapshot)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public ImmutableDictionary<string, Guid>? AudioReferences { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public MinigameInvocation? Minigame { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public LuaValue? State { get; init; }
@@ -62,7 +66,7 @@ public sealed record MinigameInvocation(LuaValue Parameters, bool Restoring);
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 15;
+    internal const int Version = 16;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {
@@ -144,6 +148,14 @@ internal static class ScreenLuaProtocol
 
     internal static void ValidateEvent(ScreenDefinition definition, ScreenLuaEvent value, bool worker = false)
     {
+        if (value.Kind == "audio_result")
+        {
+            if (value.Audio is null || value.NodeId is not null || value.X != 0 || value.Y != 0 || value.Seconds != 0 ||
+                value.Result is not null || value.Trigger is not null || value.Animation is not null)
+                throw new ArgumentException("Некорректное событие звука.");
+            value.Audio.Validate(); return;
+        }
+        if (value.Audio is not null) throw new ArgumentException("Лишние данные звука.");
         if (value.Kind == "animation_result")
         {
             if (value.Animation is null || value.NodeId is not null || value.X != 0 || value.Y != 0 || value.Seconds != 0 || value.Result is not null || value.Trigger is not null)
@@ -206,6 +218,16 @@ internal static class ScreenLuaProtocol
         foreach (var change in changes)
         {
             if (change is null || close) throw new InvalidOperationException("Некорректный пакет экрана.");
+            if (change.Kind == "audio")
+            {
+                if (change.Audio is null || minigameResult is not null || change.NodeId is not null || change.Text is not null || change.Value is not null ||
+                    change.Patch is not null || change.ParentId is not null || change.Ids is not null || change.Service is not null ||
+                    change.Trigger is not null || change.State is not null || change.RandomState is not null || change.MinigameResult is not null ||
+                    change.Animation is not null || change.AnimationId is not null)
+                    throw new InvalidOperationException("Некорректные данные команды звука.");
+                change.Audio.Validate(); continue;
+            }
+            if (change.Audio is not null) throw new InvalidOperationException("Лишние данные команды звука.");
             if (change.Kind is "animate" or "cancel_animation")
             {
                 if (minigameResult is not null || change.NodeId is not null || change.Text is not null || change.Value is not null ||

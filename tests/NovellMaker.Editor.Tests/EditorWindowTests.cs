@@ -145,22 +145,26 @@ public sealed class EditorWindowTests
     });
 
     [TestMethod]
-    [DataRow(0)] [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)] [DataRow(5)] [DataRow(6)] [DataRow(7)]
+    [DataRow(0)] [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)] [DataRow(5)] [DataRow(6)] [DataRow(7)] [DataRow(8)]
     public Task AuthorExampleCanBeAddedThroughInspectorAndEditedOnCanvas(int exampleKind) => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
         await session.NewProjectAsync(); session.AddScene(); session.OpenScreenLibrary(); Dispatcher.UIThread.RunJobs();
         var inspector = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single(); var before = session.Project!;
-        Find<Button>(inspector, exampleKind == 7 ? "AddAnimationsExample" : exampleKind == 6 ? "AddLuaDiagnosticsExample" : exampleKind == 5 ? "AddLuaRandomExample" : exampleKind == 4 ? "AddLuaLibraryExample" : exampleKind == 3 ? "AddLuaModulesExample" : exampleKind == 2 ? "AddComponentStateExample" : exampleKind == 1 ? "AddTriggersExample" : "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        if (exampleKind == 8)
+        {
+            var id = Guid.NewGuid(); session.UpdateAudio(before.Audio with { Assets = [new(id, "Пример.wav", $"Assets/Audio/{id:N}.wav")] }); before = session.Project!;
+        }
+        Find<Button>(inspector, exampleKind == 8 ? "AddAudioExample" : exampleKind == 7 ? "AddAnimationsExample" : exampleKind == 6 ? "AddLuaDiagnosticsExample" : exampleKind == 5 ? "AddLuaRandomExample" : exampleKind == 4 ? "AddLuaLibraryExample" : exampleKind == 3 ? "AddLuaModulesExample" : exampleKind == 2 ? "AddComponentStateExample" : exampleKind == 1 ? "AddTriggersExample" : "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
         Assert.AreEqual(before.Scenes.Length + 1, session.Project!.Scenes.Length);
         session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo();
         session.OpenScreenLibrary(session.Project!.Scenes.Last().Id); Dispatcher.UIThread.RunJobs();
-        Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == (exampleKind == 7 ? "Анимации компонентов" : exampleKind == 6 ? "Журнал Lua" : exampleKind == 5 ? "Управляемый RNG" : exampleKind == 4 ? "Библиотека Lua" : exampleKind == 3 ? "Модули Lua" : exampleKind == 2 ? "Состояние компонентов" : exampleKind == 1 ? "Триггеры и постоянные данные" : "Настройки")));
+        Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == (exampleKind == 8 ? "Звук из Lua" : exampleKind == 7 ? "Анимации компонентов" : exampleKind == 6 ? "Журнал Lua" : exampleKind == 5 ? "Управляемый RNG" : exampleKind == 4 ? "Библиотека Lua" : exampleKind == 3 ? "Модули Lua" : exampleKind == 2 ? "Состояние компонентов" : exampleKind == 1 ? "Триггеры и постоянные данные" : "Настройки")));
         window.UpdateLayout();
         await Task.Yield();
         AvaloniaHeadlessPlatform.ForceRenderTimerTick(2);
         Dispatcher.UIThread.RunJobs();
-        var screenshot = exampleKind == 7 ? "editor-animations-example.png" : exampleKind == 6 ? "editor-lua-diagnostics-example.png" : exampleKind == 5 ? "editor-lua-rng-example.png" : exampleKind == 4 ? "editor-lua-standard-library.png" : exampleKind == 3 ? "editor-lua-modules.png" : exampleKind == 2 ? "editor-component-state.png" : exampleKind == 1 ? "editor-triggers.png" : "editor-player-settings.png";
+        var screenshot = exampleKind == 8 ? "editor-audio-example.png" : exampleKind == 7 ? "editor-animations-example.png" : exampleKind == 6 ? "editor-lua-diagnostics-example.png" : exampleKind == 5 ? "editor-lua-rng-example.png" : exampleKind == 4 ? "editor-lua-standard-library.png" : exampleKind == 3 ? "editor-lua-modules.png" : exampleKind == 2 ? "editor-component-state.png" : exampleKind == 1 ? "editor-triggers.png" : "editor-player-settings.png";
         Capture(window, screenshot);
         if (exampleKind >= 4 && Environment.GetEnvironmentVariable("NOVELLMAKER_CAPTURE_DIR") is { } directory)
         {
@@ -169,6 +173,25 @@ public sealed class EditorWindowTests
             bitmap.Render(window); bitmap.Save(Path.Combine(directory, screenshot), PngBitmapEncoderOptions.Default);
         }
         window.Close();
+    });
+
+    [TestMethod]
+    public Task AudioReferenceCanBeBoundRenamedAndUndoneThroughTheInspector() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); var id = Guid.NewGuid();
+        session.UpdateAudio(session.Project!.Audio with { Assets = [new(id, "sample.wav", $"Assets/Audio/{id:N}.wav")] });
+        session.AddAudioExample(); session.OpenScriptLibrary(session.Project!.Scripts.Last().Id); Dispatcher.UIThread.RunJobs();
+        Find<Expander>(window, "LuaReferencesSettings").IsExpanded = true; Dispatcher.UIThread.RunJobs();
+        Find<TextBox>(window, "LuaAssetReferenceAlias").Text = "tone";
+        var target = Find<ComboBox>(window, "LuaAssetReferenceTarget");
+        target.SelectedItem = target.ItemsSource!.Cast<object>().Single(t => t.ToString() == "Звук: sample.wav");
+        Find<Button>(window, "InsertLuaAssetReference").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.AreEqual(id, session.SelectedScript!.References["tone"]); StringAssert.Contains(Find<TextBlock>(window, "LuaAssetReferences").Text!, "audio.tone");
+        session.Undo(); Assert.IsFalse(session.SelectedScript!.References.ContainsKey("tone")); session.Redo();
+        session.UpdateAudio(session.Project.Audio with { Assets = [session.Project.Audio.Assets[0] with { Name = "renamed.wav" }] }); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(id, session.SelectedScript!.References["tone"]); StringAssert.Contains(Find<TextBlock>(window, "LuaAssetReferences").Text!, "renamed.wav");
+        Capture(window, "editor-lua-audio-references.png"); window.Close();
     });
 
     [TestMethod]

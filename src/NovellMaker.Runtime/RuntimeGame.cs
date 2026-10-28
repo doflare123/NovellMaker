@@ -99,7 +99,7 @@ internal sealed partial class RuntimeGame : Game
             SynchronizeWithVerticalRetrace = arguments.SmokeOutputPath is null,
             HardwareModeSwitch = false,
         };
-        IsFixedTimeStep = arguments.SmokeOutputPath is null;
+        IsFixedTimeStep = arguments.SmokeOutputPath is null || arguments.SmokeRealtimeDuration is not null;
         IsMouseVisible = true;
         Window.AllowUserResizing = true;
         Window.Title = arguments.Package?.Title ?? "NovellMaker — предпросмотр сцены";
@@ -143,6 +143,7 @@ internal sealed partial class RuntimeGame : Game
 
     protected override void Update(GameTime gameTime)
     {
+        if (arguments.SmokeRealtimeDuration is not null) smokeRealtimeElapsed += gameTime.ElapsedGameTime;
         if (settingsServices.Poll()) RefreshTextTextures();
         PollSlots();
         screens.SyncScene(player.Execution.State.SceneId);
@@ -179,7 +180,8 @@ internal sealed partial class RuntimeGame : Game
                 initialVisibleCharacterCount = player.Frame.Characters.Length;
                 initialFrameCaptured = true;
             }
-            if (smokePlan is null) AdvanceSmokeSequence(); else AdvanceActionSmoke();
+            if (smokePlan is null) { if (arguments.SmokeRealtimeDuration is null) AdvanceSmokeSequence(); }
+            else AdvanceActionSmoke();
         }
         else if (IsActive && inputActive && imageCache?.IsPending != true)
         {
@@ -301,7 +303,7 @@ internal sealed partial class RuntimeGame : Game
         if (slots.IsBusy) pendingSlotDrawFrames++;
         if (imagesPending) pendingImageDrawFrames++;
         if (arguments.SmokeOutputPath is not null && drawFrames >= 4 &&
-            (smokePlan is null ? smokeReturned : actionTrace.Count == smokePlan.Length) && !player.Execution.HasPendingLua && !screens.HasPending && !slots.IsBusy &&
+            (arguments.SmokeRealtimeDuration is { } realtime ? smokeRealtimeElapsed >= realtime : smokePlan is null ? smokeReturned : actionTrace.Count == smokePlan.Length) && !player.Execution.HasPendingLua && !screens.HasPending && !slots.IsBusy &&
             imageCache?.IsPending != true &&
             (componentTextures is null || componentTextures.DeferredNodes == componentTextures.CapacityDeferredNodes) && !smokeWritten)
         {
@@ -439,6 +441,7 @@ internal sealed partial class RuntimeGame : Game
             PausedAudioSources = audioBackend.PausedSources,
             AudioSources = audio?.ActiveSources ?? 0,
             AudioOpenedSources = audioBackend.OpenedSources,
+            AudioLastSourceVolume = audioBackend.LastSourceVolume,
             AudioSubmittedBytes = audioBackend.SubmittedBytes,
             SessionPhase = session.Phase.ToString(), SessionGeneration = session.Generation,
             PendingLua = player.Execution.HasPendingLua, PendingScreenLua = screens.HasPending,
@@ -649,6 +652,7 @@ internal sealed partial class RuntimeGame : Game
             Color.White);
     }
 
+    private TimeSpan smokeRealtimeElapsed;
     private void WriteSmokeArtifacts(RenderTarget2D target)
     {
         var outputDirectory = Path.GetDirectoryName(arguments.SmokeOutputPath!);
@@ -706,6 +710,9 @@ internal sealed partial class RuntimeGame : Game
                 ScreenLuaAppliedBatches = screens.Scripts?.AppliedBatches ?? 0,
                 ScreenLuaDiagnostics = screens.Scripts?.Diagnostics ?? [],
                 LuaJournal = screens.Scripts?.Journal.Entries ?? [],
+                RealtimeGameSeconds = smokeRealtimeElapsed.TotalSeconds, MinigameState = player.Execution.State.Minigame?.State ?? NovellMaker.Core.Scripting.LuaValue.Null,
+                AudioPlaybackPauseCount = audioBackend.PlaybackPauseCount, AudioPlaybackPausedSeconds = audioBackend.PlaybackPausedSeconds,
+                AudioLongestPlaybackPauseSeconds = audioBackend.LongestPlaybackPauseSeconds, AudioBufferUnderruns = audioBackend.BufferUnderruns,
                 Packaged = arguments.Package is not null, WindowTitle = Window.Title,
                 WindowWidth = GraphicsDevice.PresentationParameters.BackBufferWidth, WindowHeight = GraphicsDevice.PresentationParameters.BackBufferHeight,
                 RuntimeLibraryPath = typeof(object).Assembly.Location, AudioSources = audio?.ActiveSources ?? 0, AudioSubmittedBytes = audioBackend.SubmittedBytes, AudioOpenedSources = audioBackend.OpenedSources, AudioMixer = Enum.GetValues<NovellMaker.Core.Audio.AudioGroup>().ToDictionary(g => g, g => audio!.Bus(g)) };
@@ -738,6 +745,12 @@ internal sealed record RuntimeSmokeReport(
     int AfterPreviousVisibleCharacterCount,
     IReadOnlyList<string> Diagnostics)
 {
+    public double RealtimeGameSeconds { get; init; }
+    public NovellMaker.Core.Scripting.LuaValue MinigameState { get; init; } = NovellMaker.Core.Scripting.LuaValue.Null;
+    public int AudioPlaybackPauseCount { get; init; }
+    public double AudioPlaybackPausedSeconds { get; init; }
+    public double AudioLongestPlaybackPauseSeconds { get; init; }
+    public int AudioBufferUnderruns { get; init; }
     public IReadOnlyList<RuntimeActionTrace> ActionTrace { get; init; } = [];
     public int PendingLuaDrawFrames { get; init; }
     public int PendingScreenLuaDrawFrames { get; init; }
@@ -765,6 +778,7 @@ internal sealed record RuntimeSmokeReport(
 internal sealed record RuntimeSmokeStep(string Kind, double Seconds = 0, int X = 0, int Y = 0, string? Key = null);
 internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState State, string Text)
 {
+    public float AudioLastSourceVolume { get; init; }
     public Guid[] ScreenInstanceIds { get; init; } = [];
     public string[] PresentedScreenTexts { get; init; } = [];
     public string SessionPhase { get; init; } = "";
