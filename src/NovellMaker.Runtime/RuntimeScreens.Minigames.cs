@@ -62,7 +62,9 @@ internal sealed partial class RuntimeScreens
                 Scripts.Attach(instance, script.Source, asset.References, snapshot(), saved.State,
                     new LuaModuleLibrary(script.Id, project.Scripts), saved.RandomState, asset.Minigame, new(saved.Parameters, player.MinigameRestored), AudioReferences(script));
                 observedBatches = Scripts.AppliedBatches;
-                player.MinigameSaveBarrier = () => minigameInstance is not null && Scripts?.HasAnimations(minigameInstance) == true
+                player.MinigameSaveBarrier = () => minigameInstance is not null && Stack.HasHeldInput(minigameInstance)
+                    ? "Отпустите указатель и клавиши перед сохранением мини-игры."
+                    : minigameInstance is not null && Scripts?.HasAnimations(minigameInstance) == true
                     ? "Дождитесь завершения анимации мини-игры перед сохранением."
                     : minigameInstance is not null && Scripts?.HasAudio(minigameInstance) == true
                     ? "Остановите звук мини-игры и дождитесь результата перед сохранением."

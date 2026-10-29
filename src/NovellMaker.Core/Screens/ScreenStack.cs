@@ -8,13 +8,13 @@ public sealed record ScreenInstance(Guid Id, Guid SessionId, Guid OwnerId, Scree
     public ScreenDefinition Definition { get; internal set; } = Definition;
     public long Version { get; internal set; }
 }
-public enum ScreenInputKind { PointerDown, PointerUp, FocusNext, FocusPrevious, Activate, Back }
-public readonly record struct ScreenInput(ScreenInputKind Kind, double X = 0, double Y = 0);
+public enum ScreenInputKind { PointerDown, PointerUp, FocusNext, FocusPrevious, Activate, Back, PointerMove, KeyDown, KeyUp }
+public readonly record struct ScreenInput(ScreenInputKind Kind, double X = 0, double Y = 0, string? Key = null, bool Shift = false, bool Control = false, bool Alt = false);
 public sealed record ScreenActivation(Guid InstanceId, Guid NodeId);
 public readonly record struct ScreenInputResult(bool Consumed, ScreenActivation? Activation = null);
 
 /// <summary>Host-thread-only screen lifetime and input. No user code runs inside routing.</summary>
-public sealed class ScreenStack
+public sealed partial class ScreenStack
 {
     public const int MaxInstances = 32;
     public const int MaxSessionNodes = 4096;
@@ -83,9 +83,11 @@ public sealed class ScreenStack
             throw new InvalidOperationException("Чужой ресурс или превышен бюджет узлов сеанса.");
         // Text updates must not swallow a press or reset focus on another screen.
         var buttons = VisualDefinition(instance, definition).Buttons;
-        if (capture?.InstanceId == instance.Id && !buttons.Any(n => n.Id == capture.NodeId)) capture = null;
-        if (focus?.InstanceId == instance.Id && !buttons.Any(n => n.Id == focus.NodeId)) focus = null;
         instance.Definition = definition;
+        if (capture?.InstanceId == instance.Id && !buttons.Any(n => n.Id == capture.NodeId)) CancelPointer();
+        if (focus?.InstanceId == instance.Id && !buttons.Any(n => n.Id == focus.NodeId)) ChangeFocus(null);
+        if (hover?.InstanceId == instance.Id && !buttons.Any(n => n.Id == hover.NodeId)) ChangeHover(null);
+        if (keys.Any(p => p.Value.InstanceId == instance.Id && !definition.Nodes.Any(n => n.Id == p.Value.NodeId))) ResetKeys(instance);
         if (!animationFrame) instance.Version++;
     }
 
@@ -98,9 +100,13 @@ public sealed class ScreenStack
 
     public ScreenInputResult Route(ScreenInput input)
     {
-        if (!Enum.IsDefined(input.Kind) || !double.IsFinite(input.X) || !double.IsFinite(input.Y))
+        if (!Enum.IsDefined(input.Kind) || !double.IsFinite(input.X) || !double.IsFinite(input.Y) ||
+            (input.Kind is ScreenInputKind.KeyDown or ScreenInputKind.KeyUp ? !ValidInputKey(input.Key) :
+                input.Key is not null || input.Shift || input.Control || input.Alt))
             throw new ArgumentException("Недопустимое событие ввода.", nameof(input));
         if (!active) return new(true);
+        if (input.Kind is ScreenInputKind.KeyDown or ScreenInputKind.KeyUp) return RouteKeyboard(input);
+        if (input.Kind == ScreenInputKind.PointerMove) return MovePointer(input);
         if (input.Kind == ScreenInputKind.Back)
         {
             if (instances.IsEmpty) return new(false);
@@ -111,9 +117,13 @@ public sealed class ScreenStack
         {
             capture = null;
             var owner = instances.Single(i => i.Id == pressed.InstanceId);
-            return new(true, VisualDefinition(owner).HitTest(input.X, input.Y) == pressed.NodeId ? pressed : null);
+            Emit(pressed, "pointer_up", input);
+            if (dragging) Emit(pressed, "drag_end", input);
+            var click = !dragging && VisualDefinition(owner).HitTest(input.X, input.Y) == pressed.NodeId;
+            dragging = false;
+            return new(true, click ? pressed : null);
         }
-        if (input.Kind == ScreenInputKind.PointerDown) capture = null;
+        if (input.Kind == ScreenInputKind.PointerDown) { CancelPointer(); PointerSequence++; }
         foreach (var instance in instances.Reverse())
         {
             var definition = VisualDefinition(instance);
@@ -121,8 +131,12 @@ public sealed class ScreenStack
             {
                 if (definition.HitTest(input.X, input.Y) is { } node)
                 {
-                    focus = new(instance.Id, node);
-                    if (input.Kind == ScreenInputKind.PointerDown) capture = focus;
+                    if (input.Kind == ScreenInputKind.PointerDown)
+                    {
+                        capture = new(instance.Id, node); startX = input.X; startY = input.Y;
+                        ChangeFocus(capture);
+                        if (capture is { } target) Emit(target, "pointer_down", input);
+                    }
                     return new(true);
                 }
                 if (definition.PointerTarget(input.X, input.Y) is not null) return new(true);
@@ -138,12 +152,12 @@ public sealed class ScreenStack
                             if (buttons[b].Id == focus.NodeId) index = b;
                     if (input.Kind == ScreenInputKind.Activate)
                     {
-                        focus = new(instance.Id, buttons[Math.Max(0, index)].Id);
+                        ChangeFocus(new(instance.Id, buttons[Math.Max(0, index)].Id));
                         return new(true, focus);
                     }
                     index = input.Kind == ScreenInputKind.FocusPrevious
                         ? (index <= 0 ? buttons.Length - 1 : index - 1) : (index + 1) % buttons.Length;
-                    focus = new(instance.Id, buttons[index].Id);
+                    ChangeFocus(new(instance.Id, buttons[index].Id));
                     return new(true);
                 }
             }
@@ -173,5 +187,11 @@ public sealed class ScreenStack
         return index;
     }
 
-    private void ResetInput() { capture = null; focus = null; }
+    private void ResetInput()
+    {
+        var hadKeys = keys.Count != 0;
+        InputEpoch++; CancelPointer(); ChangeFocus(null); ChangeHover(null); keys.Clear(); pointerKnown = false;
+        if (hadKeys) foreach (var instance in instances)
+            Emit(new(instance.Id, instance.Definition.Nodes.Single(n => n.ParentId is null).Id), "input_reset");
+    }
 }

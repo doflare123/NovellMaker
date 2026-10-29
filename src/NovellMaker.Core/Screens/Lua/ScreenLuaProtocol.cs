@@ -13,6 +13,12 @@ namespace NovellMaker.Core.Screens.Lua;
 public sealed record ScreenLuaStamp(Guid RequestId, Guid SessionId, long Generation, Guid OwnerId, Guid InstanceId, long Version);
 public sealed record ScreenLuaEvent(string Kind, Guid? NodeId = null, double X = 0, double Y = 0, double Seconds = 0)
 {
+    public string? Key { get; init; }
+    public bool Shift { get; init; }
+    public bool Control { get; init; }
+    public bool Alt { get; init; }
+    public long? InputEpoch { get; init; }
+    public long PointerSequence { get; init; }
     public ScriptAudioResult? Audio { get; init; }
     public ScreenAnimationResult? Animation { get; init; }
     public GameServiceResult? Result { get; init; }
@@ -49,12 +55,14 @@ internal sealed record ScreenLuaRequest(int Protocol, string Kind, ScreenLuaStam
 }
 internal sealed record ScreenLuaResponse(int Protocol, string Kind, ScreenLuaStamp Stamp, string? Error, ImmutableArray<ScreenChange> Changes)
 {
+    public bool InputEvents { get; init; }
     public ImmutableArray<LuaLogMessage> Logs { get; init; } = [];
     public int DroppedLogs { get; init; }
     public LuaLogMessage? Fault { get; init; }
 }
 internal sealed record ScreenPreparedBatch(ScreenDefinition Definition, bool Close, GameServiceCommand? Service = null)
 {
+    public ImmutableArray<ScreenInputCommand> InputCommands { get; init; } = [];
     public ImmutableArray<ScreenChange> AnimationChanges { get; init; } = [];
     public NovellMaker.Core.Minigames.MinigameResult? MinigameResult { get; init; }
     public ImmutableArray<AuthorTrigger> Triggers { get; init; } = [];
@@ -66,7 +74,7 @@ public sealed record MinigameInvocation(LuaValue Parameters, bool Restoring);
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 16;
+    internal const int Version = 17;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {
@@ -148,6 +156,15 @@ internal static class ScreenLuaProtocol
 
     internal static void ValidateEvent(ScreenDefinition definition, ScreenLuaEvent value, bool worker = false)
     {
+        var extended = value.Kind is "pointer_down" or "pointer_up" or "pointer_cancel" or "drag_start" or "drag" or "drag_end" or
+            "hover_enter" or "hover_leave" or "focus" or "blur" or "key_down" or "key_up" or "input_reset";
+        if (value.Key is not null && (value.Kind is not ("key_down" or "key_up") || !ScreenStack.ValidInputKey(value.Key)) ||
+            value.Kind is "key_down" or "key_up" && value.Key is null ||
+            (value.Shift || value.Control || value.Alt) && value.Kind is not ("key_down" or "key_up") ||
+            value.InputEpoch is < 0 || value.PointerSequence < 0 ||
+            (value.InputEpoch is not null || value.PointerSequence != 0) && !extended && value.Kind is not ("move" or "hover" or "click") ||
+            extended && (value.NodeId is null || value.Seconds != 0))
+            throw new ArgumentException("Некорректные данные ввода.");
         if (value.Kind == "audio_result")
         {
             if (value.Audio is null || value.NodeId is not null || value.X != 0 || value.Y != 0 || value.Seconds != 0 ||
@@ -193,10 +210,13 @@ internal static class ScreenLuaProtocol
                 node = map[parent];
             }
         }
-        if (value.Result is not null || value.Kind is not ("click" or "move" or "hover" or "update") ||
+        if (value.Result is not null || value.Kind is not ("click" or "move" or "hover" or "update" or
+            "pointer_down" or "pointer_up" or "pointer_cancel" or "drag_start" or "drag" or "drag_end" or
+            "hover_enter" or "hover_leave" or "focus" or "blur" or "key_down" or "key_up" or "input_reset") ||
             !double.IsFinite(value.X) || !double.IsFinite(value.Y) || Math.Abs(value.X) > 100000 || Math.Abs(value.Y) > 100000 ||
             !double.IsFinite(value.Seconds) || value.Seconds is < 0 or > 1 ||
-            value.NodeId is { } node && !definition.Nodes.Any(n => n.Id == node) ||
+            value.NodeId is { } node && !definition.Nodes.Any(n => n.Id == node) &&
+                !(value.Kind is "pointer_cancel" or "blur" or "hover_leave" && definition.RetiredNodeIds.Contains(node)) ||
             value.Kind == "click" && !ValidClick(value.NodeId))
             throw new ArgumentException("Недопустимое событие экрана.");
     }
@@ -210,6 +230,7 @@ internal static class ScreenLuaProtocol
         var close = false;
         GameServiceCommand? service = null;
         var triggers = ImmutableArray.CreateBuilder<AuthorTrigger>();
+        var inputCommands = ImmutableArray.CreateBuilder<ScreenInputCommand>();
         var characters = 0;
         var stateBytes = 0;
         LuaValue? state = null;
@@ -218,6 +239,16 @@ internal static class ScreenLuaProtocol
         foreach (var change in changes)
         {
             if (change is null || close) throw new InvalidOperationException("Некорректный пакет экрана.");
+            if (change.Kind is "capture_pointer" or "release_pointer" or "focus")
+            {
+                if (minigameResult is not null || change.Text is not null || change.Value is not null || change.Patch is not null ||
+                    change.ParentId is not null || change.Ids is not null || change.Service is not null || change.Trigger is not null ||
+                    change.State is not null || change.RandomState is not null || change.MinigameResult is not null ||
+                    change.Animation is not null || change.AnimationId is not null || change.Audio is not null ||
+                    (change.Kind == "release_pointer" ? change.NodeId is not null : !current.Buttons.Any(n => n.Id == change.NodeId)))
+                    throw new InvalidOperationException("Некорректная команда ввода.");
+                inputCommands.Add(new(change.Kind, change.NodeId)); continue;
+            }
             if (change.Kind == "audio")
             {
                 if (change.Audio is null || minigameResult is not null || change.NodeId is not null || change.Text is not null || change.Value is not null ||
@@ -301,6 +332,6 @@ internal static class ScreenLuaProtocol
             throw new InvalidOperationException("Завершение мини-игры несовместимо с закрытием, сервисом и триггерами.");
         if (triggers.Count != 0 && (close || service is not null)) throw new InvalidOperationException("Триггеры нельзя совмещать с закрытием или сервисом в одном пакете.");
         return new(current.Nodes.SequenceEqual(definition.Nodes) && current.RetiredNodeIds.SetEquals(definition.RetiredNodeIds) ? definition : current, close, service)
-        { Triggers = triggers.ToImmutable(), State = state, RandomState = random, MinigameResult = minigameResult, AnimationChanges = changes };
+        { InputCommands = inputCommands.ToImmutable(), Triggers = triggers.ToImmutable(), State = state, RandomState = random, MinigameResult = minigameResult, AnimationChanges = changes };
     }
 }

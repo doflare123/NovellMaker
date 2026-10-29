@@ -163,6 +163,12 @@ public sealed partial class EditorSession
         ReportScreenError("");
     }
 
+    public void AddInputExample()
+    {
+        if (!CanEdit || project is null) return;
+        EditProject(Examples.ExampleInputModule.AddTo(project));
+    }
+
     public void DuplicateScreen()
     {
         if (!CanEdit || project is null || SelectedScreen is not { } source) return;

@@ -131,6 +131,7 @@ internal sealed class ScreenLuaConnection : IScreenLuaConnection
         catch (ArgumentException error) { throw new IOException("Неверный журнал протокола экранного Lua.", error); }
         var expected = request.Kind switch { "handshake" => "ready", "close" => "closed", _ => "batch" };
         if (response.Protocol != ScreenLuaProtocol.Version || response.Stamp != request.Stamp ||
+            response.InputEvents && (request.Kind != "load" || response.Error is not null) ||
             response.Changes.IsDefault || response.Changes.Length > LuaActionScript.MaximumCommands || response.Changes.Any(c => c is null) ||
             (response.Error is not null ? response.Kind != "error" || response.Error.Length is < 1 or > 4096 || !response.Changes.IsEmpty
                 : response.Kind != expected || expected != "batch" && !response.Changes.IsEmpty))

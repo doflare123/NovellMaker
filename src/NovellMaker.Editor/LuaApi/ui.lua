@@ -1,5 +1,5 @@
 ---@meta NovellMaker.ui
--- NovellMaker screen API, wire 16 / Lua 5.2. Tooling only; never execute this file.
+-- NovellMaker screen API, wire 17 / Lua 5.2. Tooling only; never execute this file.
 -- Calls enqueue one atomic batch. A handler must return; waits do not suspend Lua.
 
 ---@alias NMHandle string Opaque resource/instance/node identity, valid only in its live instance.
@@ -44,13 +44,16 @@
 ---@field saved_at? string UTC ISO 8601.
 ---@field game_time? number
 ---@class NMEvent
----@field kind 'click'|'move'|'hover'|'update'|'trigger'|'service_result'|'animation_result'|'audio_result'
+---@field kind 'click'|'move'|'hover'|'update'|'trigger'|'service_result'|'animation_result'|'audio_result'|'pointer_down'|'pointer_up'|'pointer_cancel'|'drag_start'|'drag'|'drag_end'|'hover_enter'|'hover_leave'|'focus'|'blur'|'key_down'|'key_up'|'input_reset'
 ---@field audio_id? string ID returned by ui.play_audio.
 ---@field animation_id? string ID returned by ui.animate.
 ---@field status? 'completed'|'cancelled'|'stopped'|'failed'
 ---@field reason? string finished/requested/replaced/property_set/removed/reparented/invalid_geometry.
 ---@field node? NMHandle
----@field x number Logical viewport coordinates.
+---@field shift? boolean Keyboard modifiers, physical key events only.
+---@field control? boolean
+---@field alt? boolean
+---@field x number Logical viewport coordinates, including outside the viewport while captured.
 ---@field y number
 ---@field seconds number Engine delta, 0..1. No OS clock.
 ---@field trigger_id? string
@@ -66,6 +69,7 @@
 ---@field value? string
 ---@field persisted? boolean Whether the whole current profile was saved.
 ---@class NMHandlers
+---@field input_events? boolean Opt in to physical input events. Default false preserves existing click-only handlers.
 ---@field on_load? fun(event: table) Empty event table at opening.
 ---@field on_event fun(event: NMEvent) Must finish within the common instruction/work budget.
 
@@ -77,6 +81,13 @@ modules = {}
 audio = {}
 
 ui = {}
+---@param node NMHandle Enabled visible Button/Area in this live instance.
+-- Only the current pointer sequence can be captured; late replies never recover a released press.
+function ui.capture_pointer(node) end
+-- Cancels this instance's current press/drag. No synthetic click.
+function ui.release_pointer() end
+---@param node NMHandle Enabled visible Button/Area. Focus/blur delivered asynchronously.
+function ui.focus(node) end
 ---@param asset string Registered audio.<alias>, never a file path.
 ---@param group 'sound'|'effect'|'voice'
 ---@param loop boolean

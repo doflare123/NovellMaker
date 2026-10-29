@@ -27,6 +27,15 @@ internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
     {
         this.ownerId = ownerId; this.hostAction = hostAction; this.hostService = hostService;
         if (enableLua) Scripts = new(Stack);
+        Stack.InputRouted += value =>
+        {
+            if (deferredHandler && ReferenceEquals(value.Instance, sceneInstance) && value.Kind is "pointer_down" or "key_down" &&
+                project?.Scenes.FirstOrDefault(s => s.Id == sceneId)?.AsScreen() is { } deferred)
+            { deferredHandler = false; AttachHandler(deferred, value.Instance); }
+            if (Scripts?.IsAvailable(value.Instance) != true) return;
+            var admission = Scripts.EnqueueInput(value, snapshot());
+            if (admission == ScreenEventAdmission.Busy) Report("Недостаточно места в очереди ввода; обработчик остановлен.");
+        };
     }
     public ScreenStack Stack { get; } = new(Guid.NewGuid());
     public ScreenLuaSession? Scripts { get; }
@@ -101,6 +110,12 @@ internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
         Dispatch(new(Guid.Empty, binding.Action, binding.TargetSceneId), null);
         return true;
     }
+    public bool RouteKeyboard(ScreenInput input)
+    {
+        var result = Route(input);
+        var top = Stack.Instances.LastOrDefault();
+        return result.Consumed || top is not null && Scripts?.CanQueueInput(top) == true;
+    }
     public ScreenInputResult Route(ScreenInput input)
     {
         if (input.Kind == ScreenInputKind.Back && !HasOverlays) return new(false);
@@ -148,7 +163,7 @@ internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
                     else Open(target, binding.Action == ScreenButtonAction.Replace ? instance : null, instance?.OwnerId);
                     break;
                 case ScreenButtonAction.Lua:
-                    if (instance is not null && Scripts?.Enqueue(instance, new("click", binding.NodeId), snapshot())
+                    if (instance is not null && Scripts?.Enqueue(instance, new("click", binding.NodeId) { InputEpoch = Stack.InputEpoch, PointerSequence = Stack.PointerSequence }, snapshot())
                         is not (ScreenEventAdmission.Accepted or ScreenEventAdmission.Coalesced))
                         Report("Обработчик компонента недоступен или занят.");
                     break;

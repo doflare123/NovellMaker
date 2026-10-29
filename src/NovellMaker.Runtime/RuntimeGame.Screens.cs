@@ -118,8 +118,9 @@ internal sealed partial class RuntimeGame
                 var hasRaster = rasters.Any();
                 var sprite = node.ImageId is { } imageId ? assetTextures.GetValueOrDefault(imageId) : null;
                 var focused = screens.Stack.Focus is { } focus && focus.NodeId == node.Id && focus.InstanceId == instance.Id;
+                var hovered = screens.Stack.Hover is { } hover && hover.NodeId == node.Id && hover.InstanceId == instance.Id;
                 var disabled = node.Kind == ScreenNodeKind.Button && !visual.Enabled;
-                var stateColor = disabled ? new Color(110, 115, 120) : focused ? new Color(160, 215, 255) : Color.White;
+                var stateColor = disabled ? new Color(110, 115, 120) : focused ? new Color(160, 215, 255) : hovered ? new Color(200, 230, 250) : Color.White;
                 if (node.Kind == ScreenNodeKind.Panel && node.Dialogue == DialogueBinding.None)
                     DrawMesh(pixel, visual, local, Mix(new Color(20, 22, 26), tint));
                 // A button always has a visible surface, including rejected/deferred bitmaps or missing sprites.

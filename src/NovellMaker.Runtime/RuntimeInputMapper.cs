@@ -60,6 +60,10 @@ internal static class RuntimeInputMapper
         return true;
     }
 
+    public static Point MapCapturedPointer(Point point, Rectangle letterbox) => new(
+        (int)Math.Clamp(Math.Floor((point.X - (double)letterbox.X) * LogicalWidth / Math.Max(1, letterbox.Width)), -100000, 100000),
+        (int)Math.Clamp(Math.Floor((point.Y - (double)letterbox.Y) * LogicalHeight / Math.Max(1, letterbox.Height)), -100000, 100000));
+
     public static RuntimeAction? HitTestNavigation(
         Point logicalPoint,
         bool canPrevious,

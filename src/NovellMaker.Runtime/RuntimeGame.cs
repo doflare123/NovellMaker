@@ -146,14 +146,14 @@ internal sealed partial class RuntimeGame : Game
         if (arguments.SmokeRealtimeDuration is not null) smokeRealtimeElapsed += gameTime.ElapsedGameTime;
         if (settingsServices.Poll()) RefreshTextTextures();
         PollSlots();
+        var hostActive = arguments.SmokeOutputPath is not null || IsActive;
+        screens.Stack.SetActive(hostActive && imageCache?.IsPending != true);
         screens.SyncScene(player.Execution.State.SceneId);
         screens.Tick(smokePlan is null ? gameTime.ElapsedGameTime : TimeSpan.Zero, (arguments.SmokeOutputPath is not null || IsActive) && imageCache?.IsPending != true);
         screens.Poll();
         player.SynchronizePresentation();
         if (screens.Scripts is { } scripts) luaJournal.Publish(scripts.Journal);
         RefreshFrameResources();
-        var hostActive = arguments.SmokeOutputPath is not null || IsActive;
-        screens.Stack.SetActive(hostActive && imageCache?.IsPending != true);
         var paused = session.Phase != GameSessionPhase.Playing || screens.Stack.PausesScenario || !hostActive || imageCache?.IsPending == true;
         player.Execution.IsPaused = paused;
         SynchronizeAudio();
@@ -187,38 +187,38 @@ internal sealed partial class RuntimeGame : Game
         {
             var keyboard = Keyboard.GetState();
             var mouse = Mouse.GetState();
-            if (keyboard.GetPressedKeys().Where(key => Pressed(keyboard, key)).Any(key => RouteProjectKey(key.ToString()))) { }
-            else if (Pressed(keyboard, Keys.Escape))
+            foreach (var key in keyboard.GetPressedKeys().Where(key => Pressed(keyboard, key)))
             {
-                if (!RouteScreen(new(ScreenInputKind.Back))) Exit();
+                if (RouteProjectKey(key.ToString())) continue;
+                var consumed = ScreenStack.ValidInputKey(key.ToString()) && screens.RouteKeyboard(new(ScreenInputKind.KeyDown,
+                    Key: key.ToString(), Shift: keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift),
+                    Control: keyboard.IsKeyDown(Keys.LeftControl) || keyboard.IsKeyDown(Keys.RightControl),
+                    Alt: keyboard.IsKeyDown(Keys.LeftAlt) || keyboard.IsKeyDown(Keys.RightAlt)));
+                if (key == Keys.Escape) { if (!RouteScreen(new(ScreenInputKind.Back))) Exit(); }
+                else if (key == Keys.Tab) RouteScreen(new(keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift)
+                    ? ScreenInputKind.FocusPrevious : ScreenInputKind.FocusNext));
+                else if (key is Keys.Enter or Keys.Space)
+                { if (!RouteScreen(new(ScreenInputKind.Activate)) && !consumed) ApplyAction(RuntimeAction.Next); }
+                else if (!consumed && !screens.HasOverlays && key == Keys.Right) ApplyAction(RuntimeAction.Next);
+                else if (!consumed && !screens.HasOverlays && key == Keys.Left) ApplyAction(RuntimeAction.Previous);
             }
-            else if (Pressed(keyboard, Keys.Tab)) RouteScreen(new(keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift)
-                ? ScreenInputKind.FocusPrevious : ScreenInputKind.FocusNext));
-            else if (Pressed(keyboard, Keys.Enter) || Pressed(keyboard, Keys.Space))
+            foreach (var key in previousKeyboard.GetPressedKeys().Where(keyboard.IsKeyUp))
+                if (ScreenStack.ValidInputKey(key.ToString())) screens.RouteKeyboard(new(ScreenInputKind.KeyUp, Key: key.ToString(),
+                    Shift: keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift),
+                    Control: keyboard.IsKeyDown(Keys.LeftControl) || keyboard.IsKeyDown(Keys.RightControl),
+                    Alt: keyboard.IsKeyDown(Keys.LeftAlt) || keyboard.IsKeyDown(Keys.RightAlt)));
+            var letterbox = RuntimeInputMapper.CalculateLetterbox(GraphicsDevice.PresentationParameters.BackBufferWidth,
+                GraphicsDevice.PresentationParameters.BackBufferHeight);
+            var logical = RuntimeInputMapper.MapCapturedPointer(new(mouse.X, mouse.Y), letterbox);
+            RouteScreen(new(ScreenInputKind.PointerMove, logical.X, logical.Y));
+            if (mouse.LeftButton != previousMouse.LeftButton)
             {
-                if (!RouteScreen(new(ScreenInputKind.Activate))) ApplyAction(RuntimeAction.Next);
-            }
-            else if (!screens.HasOverlays && Pressed(keyboard, Keys.Right)) ApplyAction(RuntimeAction.Next);
-            else if (!screens.HasOverlays && Pressed(keyboard, Keys.Left))
-            {
-                ApplyAction(RuntimeAction.Previous);
-            }
-            else if (mouse.LeftButton != previousMouse.LeftButton)
-            {
-                var letterbox = RuntimeInputMapper.CalculateLetterbox(
-                    GraphicsDevice.PresentationParameters.BackBufferWidth,
-                    GraphicsDevice.PresentationParameters.BackBufferHeight);
-                var mapped = RuntimeInputMapper.TryMapWindowToLogical(new Point(mouse.X, mouse.Y), letterbox, out var logical);
                 var down = mouse.LeftButton == ButtonState.Pressed;
-                var consumed = RouteScreen(new(down ? ScreenInputKind.PointerDown : ScreenInputKind.PointerUp,
-                    mapped ? logical.X : -1, mapped ? logical.Y : -1));
-                if (!consumed && down && mapped)
+                var consumed = RouteScreen(new(down ? ScreenInputKind.PointerDown : ScreenInputKind.PointerUp, logical.X, logical.Y));
+                if (!consumed && down && letterbox.Contains(mouse.X, mouse.Y))
                 {
                     if (!ClickLogical(logical) && showNavigationControls && RuntimeInputMapper.HitTestNavigation(
-                        logical,
-                        player.Frame.CanPrevious,
-                        player.Frame.CanNext) is { } action)
-                    { ApplyAction(action); }
+                        logical, player.Frame.CanPrevious, player.Frame.CanNext) is { } action) ApplyAction(action);
                 }
             }
 
@@ -404,6 +404,12 @@ internal sealed partial class RuntimeGame : Game
                 { RouteScreen(new(ScreenInputKind.PointerDown, mapped.X, mapped.Y)); success = RouteScreen(new(ScreenInputKind.PointerUp, mapped.X, mapped.Y)); }
                 else success = false;
                 break;
+            case "pointer_down": success = RouteScreen(new(ScreenInputKind.PointerDown, step.X, step.Y)); break;
+            case "pointer_move": success = RouteScreen(new(ScreenInputKind.PointerMove, step.X, step.Y)); break;
+            case "pointer_up": success = RouteScreen(new(ScreenInputKind.PointerUp, step.X, step.Y)); break;
+            case "key_down": success = screens.RouteKeyboard(new(ScreenInputKind.KeyDown, Key: step.Key)); break;
+            case "key_up": success = screens.RouteKeyboard(new(ScreenInputKind.KeyUp, Key: step.Key)); break;
+            case "focus_lost": screens.Stack.SetActive(false); break;
             case "key_now":
             case "key": success = RouteProjectKey(step.Key ?? ""); break;
             case "probe_now": break;

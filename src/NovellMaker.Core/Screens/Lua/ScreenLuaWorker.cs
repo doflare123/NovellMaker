@@ -23,6 +23,7 @@ internal sealed class ScreenLuaVm
     private readonly MinigameInvocation? minigame;
     internal LuaLogBuffer Log { get; set; }
     internal ScreenDefinition Definition { get; private set; }
+    internal bool InputEvents { get; }
     internal void Synchronize(ImmutableArray<ScreenNode> nodes)
     {
         if (nodes.IsEmpty) return;
@@ -61,6 +62,12 @@ internal sealed class ScreenLuaVm
         }
         animations.Install(script, ui, () => handling, a => Node(a), () => Definition, Add);
         LuaAudioApi.Install(script, ui, audioReferences ?? ImmutableDictionary<string, Guid>.Empty, () => handling, Add);
+        void Input(string name, bool node) => Bind(name, a =>
+        {
+            if (!handling || !InputEvents || a.Count != (node ? 1 : 0)) throw new ScriptRuntimeException("Команда ввода требует input_events=true и обработчик с точными аргументами.");
+            return Add(new(name, node ? Node(a) : null, null, null));
+        });
+        Input("capture_pointer", true); Input("release_pointer", false); Input("focus", true);
         Bind("set_text", a => Add(new("text", Node(a), Str(a, 1), null)));
         Bind("set_visible", a => Add(new("visible", Node(a), null, a.AsType(1, "ui", DataType.Boolean, false).Boolean)));
         Bind("set_enabled", a => Add(new("enabled", Node(a), null, a.AsType(1, "ui", DataType.Boolean, false).Boolean)));
@@ -141,6 +148,9 @@ internal sealed class ScreenLuaVm
         if (handlers.Type != DataType.Table || handlers.Table.Get("on_event").Type != DataType.Function ||
             handlers.Table.Get("on_load").Type is not (DataType.Nil or DataType.Function))
             throw new InvalidOperationException("Экранный Lua должен вернуть таблицу с функцией on_event и необязательной on_load.");
+        var inputEvents = handlers.Table.Get("input_events");
+        if (inputEvents.Type is not (DataType.Nil or DataType.Boolean)) throw new InvalidOperationException("input_events ожидает boolean.");
+        InputEvents = inputEvents.Type == DataType.Boolean && inputEvents.Boolean;
         if (changes.Count != 0) throw new InvalidOperationException("Изменения экрана и команды сервисов разрешены только в обработчике.");
     }
 
@@ -160,6 +170,13 @@ internal sealed class ScreenLuaVm
             argument.Set("node", value.NodeId is { } node ? DynValue.NewString(new ScreenNodeHandle(Definition.Id, instanceId, node).ToString()) : DynValue.Nil);
             argument.Set("x", DynValue.NewNumber(value.X)); argument.Set("y", DynValue.NewNumber(value.Y));
             argument.Set("seconds", DynValue.NewNumber(value.Seconds));
+            if (value.Kind is "key_down" or "key_up")
+            {
+                argument.Set("key", DynValue.NewString(value.Key));
+                argument.Set("shift", DynValue.NewBoolean(value.Shift));
+                argument.Set("control", DynValue.NewBoolean(value.Control));
+                argument.Set("alt", DynValue.NewBoolean(value.Alt));
+            }
             if (value.Audio is { } audio)
             {
                 audio.Validate();
@@ -317,7 +334,7 @@ internal sealed class ScreenLuaWorkerService
             if (entries.Values.Sum(e => e.Vm.Definition.Nodes.Length) + vm.Definition.Nodes.Length > ScreenStack.MaxSessionNodes)
                 throw new InvalidOperationException("Превышен бюджет узлов сеанса.");
             entries.Add(stamp.InstanceId, new(stamp, request.ResourceId, vm));
-            return Reply("batch", changes);
+            return Reply("batch", changes) with { InputEvents = vm.InputEvents };
         }
         if (!entries.TryGetValue(stamp.InstanceId, out var entry) || entry.Stamp.OwnerId != stamp.OwnerId ||
             entry.Version != stamp.Version || entry.ResourceId != request.ResourceId ||

@@ -7,6 +7,19 @@ namespace NovellMaker.Editor.Tests;
 public sealed partial class ExternalScriptTests
 {
     [TestMethod]
+    public async Task InputExampleUndoRedoSaveAsPreservesEditableResourcesAndBindings()
+    {
+        using var root = new TestRoot(); var dialogs = new Dialogs(root.Path); using var session = await Session(dialogs, editor: new CodeEditor());
+        var before = session.Project!; session.AddInputExample(); var added = session.Project!;
+        session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo(); Assert.IsTrue(added.ContentEquals(session.Project));
+        await session.SaveAsync(); dialogs.SavePath = Path.Combine(root.Path, "copy", "input.novell"); await session.SaveAsync(true);
+        var copy = await new JsonProjectStore().LoadAsync(dialogs.SavePath); Assert.IsTrue(added.ContentEquals(copy));
+        Assert.AreEqual(copy.Scripts.Last().Source, await File.ReadAllTextAsync(ScriptFiles.Resolve(Path.GetDirectoryName(dialogs.SavePath)!, copy.Scripts.Last().Id)));
+        Assert.AreEqual(copy.Scenes.Last().Id, copy.InputBindings.Single(b => b.Key == "F12").TargetSceneId);
+        Assert.IsTrue(copy.Scenes.Last().Canvas.References.Values.All(id => copy.Scenes.Last().Canvas.Nodes.Any(n => n.Id == id)));
+        Assert.IsEmpty(dialogs.Errors);
+    }
+    [TestMethod]
     public async Task AudioExampleHistorySaveAsKeepsWavAndStableReferences()
     {
         using var root = new TestRoot(); var dialogs = new Dialogs(root.Path); using var session = await Session(dialogs, editor: new CodeEditor());

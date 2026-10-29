@@ -25,6 +25,7 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
         internal readonly ImmutableDictionary<string, string> Snapshot = snapshot;
         internal long RemoteVersion;
         internal bool Loaded;
+        internal bool InputEvents;
         internal bool Closing;
         internal string? Error;
         internal LuaValue State = LuaValue.Null;
@@ -68,6 +69,7 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
     private readonly Dictionary<Guid, Pending> held = [];
     private bool disposed;
     private bool faulted;
+    private int inputChainDepth;
 
     public ScreenLuaSession(ScreenStack stack) : this(stack, () => new ScreenLuaConnection()) { }
     internal ScreenLuaSession(ScreenStack stack, Func<IScreenLuaConnection> factory, TimeProvider? clock = null)
@@ -121,6 +123,8 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
     public LuaDiagnosticJournal Journal { get; } = new();
     public bool IsAvailable(ScreenInstance instance) => !disposed && entries.TryGetValue(instance.Id, out var entry) &&
         ReferenceEquals(entry.Instance, instance) && entry.Error is null && !entry.Closing && Current(instance);
+    public bool AcceptsInput(ScreenInstance instance) => IsAvailable(instance) && entries[instance.Id].InputEvents;
+    public bool CanQueueInput(ScreenInstance instance) => IsAvailable(instance) && (!entries[instance.Id].Loaded || entries[instance.Id].InputEvents);
 
     public bool IsSettled(ScreenInstance instance) => IsAvailable(instance) && entries[instance.Id].Loaded &&
         pending?.Work.Entry.Instance.Id != instance.Id && !held.ContainsKey(instance.Id) && !queue.Any(w => w.Entry.Instance.Id == instance.Id);
@@ -204,6 +208,25 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
     public ScreenEventAdmission EnqueueUsingInstanceSnapshot(ScreenInstance instance, ScreenLuaEvent value)
         => IsAvailable(instance) ? Enqueue(instance, value, entries[instance.Id].Snapshot) : ScreenEventAdmission.Unavailable;
 
+    public ScreenEventAdmission EnqueueInput(ScreenRoutedInput value, ImmutableDictionary<string, string> snapshot)
+    {
+        if (!CanQueueInput(value.Instance)) return ScreenEventAdmission.Unavailable;
+        var admission = inputChainDepth > AuthorTrigger.MaximumChainDepth ? ScreenEventAdmission.Busy : Enqueue(value.Instance, new(value.Kind, value.NodeId, value.Input.X, value.Input.Y)
+        {
+            Key = value.Input.Key, Shift = value.Input.Shift, Control = value.Input.Control, Alt = value.Input.Alt,
+            InputEpoch = value.Epoch, PointerSequence = value.PointerSequence,
+        }, snapshot);
+        if (admission is ScreenEventAdmission.Accepted or ScreenEventAdmission.Coalesced)
+            queue.Last!.Value = queue.Last.Value with { ChainDepth = inputChainDepth };
+        else if (admission == ScreenEventAdmission.Busy)
+        {
+            var entry = entries[value.Instance.Id]; entry.Error = "Превышен бюджет ввода или глубины его событий.";
+            RemoveQueued(entry); ScheduleClose(entry); stack.ReleaseInput(entry.Instance);
+            Report(entry.Error, ScreenLuaIssueKind.Handler, entry.Instance.Id);
+        }
+        return admission;
+    }
+
     /// <summary>The host captures data at admission; later mutations cannot change this event's snapshot.</summary>
     public ScreenEventAdmission Enqueue(ScreenInstance instance, ScreenLuaEvent value,
         ImmutableDictionary<string, string> snapshot)
@@ -232,7 +255,7 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
         }
         var work = new Work(entry, "event", value, snapshot, clock.GetTimestamp());
         // Coalesce only adjacent motion; never move it across a significant click.
-        if (value.Kind is "move" or "hover" && queue.Last is { } last &&
+        if (value.Kind is "move" or "hover" or "drag" && queue.Last is { } last &&
             ReferenceEquals(last.Value.Entry, entry) && last.Value.Event?.Kind == value.Kind && last.Value.Event.NodeId == value.NodeId)
         { last.Value = work; return ScreenEventAdmission.Coalesced; }
         if (Occupancy >= MaximumQueuedEvents)
@@ -278,6 +301,7 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
                 else
                 {
                     entry.Loaded = true; entry.RemoteVersion = ready.Stamp.Version + 1;
+                    if (ready.Work.Kind == "load") entry.InputEvents = result.Response.InputEvents;
                     if (Current(entry.Instance) && !entry.Closing && entry.Instance.Version == ready.Stamp.Version)
                     {
                         try
@@ -293,9 +317,18 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
                                 throw new InvalidOperationException("Превышен бюджет очереди или глубины цепочки триггеров.");
                             var animator = entry.Animator.Prepare(entry.Instance.Definition, result.Batch.AnimationChanges, ready.Work.ChainDepth);
                             var audioReservations = ValidateAudio(entry, result.Batch.AnimationChanges, ready.Work.ChainDepth);
-                            if (Occupancy - entry.Animator.Reserved + animator.Reserved + audioReservations + result.Batch.Triggers.Length + (result.Batch.Service is null ? 0 : 1) > MaximumQueuedEvents)
+                            var inputEvents = stack.InputEventBudget(entry.Instance, result.Batch.Definition, result.Batch.InputCommands);
+                            if (Occupancy - entry.Animator.Reserved + animator.Reserved + audioReservations + result.Batch.Triggers.Length + inputEvents + (result.Batch.Service is null ? 0 : 1) > MaximumQueuedEvents)
                                 throw new InvalidOperationException("Нет места для событий завершения анимаций.");
-                            stack.Commit(entry.Instance, ready.Stamp.Version, result.Batch!.Definition);
+                            stack.ValidateInputCommands(result.Batch.Definition, result.Batch.InputCommands);
+                            inputChainDepth = ready.Work.ChainDepth + 1;
+                            try
+                            {
+                                stack.Commit(entry.Instance, ready.Stamp.Version, result.Batch!.Definition);
+                                stack.ApplyInputCommands(entry.Instance, result.Batch.InputCommands,
+                                    ready.Work.Event?.InputEpoch ?? stack.InputEpoch, ready.Work.Event?.PointerSequence ?? -1);
+                            }
+                            finally { inputChainDepth = 0; }
                             entry.Animator = animator;
                             entry.AnimationDirty = false;
                             if (result.Batch.State is { } state) entry.State = state;
@@ -350,6 +383,11 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
         }
         if (work is null) return;
         var entry = work.Entry;
+        if (work.Event is { InputEpoch: not null, Kind: not "click" } && !entry.InputEvents) return;
+        if (work.Event is { InputEpoch: { } epoch } input &&
+            (epoch != stack.InputEpoch && input.Kind is not ("pointer_cancel" or "pointer_up" or "drag_end" or "blur" or "hover_leave" or "input_reset" or "key_up") || input.NodeId is { } node && !entry.Instance.Definition.Nodes.Any(n => n.Id == node) &&
+                !(input.Kind is "pointer_cancel" or "blur" or "hover_leave" && entry.Instance.Definition.RetiredNodeIds.Contains(node))))
+        { return; }
         if (clock.GetElapsedTime(work.Submitted) >= TimeSpan.FromSeconds(5))
         {
             Expire(work, "Превышен срок ожидания события экрана (5 секунд): событие не исполнено.");
@@ -451,7 +489,7 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
             {
                 if (batch.State is { } data) minigame.StateSchema.Validate(data);
                 if (work.Kind == "load" && entry.Invocation!.Restoring &&
-                    (batch.State is { } restored && restored.ToJson() != state.ToJson() || batch.RandomState is { } rng && rng != random || batch.MinigameResult is not null || batch.Close || batch.Service is not null || !batch.Triggers.IsEmpty || batch.AnimationChanges.Any(c => c.Kind is "animate" or "cancel_animation" || c.Audio is not null)))
+                    (batch.State is { } restored && restored.ToJson() != state.ToJson() || batch.RandomState is { } rng && rng != random || batch.MinigameResult is not null || batch.Close || batch.Service is not null || !batch.Triggers.IsEmpty || !batch.InputCommands.IsEmpty || batch.AnimationChanges.Any(c => c.Kind is "animate" or "cancel_animation" || c.Audio is not null)))
                     throw new InvalidOperationException("Восстановление мини-игры должно только построить представление из снимка.");
             }
         }
@@ -480,15 +518,16 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
         if (Current(entry.Instance) && !entry.Closing)
             Report(message, ScreenLuaIssueKind.QueueExpired, entry.Instance.Id);
         // Nothing was sent: the remote VM and its version are still valid.
-        if (work.Kind == "load" || work.Event?.Kind is "service_result" or "animation_result" or "audio_result")
+        if (work.Kind == "load" || work.Event?.InputEpoch is not null || work.Event?.Kind is "service_result" or "animation_result" or "audio_result")
         {
-            entry.Error = work.Kind == "load" ? "Истёк срок загрузки экрана." : "Истёк срок обработки ответа сервиса или анимации.";
+            entry.Error = work.Kind == "load" ? "Истёк срок загрузки экрана." : "Истёк срок обработки события ввода, сервиса или анимации.";
             RemoveQueued(entry); ScheduleClose(entry);
         }
         if (entry.Closing) ScheduleClose(entry);
     }
     private void RemoveQueued(Entry entry)
     {
+        stack.ReleaseInput(entry.Instance);
         ClearAudio(entry);
         entry.Animator = new();
         var node = queue.First;
@@ -531,7 +570,7 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
         services.Clear();
         serviceReplies.Clear();
         faulted = true;
-        foreach (var entry in entries.Values) { entry.Error = message; entry.Loaded = false; entry.Animator = new(); ClearAudio(entry); }
+        foreach (var entry in entries.Values) { entry.Error = message; entry.Loaded = false; entry.Animator = new(); ClearAudio(entry); stack.ReleaseInput(entry.Instance); }
         queue.Clear(); closes.Clear();
         Report(message, context: context);
         Retire();
@@ -559,7 +598,7 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         Retire();
-        foreach (var entry in entries.Values) ClearAudio(entry);
+        foreach (var entry in entries.Values) { entry.Error = "Сеанс сброшен."; ClearAudio(entry); stack.ReleaseInput(entry.Instance); }
         entries.Clear(); queue.Clear(); closes.Clear(); diagnostics.Clear(); issues.Clear();
         services.Clear();
         serviceReplies.Clear();
@@ -572,7 +611,7 @@ public sealed partial class ScreenLuaSession : IDisposable, IAsyncDisposable
         if (disposed) return;
         disposed = true;
         Retire();
-        foreach (var entry in entries.Values) ClearAudio(entry);
+        foreach (var entry in entries.Values) { ClearAudio(entry); stack.ReleaseInput(entry.Instance); }
         if (audio is not null) audio.PlaybackEnded -= AudioEnded;
         entries.Clear(); queue.Clear(); closes.Clear();
         services.Clear();
