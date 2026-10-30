@@ -63,6 +63,27 @@ public sealed class ReleaseCheckLuaTests
         """;
 
     [TestMethod]
+    public async Task ProviderFailureAndProjectConfigurationStayOutsideLuaWireAndJournal()
+    {
+        const string secret = "PRIVATE-CREDENTIAL-DO-NOT-LOG";
+        var (stack, instance) = ScreenLuaSessionTests.Fixture(); var provider = new Provider();
+        var configuration = new ReleaseCheckConfiguration("public-author-unique", "public-repository-unique", "1.0.0");
+        await using var service = new ReleaseCheckService(Guid.NewGuid(), true, provider, configuration);
+        var connection = new Connection(true); await using var session = new ScreenLuaSession(stack, () => connection);
+        session.ConnectReleaseChecks(service);
+        session.Attach(instance, "return {on_load=function() ui.check_game_release() end,on_event=function(e) ui.set_text(refs.label,e.code) end}", Refs(instance));
+        await Until(session, () => provider.Calls == 1);
+        provider.Reply.SetException(new IOException(secret));
+        await Until(session, () => instance.Definition.Nodes[2].Text == "InvalidResponse");
+        var wire = System.Text.Json.JsonSerializer.Serialize(connection.Seen, ScreenLuaProtocol.Json);
+        Assert.IsFalse(wire.Contains(secret, StringComparison.Ordinal));
+        Assert.IsFalse(wire.Contains(configuration.Owner, StringComparison.Ordinal));
+        Assert.IsFalse(wire.Contains(configuration.Repository, StringComparison.Ordinal));
+        Assert.IsFalse(System.Text.Json.JsonSerializer.Serialize(session.Journal).Contains(secret, StringComparison.Ordinal));
+        Assert.IsEmpty(session.Diagnostics);
+    }
+
+    [TestMethod]
     [DataRow(false)] [DataRow(true)]
     public async Task RealRequestIdAndValidatedResultCrossWire(bool real)
     {

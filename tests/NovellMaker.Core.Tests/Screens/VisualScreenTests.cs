@@ -17,7 +17,7 @@ public sealed class VisualScreenTests
         try
         {
             var store = new JsonProjectStore(); await store.SaveAsync(file, project);
-            var doc = JsonNode.Parse(File.ReadAllText(file))!; doc["formatVersion"] = 11; doc.AsObject().Remove("startScreenSceneId"); doc.AsObject().Remove("inputBindings"); doc["pauseScreenId"] = screen.Id;
+            var doc = JsonNode.Parse(File.ReadAllText(file))!; doc["formatVersion"] = 11; doc.AsObject().Remove("releaseCheck"); doc.AsObject().Remove("startScreenSceneId"); doc.AsObject().Remove("inputBindings"); doc["pauseScreenId"] = screen.Id;
             var legacy = System.Text.Json.JsonSerializer.SerializeToNode(screen, new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase })!;
             foreach (var binding in legacy["buttons"]!.AsArray()) { binding!.AsObject().Remove("group"); binding.AsObject().Remove("amount"); }
             legacy.AsObject().Remove("pauseOnOverlay"); legacy.AsObject().Remove("blockInputOnOverlay");

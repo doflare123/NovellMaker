@@ -31,6 +31,7 @@ public sealed partial class EditorSession
     public Task PreviewSceneAsync() => RunAsync(async () =>
     {
         if (project is null) return;
+        _ = project.ReleaseCheck?.ToConfiguration();
         var document = ActiveScene;
         var sceneId = document?.Id;
         if (sceneId is null) return;

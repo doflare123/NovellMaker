@@ -38,6 +38,11 @@ public sealed record ReleaseCheckConfiguration
 
     public ReleaseCheckConfiguration(string owner, string repository, string currentVersion)
     {
+        // Reserve documented credential prefixes, irrespective of current token length/encoding.
+        // This is an accidental-paste guard, not a general secret detector.
+        if (repository is not null && new[] { "ghp_", "github_pat_", "gho_", "ghu_", "ghs_", "ghr_" }
+            .Any(prefix => repository.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException("Имя репозитория похоже на токен GitHub. Укажите публичное имя репозитория, без токена.");
         static bool AlphaNumeric(char c) => char.IsAsciiLetterOrDigit(c);
         if (owner is not { Length: >= 1 and <= 39 } || !AlphaNumeric(owner[0]) || !AlphaNumeric(owner[^1]) ||
             owner.Contains("--", StringComparison.Ordinal) || owner.Any(c => !AlphaNumeric(c) && c != '-') ||

@@ -185,13 +185,13 @@ public sealed class GameSessionTests
             Assert.IsTrue(project.ContentEquals(await store.LoadAsync(path)));
             Assert.IsFalse(project.ContentEquals(project with { StartScreenSceneId = null }));
             Assert.AreNotEqual(ScenarioProgram.Fingerprint(project), ScenarioProgram.Fingerprint(project with { StartScreenSceneId = null }));
-            var json = JsonNode.Parse(File.ReadAllText(path))!; json["formatVersion"] = 16;
+            var json = JsonNode.Parse(File.ReadAllText(path))!; json["formatVersion"] = 16; json.AsObject().Remove("releaseCheck");
             File.WriteAllText(path, json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
             json.AsObject().Remove("startScreenSceneId"); var original = json.ToJsonString(); File.WriteAllText(path, original);
             var migrated = await store.LoadAsync(path); Assert.IsNull(migrated.StartScreenSceneId);
             Assert.AreEqual(NovelProject.CurrentFormatVersion, migrated.FormatVersion); Assert.AreEqual(original, File.ReadAllText(path));
-            json["formatVersion"] = 17; File.WriteAllText(path, json.ToJsonString());
+            json["formatVersion"] = 17; json.AsObject().Remove("releaseCheck"); File.WriteAllText(path, json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
             json["startScreenSceneId"] = Guid.NewGuid(); File.WriteAllText(path, json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
@@ -211,7 +211,7 @@ public sealed class GameSessionTests
         try
         {
             var store = new JsonProjectStore(); await store.SaveAsync(path, project); Assert.IsTrue(project.ContentEquals(await store.LoadAsync(path)));
-            var json = JsonNode.Parse(File.ReadAllText(path))!; json["formatVersion"] = 16; json.AsObject().Remove("startScreenSceneId");
+            var json = JsonNode.Parse(File.ReadAllText(path))!; json["formatVersion"] = 16; json.AsObject().Remove("releaseCheck"); json.AsObject().Remove("startScreenSceneId");
             File.WriteAllText(path, json.ToJsonString()); await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
         }
         finally { File.Delete(path); }

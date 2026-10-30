@@ -13,6 +13,13 @@ public sealed record WindowsInstallerOptions(string Version = "1.0.0", string? I
             throw new ArgumentException("Версия установщика: три или четыре числа от 0 до 65535, например 1.0.0.");
         return $"{value.Major}.{value.Minor}.{value.Build}.{Math.Max(0, value.Revision)}";
     }
+
+    public void ValidateProjectVersion(NovelProject project)
+    {
+        var version = ValidateVersion();
+        if (project.ReleaseCheck?.ToConfiguration() is { } release && version != release.CurrentVersion.ToString())
+            throw new ArgumentException("Версия установщика должна совпадать с версией игры в параметрах проверки выпуска.");
+    }
 }
 
 /// <summary>Compiles a Windows installer from the same validated game snapshot as folder export.</summary>
@@ -24,7 +31,7 @@ public sealed class WindowsInstallerService(WindowsExportService exporter, strin
         WindowsInstallerOptions options, CancellationToken cancellationToken = default)
     {
         DialogueDisplayValidation.Validate(project);
-        _ = options.ValidateVersion();
+        options.ValidateProjectVersion(project);
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Сборка установщика EXE пока поддержана только на Windows.");
         destination = Path.GetFullPath(destination);
         if (!Path.GetExtension(destination).Equals(".exe", StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Выберите файл установщика с расширением .exe.");

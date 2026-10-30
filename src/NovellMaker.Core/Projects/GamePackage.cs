@@ -8,6 +8,7 @@ namespace NovellMaker.Core.Projects;
 /// <summary>Versioned entry point for a distributable game; all paths are relative to the executable.</summary>
 public sealed record GamePackage(int Version, Guid ProjectId, Guid StartSceneId, string Language, string Title)
 {
+    public const int CurrentVersion = 2;
     public Guid? StartScreenSceneId { get; init; }
     public int SaveContainerVersion { get; init; } = GameSlotStore.CurrentVersion;
     public const string ManifestName = "game.json";

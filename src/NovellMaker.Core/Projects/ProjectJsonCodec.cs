@@ -52,6 +52,7 @@ internal static partial class ProjectJsonCodec
             17 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
             18 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken, Version18SerializerOptions).ConfigureAwait(false), allowSlots: true),
             19 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false), allowSlots: true),
+            20 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
             8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
             _ => throw new ProjectFormatException(
@@ -72,4 +73,7 @@ internal static partial class ProjectJsonCodec
     }
     internal static Task WriteAsync(Stream stream, NovelProject project, CancellationToken cancellationToken) =>
         JsonSerializer.SerializeAsync(stream, MapForSave(project), CurrentSerializerOptions, cancellationToken);
+
+    private static NovelProject MapVersion20(Version20ProjectDocument document) =>
+        MapVersion17(document, allowSlots: true) with { ReleaseCheck = document.ReleaseCheck };
 }

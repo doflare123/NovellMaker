@@ -173,9 +173,14 @@ internal static partial class ProjectJsonCodec
         [JsonRequired] public ImmutableArray<NovellMaker.Core.Screens.ProjectInputBinding>? InputBindings { get; init; }
     }
 
-    private sealed class Version17ProjectDocument : Version14ProjectDocument
+    private class Version17ProjectDocument : Version14ProjectDocument
     {
         [JsonRequired] public Guid? StartScreenSceneId { get; init; }
+    }
+
+    private sealed class Version20ProjectDocument : Version17ProjectDocument
+    {
+        [JsonRequired] public NovellMaker.Core.ExternalServices.ReleaseCheckSettings? ReleaseCheck { get; init; }
     }
 
     private class Version5ProjectDocument

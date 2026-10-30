@@ -7,8 +7,9 @@ namespace NovellMaker.Core.Projects;
 
 internal static partial class ProjectJsonCodec
 {
-    private static Version17ProjectDocument MapForSave(NovelProject project) => new()
+    private static Version20ProjectDocument MapForSave(NovelProject project) => new()
     {
+        ReleaseCheck = project.ReleaseCheck,
         StartScreenSceneId = project.StartScreenSceneId,
         InputBindings = project.InputBindings,
         Scripts = project.Scripts,

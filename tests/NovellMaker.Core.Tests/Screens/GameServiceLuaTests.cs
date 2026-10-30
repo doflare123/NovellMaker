@@ -270,7 +270,7 @@ public sealed class GameServiceLuaTests
             var (copy, _) = SceneCopy.Create(scene); Assert.AreEqual("chapter-1", copy.Canvas.Buttons[0].SlotId); Assert.AreEqual("Глава", copy.Canvas.Buttons[0].SlotTitle);
             var doc = JsonNode.Parse(text)!; doc["scenes"]![0]!["canvas"]!["buttons"]![0]!.AsObject().Remove("slotId");
             File.WriteAllText(path, doc.ToJsonString()); await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
-            doc = JsonNode.Parse(text)!; doc["formatVersion"] = 17;
+            doc = JsonNode.Parse(text)!; doc["formatVersion"] = 17; doc.AsObject().Remove("releaseCheck");
             File.WriteAllText(path, doc.ToJsonString()); await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
             var binding = doc["scenes"]![0]!["canvas"]!["buttons"]![0]!; binding.AsObject().Remove("slotId"); binding.AsObject().Remove("slotTitle");
             File.WriteAllText(path, doc.ToJsonString()); await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));

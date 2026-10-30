@@ -199,16 +199,16 @@ public sealed class DialogueCanvasTests
         try
         {
             var store = new JsonProjectStore(); await store.SaveAsync(path, project);
-            var json = JsonNode.Parse(File.ReadAllText(path))!; json["formatVersion"] = 15; json.AsObject().Remove("startScreenSceneId");
+            var json = JsonNode.Parse(File.ReadAllText(path))!; json["formatVersion"] = 15; json.AsObject().Remove("releaseCheck"); json.AsObject().Remove("startScreenSceneId");
             foreach (var s in json["scenes"]!.AsArray()) foreach (var node in s!["canvas"]!["nodes"]!.AsArray()) node!.AsObject().Remove("dialogue");
             File.WriteAllText(path, json.ToJsonString()); var bytes = File.ReadAllBytes(path);
             var migrated = await store.LoadAsync(path); Assert.HasCount(4, migrated.Scenes[0].Canvas.Nodes); Assert.HasCount(1, migrated.Scenes[1].Canvas.Nodes);
             Assert.IsTrue(migrated.ContentEquals(await store.LoadAsync(path))); CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
             Assert.AreEqual(scene.DialogueCssOverride, migrated.Scenes[0].DialogueCssOverride);
             await store.SaveAsync(path, migrated); Assert.IsTrue(migrated.ContentEquals(await store.LoadAsync(path)));
-            json = JsonNode.Parse(File.ReadAllText(path))!; json["formatVersion"] = 15; json.AsObject().Remove("startScreenSceneId"); File.WriteAllText(path, json.ToJsonString());
+            json = JsonNode.Parse(File.ReadAllText(path))!; json["formatVersion"] = 15; json.AsObject().Remove("releaseCheck"); json.AsObject().Remove("startScreenSceneId"); File.WriteAllText(path, json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
-            json["formatVersion"] = 16; json.AsObject().Remove("startScreenSceneId"); json["scenes"]![0]!["canvas"]!["nodes"]![0]!.AsObject().Remove("dialogue"); File.WriteAllText(path, json.ToJsonString());
+            json["formatVersion"] = 16; json.AsObject().Remove("releaseCheck"); json.AsObject().Remove("startScreenSceneId"); json["scenes"]![0]!["canvas"]!["nodes"]![0]!.AsObject().Remove("dialogue"); File.WriteAllText(path, json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
         }
         finally { File.Delete(path); }

@@ -24,11 +24,11 @@ public sealed partial class EditorSession
     public bool CanUndo => !IsBusy && undo.Count > 0;
     public bool CanRedo => !IsBusy && redo.Count > 0;
     public bool AreDocumentsValid => project is null ||
-        (!string.IsNullOrWhiteSpace(project.DefaultLanguage) && project.Scenes.All(scene => !string.IsNullOrWhiteSpace(scene.Name)) &&
+        (ReleaseCheckValidation.Length == 0 && !string.IsNullOrWhiteSpace(project.DefaultLanguage) && project.Scenes.All(scene => !string.IsNullOrWhiteSpace(scene.Name)) &&
          project.Images.All(image => !string.IsNullOrWhiteSpace(image.Name)) &&
          project.Scripts.All(script => !string.IsNullOrWhiteSpace(script.Name)) &&
          project.Characters.All(character => !string.IsNullOrWhiteSpace(character.Name) && character.States.All(state => !string.IsNullOrWhiteSpace(state.Name))));
-    public string DocumentValidation => AreDocumentsValid ? "" : "Укажите основной язык и названия сцен, изображений, персонажей, состояний и скриптов.";
+    public string DocumentValidation => ReleaseCheckValidation.Length != 0 ? ReleaseCheckValidation : AreDocumentsValid ? "" : "Укажите основной язык и названия сцен, изображений, персонажей, состояний и скриптов.";
     public SceneDocumentViewModel? ActiveScene => selectedDocument as SceneDocumentViewModel;
     public string SelectedSceneId => ActiveScene?.Id.ToString() ?? "—";
     public string SelectedLineId => ActiveScene?.SelectedLine?.Id.ToString() ?? "—";
@@ -272,6 +272,7 @@ public sealed partial class EditorSession
 
     private void NotifyAuthoringChanged()
     {
+        NotifyReleaseChecks();
         foreach (var document in sceneDocuments.Values.ToArray())
         {
             var scene = project?.Scenes.FirstOrDefault(item => item.Id == document.Id);

@@ -12,6 +12,135 @@ namespace NovellMaker.Editor.Tests;
 [TestClass]
 public sealed class WindowsExportTests
 {
+    [TestMethod]
+    [DataRow("missing-manifest")] [DataRow("version")] [DataRow("rid")] [DataRow("project-format")]
+    [DataRow("game-manifest")] [DataRow("wire")] [DataRow("features")] [DataRow("hash")]
+    [DataRow("length")] [DataRow("missing-file")] [DataRow("core-module")] [DataRow("runtime-module")]
+    [DataRow("text-core")] [DataRow("text-exe")] [DataRow("text-native")] [DataRow("old-core")]
+    [DataRow("extra-env")] [DataRow("nested-env")] [DataRow("extra-pdb")] [DataRow("empty-directory")]
+    [DataRow("listed-env")] [DataRow("duplicate-path")] [DataRow("traversal")] [DataRow("unknown-property")]
+    [DataRow("null-files")] [DataRow("null-features")] [DataRow("null-entry")] [DataRow("empty-path")]
+    [DataRow("backslash-path")] [DataRow("invalid-hash")] [DataRow("zero-length")]
+    [DataRow("config-empty")] [DataRow("config-wrong-version")] [DataRow("config-framework-dependent")]
+    [DataRow("deps-target")] [DataRow("deps-missing-core")] [DataRow("deps-nonbinary")]
+    [DataRow("core-wrong-assembly")]
+    public async Task TemplateIntegrityAndCompatibilityFailuresHaveNoPackagingEffects(string mutation)
+    {
+        const string secret = "PRIVATE-TEMPLATE-CREDENTIAL";
+        var path = Path.Combine(template, RuntimeTemplateManifest.FileName);
+        var manifest = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+        var entries = manifest["Files"]!.AsArray();
+        void ChangedFile(string name, Action<string> change)
+        {
+            var file = Path.Combine(template, name); change(file);
+            var entry = entries.Single(e => e!["Path"]!.GetValue<string>() == name)!;
+            entry["Length"] = new FileInfo(file).Length;
+            entry["Sha256"] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file)));
+        }
+        switch (mutation)
+        {
+            case "missing-manifest": File.Delete(path); break;
+            case "version": manifest["Version"] = 2; break;
+            case "rid": manifest["Rid"] = "linux-x64"; break;
+            case "project-format": manifest["ProjectFormat"] = 19; break;
+            case "game-manifest": manifest["GameManifest"] = 1; break;
+            case "wire": manifest["ScreenWire"] = 17; break;
+            case "features": manifest["Features"] = new System.Text.Json.Nodes.JsonArray(); break;
+            case "hash": entries[0]!["Sha256"] = new string('0', 64); break;
+            case "length": entries[0]!["Length"] = 1; break;
+            case "core-module": manifest["CoreModule"] = Guid.NewGuid(); break;
+            case "runtime-module": manifest["RuntimeModule"] = Guid.NewGuid(); break;
+            case "missing-file": File.Delete(Path.Combine(template, "coreclr.dll")); break;
+            case "text-core": ChangedFile("NovellMaker.Core.dll", p => File.WriteAllText(p, secret)); break;
+            case "text-exe": ChangedFile("NovellMaker.Runtime.exe", p => File.WriteAllText(p, secret)); break;
+            case "text-native": ChangedFile("SDL2.dll", p => File.WriteAllText(p, secret)); break;
+            case "old-core": ChangedFile("NovellMaker.Core.dll", RuntimeTemplateFixture.WriteOldCore); break;
+            case "extra-env": File.WriteAllText(Path.Combine(template, ".env"), secret); break;
+            case "nested-env": File.WriteAllText(Path.Combine(template, "Licenses", ".env"), secret); break;
+            case "extra-pdb": File.WriteAllText(Path.Combine(template, "private.pdb"), secret); break;
+            case "empty-directory": Directory.CreateDirectory(Path.Combine(template, "unexpected")); break;
+            case "listed-env":
+                var bytes = System.Text.Encoding.UTF8.GetBytes(secret); File.WriteAllBytes(Path.Combine(template, ".env"), bytes);
+                entries.Add(new System.Text.Json.Nodes.JsonObject { ["Path"] = ".env", ["Length"] = bytes.Length,
+                    ["Sha256"] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)) }); break;
+            case "duplicate-path": entries.Add(entries[0]!.DeepClone()); break;
+            case "traversal": entries[0]!["Path"] = "../outside.dll"; break;
+            case "unknown-property": manifest[secret] = secret; break;
+            case "null-files": manifest["Files"] = null; break;
+            case "null-features": manifest["Features"] = null; break;
+            case "null-entry": entries[0] = null; break;
+            case "empty-path": entries[0]!["Path"] = ""; break;
+            case "backslash-path": entries[0]!["Path"] = "Licenses\\PCG.txt"; break;
+            case "invalid-hash": entries[0]!["Sha256"] = new string('z', 64); break;
+            case "zero-length": entries[0]!["Length"] = 0; break;
+            case "config-empty": ChangedFile("NovellMaker.Runtime.runtimeconfig.json", p => File.WriteAllText(p, """{"runtimeOptions":{"includedFrameworks":[]}}""")); break;
+            case "config-wrong-version": ChangedFile("NovellMaker.Runtime.runtimeconfig.json", p => File.WriteAllText(p, RuntimeTemplateFixture.Config.Replace("10.0.8", "9.0.1", StringComparison.Ordinal))); break;
+            case "config-framework-dependent": ChangedFile("NovellMaker.Runtime.runtimeconfig.json", p => File.WriteAllText(p, """{"runtimeOptions":{"framework":{}}}""")); break;
+            case "deps-target": ChangedFile("NovellMaker.Runtime.deps.json", p => File.WriteAllText(p, File.ReadAllText(p).Replace("win-x64", "linux-x64", StringComparison.Ordinal))); break;
+            case "deps-missing-core": ChangedFile("NovellMaker.Runtime.deps.json", p => File.WriteAllText(p, File.ReadAllText(p).Replace("NovellMaker.Core.dll", "other.dll", StringComparison.Ordinal))); break;
+            case "deps-nonbinary": ChangedFile("NovellMaker.Runtime.deps.json", p => File.WriteAllText(p, File.ReadAllText(p).Replace("NovellMaker.Core.dll", ".env", StringComparison.Ordinal))); break;
+            case "core-wrong-assembly": ChangedFile("NovellMaker.Core.dll", p => File.Copy(Path.Combine(template, "NovellMaker.Runtime.dll"), p, true)); break;
+        }
+        if (mutation != "missing-manifest") File.WriteAllText(path, manifest.ToJsonString());
+        var probe = new ProbeAssets(); var destination = Path.Combine(root, "invalid-game");
+        var error = await Assert.ThrowsExactlyAsync<IOException>(() => new WindowsExportService(template, probe)
+            .ExportAsync(project, source, project.Scenes[0].Id, destination));
+        Assert.AreEqual(0, probe.Copies); Assert.IsFalse(error.ToString().Contains(secret, StringComparison.Ordinal));
+        Assert.IsFalse(Directory.Exists(destination)); Assert.IsEmpty(Directory.GetDirectories(root, ".novell-export-*"));
+        if (!OperatingSystem.IsWindows()) return;
+        // The installer must reject the same payload before starting its compiler.
+        var compiler = Path.Combine(root, "compiler"); Directory.CreateDirectory(compiler);
+        File.WriteAllText(Path.Combine(compiler, "makensis.exe"), "must never execute");
+        var exe = Path.Combine(root, "invalid.exe");
+        await Assert.ThrowsExactlyAsync<IOException>(() => new WindowsInstallerService(new(template, probe), compiler)
+            .ExportAsync(project, source, project.Scenes[0].Id, exe, new()));
+        Assert.AreEqual(0, probe.Copies); Assert.IsFalse(File.Exists(exe));
+        Assert.IsEmpty(Directory.GetDirectories(root, ".novell-installer-*"));
+    }
+
+    [TestMethod]
+    [DataRow(false)] [DataRow(true)]
+    public async Task TemplateMutationAfterAdmissionCannotPublishModifiedBytesOrExtraFiles(bool extra)
+    {
+        var probe = new ProbeAssets(() => File.WriteAllText(Path.Combine(template, extra ? ".env" : "SDL2.dll"), "PRIVATE-TEMPLATE-CREDENTIAL"));
+        var destination = Path.Combine(root, "changed-game");
+        await Assert.ThrowsExactlyAsync<IOException>(() => new WindowsExportService(template, probe).ExportAsync(project, source, project.Scenes[0].Id, destination));
+        Assert.AreEqual(1, probe.Copies); Assert.IsFalse(Directory.Exists(destination));
+        Assert.IsEmpty(Directory.GetDirectories(root, ".novell-export-*"));
+    }
+
+    [TestMethod]
+    public void ManifestCreatorRejectsUnexpectedFilesRatherThanBlessingThem()
+    {
+        File.Delete(Path.Combine(template, RuntimeTemplateManifest.FileName));
+        File.WriteAllText(Path.Combine(template, ".env"), "PRIVATE-TEMPLATE-CREDENTIAL");
+        Assert.ThrowsExactly<IOException>(() => RuntimeTemplateManifest.Create(template));
+        Assert.IsFalse(File.Exists(Path.Combine(template, RuntimeTemplateManifest.FileName)));
+    }
+
+    [TestMethod]
+    public void LinkedTemplateFileIsRejectedWithoutReadingItsTarget()
+    {
+        var target = Path.Combine(root, "private.txt"); File.WriteAllText(target, "PRIVATE-LINKED-CREDENTIAL");
+        var link = Path.Combine(template, "SDL2.dll"); var bytes = File.ReadAllBytes(link); File.Delete(link);
+        try { File.CreateSymbolicLink(link, target); }
+        catch (Exception error) when (error is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        { File.WriteAllBytes(link, bytes); Assert.Inconclusive("Symlink creation unavailable."); return; }
+        var errorResult = Assert.ThrowsExactly<IOException>(() => RuntimeTemplateManifest.Validate(template));
+        Assert.IsFalse(errorResult.ToString().Contains("PRIVATE-LINKED-CREDENTIAL", StringComparison.Ordinal));
+        File.Delete(link); Assert.AreEqual("PRIVATE-LINKED-CREDENTIAL", File.ReadAllText(target));
+    }
+
+    private sealed class ProbeAssets(Action? mutate = null) : IImageAssetService
+    {
+        internal int Copies;
+        private readonly ImageAssetService inner = new();
+        public Task CopyAsync(string source, string target, IReadOnlyList<NovellMaker.Core.Assets.ImageAsset> images, CancellationToken token = default)
+        { Copies++; mutate?.Invoke(); return inner.CopyAsync(source, target, images, token); }
+        public Task<NovellMaker.Core.Assets.ImageAsset> ImportAsync(string directory, string source, CancellationToken token = default) => inner.ImportAsync(directory, source, token);
+        public Task<byte[]> ReadPreviewAsync(string directory, NovellMaker.Core.Assets.ImageAsset image, int width = 1280, CancellationToken token = default) => inner.ReadPreviewAsync(directory, image, width, token);
+    }
+
     private string root = null!;
     private string source = null!;
     private string template = null!;
@@ -24,11 +153,7 @@ public sealed class WindowsExportTests
         source = Path.Combine(root, "source");
         template = Path.Combine(root, "template"); Directory.CreateDirectory(template);
         project = NovellMaker.Testing.AudioFixture.Attach(BuiltInExample.Create(source), source);
-        // Small template fixtures exercise packaging and failure handling. A separate test launches the real host.
-        foreach (var file in new[] { "NovellMaker.Runtime.exe", "NovellMaker.Runtime.dll", "NovellMaker.Core.dll",
-                     "NovellMaker.Runtime.deps.json", "coreclr.dll", "hostfxr.dll", "hostpolicy.dll", "System.Private.CoreLib.dll", "SDL2.dll", "openal.dll", "libSkiaSharp.dll" })
-            File.WriteAllText(Path.Combine(template, file), "fixture");
-        File.WriteAllText(Path.Combine(template, "NovellMaker.Runtime.runtimeconfig.json"), "{\"runtimeOptions\":{\"includedFrameworks\":[]}}");
+        RuntimeTemplateFixture.Create(template);
     }
 
     [TestCleanup]
@@ -43,10 +168,39 @@ public sealed class WindowsExportTests
     }
 
     [TestMethod]
+    public async Task ReleaseDeclarationPackagesUnsavedSnapshotWithoutPrivateFilesAndRejectsInvalidConfig()
+    {
+        var store = new JsonProjectStore(); var path = Path.Combine(source, "project.novell");
+        await store.SaveAsync(path, project); var before = await File.ReadAllBytesAsync(path);
+        var settings = new NovellMaker.Core.ExternalServices.ReleaseCheckSettings("github_releases_v1", "author", "novel", "2.3.4");
+        var edited = project with { ReleaseCheck = settings };
+        await File.WriteAllTextAsync(Path.Combine(source, ".env"), "PRIVATE-CREDENTIAL-DO-NOT-EXPORT");
+        var output = Path.Combine(root, "release"); var exporter = new WindowsExportService(template, new ImageAssetService());
+        await exporter.ExportAsync(edited, source, edited.Scenes[0].Id, output);
+        var loaded = await store.LoadAsync(Path.Combine(output, GamePackage.ProjectName));
+        Assert.AreEqual(settings, loaded.ReleaseCheck); GamePackage.Load(output).ValidateProject(loaded);
+        Assert.IsFalse(File.Exists(Path.Combine(output, ".env"))); CollectionAssert.AreEqual(before, await File.ReadAllBytesAsync(path));
+        var rejected = Path.Combine(root, "rejected");
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => exporter.ExportAsync(edited with { ReleaseCheck = settings with { Owner = "PRIVATE-CREDENTIAL-DO-NOT-EXPORT!" } }, source, edited.Scenes[0].Id, rejected));
+        Assert.IsFalse(error.ToString().Contains("PRIVATE-CREDENTIAL", StringComparison.Ordinal));
+        Assert.IsFalse(Directory.Exists(rejected)); Assert.IsFalse(Directory.EnumerateDirectories(root, ".novell-export-*").Any());
+    }
+
+    [TestMethod]
+    [DataRow("2.3.4", true)] [DataRow("2.3.4.0", true)] [DataRow("2.3.5", false)]
+    public void InstallerVersionMustMatchDeclaredGameVersion(string version, bool valid)
+    {
+        var configured = project with { ReleaseCheck = new("github_releases_v1", "author", "novel", "2.3.4") };
+        var options = new WindowsInstallerOptions(version);
+        if (valid) options.ValidateProjectVersion(configured);
+        else Assert.Throws<ArgumentException>(() => options.ValidateProjectVersion(configured));
+        options.ValidateProjectVersion(project);
+    }
+
+    [TestMethod]
     public async Task ExportCopiesCurrentSnapshotAndOnlyRegisteredAssetsWithoutChangingSource()
     {
         File.WriteAllText(Path.Combine(source, "private.txt"), "Do not export");
-        File.WriteAllText(Path.Combine(template, "native.pdb"), "debug symbols");
         var original = Path.Combine(source, "project.novell");
         await new JsonProjectStore().SaveAsync(original, project);
         var originalBytes = await File.ReadAllBytesAsync(original);
@@ -131,7 +285,7 @@ public sealed class WindowsExportTests
         await Assert.ThrowsExactlyAsync<IOException>(() => exporter.ExportAsync(project, source, project.Scenes[0].Id, destination));
     }
 
-    private void InitializeTemplateConfig() => File.WriteAllText(Path.Combine(template, "NovellMaker.Runtime.runtimeconfig.json"), "{\"runtimeOptions\":{\"includedFrameworks\":[]}}");
+    private void InitializeTemplateConfig() => File.WriteAllText(Path.Combine(template, "NovellMaker.Runtime.runtimeconfig.json"), RuntimeTemplateFixture.Config);
 
     [TestMethod]
     [TestCategory("NativeSmoke")]
@@ -145,6 +299,8 @@ public sealed class WindowsExportTests
         while (repo is not null && !File.Exists(Path.Combine(repo.FullName, "NovellMaker.slnx"))) repo = repo.Parent;
         Assert.IsNotNull(repo);
         var realTemplate = Path.Combine(repo.FullName, "artifacts", "export-templates", "win-x64");
+        // A configured v20 project must load in the bundled runtime without an automatic HTTP request.
+        project = project with { ReleaseCheck = new("github_releases_v1", "author", "novel", "1.0.0") };
         if (authorMenu)
         {
             var screen = ScreenFixture.Create("Пауза автора");

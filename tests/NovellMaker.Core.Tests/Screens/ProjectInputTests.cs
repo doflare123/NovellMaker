@@ -60,7 +60,7 @@ public sealed class ProjectInputTests
         try
         {
             var store = new JsonProjectStore(); await store.SaveAsync(path, project);
-            var doc = JsonNode.Parse(File.ReadAllText(path))!; doc["formatVersion"] = 13; doc.AsObject().Remove("startScreenSceneId"); doc.AsObject().Remove("inputBindings"); doc["pauseScreenId"] = scene.Id;
+            var doc = JsonNode.Parse(File.ReadAllText(path))!; doc["formatVersion"] = 13; doc.AsObject().Remove("releaseCheck"); doc.AsObject().Remove("startScreenSceneId"); doc.AsObject().Remove("inputBindings"); doc["pauseScreenId"] = scene.Id;
             ScreenFixture.RemoveGeometry(doc);
             foreach (var binding in doc["scenes"]![0]!["canvas"]!["buttons"]!.AsArray()) { binding!.AsObject().Remove("group"); binding.AsObject().Remove("amount"); }
             doc["scenes"]![0]!["canvas"]!["buttons"]![1]!["action"] = 5;

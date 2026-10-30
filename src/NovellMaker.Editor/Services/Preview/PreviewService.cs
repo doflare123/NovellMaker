@@ -31,6 +31,7 @@ public sealed class PreviewService : IPreviewService
     public async Task StartAsync(PreviewRequest request, Action<string> report)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
+        _ = request.Project.ReleaseCheck?.ToConfiguration();
         DialogueDisplayValidation.Validate(request.Project);
         await Task.Run(() => NovellMaker.Core.Scripting.LuaModuleLibrary.ValidateProject(request.Project));
         ObjectDisposedException.ThrowIf(disposed, this);

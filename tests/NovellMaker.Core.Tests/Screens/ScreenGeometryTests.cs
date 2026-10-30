@@ -108,7 +108,7 @@ public sealed class ScreenGeometryTests
             var store = new JsonProjectStore(); await store.SaveAsync(path, project);
             Assert.IsTrue(project.ContentEquals(await store.LoadAsync(path)));
             var json = JsonNode.Parse(File.ReadAllText(path))!;
-            json["formatVersion"] = 14; json.AsObject().Remove("startScreenSceneId"); File.WriteAllText(path, json.ToJsonString());
+            json["formatVersion"] = 14; json.AsObject().Remove("releaseCheck"); json.AsObject().Remove("startScreenSceneId"); File.WriteAllText(path, json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
             foreach (var node in json["scenes"]![0]!["canvas"]!["nodes"]!.AsArray())
                 foreach (var key in new[] { "geometry", "clipChildren", "order", "color", "dialogue" }) node!.AsObject().Remove(key);
@@ -116,9 +116,9 @@ public sealed class ScreenGeometryTests
             Assert.IsTrue(project.ContentEquals(await store.LoadAsync(path))); CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
             json["scenes"]![0]!["canvas"]!["nodes"]![0]!["kind"] = 5; File.WriteAllText(path, json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
-            json["formatVersion"] = 15; json.AsObject().Remove("startScreenSceneId"); File.WriteAllText(path, json.ToJsonString());
+            json["formatVersion"] = 15; json.AsObject().Remove("releaseCheck"); json.AsObject().Remove("startScreenSceneId"); File.WriteAllText(path, json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
-            json["formatVersion"] = 14; json.AsObject().Remove("startScreenSceneId"); json["scenes"]![0]!["canvas"]!["nodes"]![0] = null; File.WriteAllText(path, json.ToJsonString());
+            json["formatVersion"] = 14; json.AsObject().Remove("releaseCheck"); json.AsObject().Remove("startScreenSceneId"); json["scenes"]![0]!["canvas"]!["nodes"]![0] = null; File.WriteAllText(path, json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(() => store.LoadAsync(path));
         }
         finally { File.Delete(path); }

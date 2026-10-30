@@ -191,11 +191,11 @@ public sealed class MinigameTests
         {
             await new JsonProjectStore().SaveAsync(path,project);var text=File.ReadAllText(path);
             Assert.IsTrue(project.ContentEquals(await new JsonProjectStore().LoadAsync(path)));
-            var json=JsonNode.Parse(text)!;json["formatVersion"]=18;File.WriteAllText(path,json.ToJsonString());
+            var json=JsonNode.Parse(text)!;json["formatVersion"]=18; json.AsObject().Remove("releaseCheck");File.WriteAllText(path,json.ToJsonString());
             await Assert.ThrowsAsync<ProjectFormatException>(()=>new JsonProjectStore().LoadAsync(path));
             json["scenes"]![1]!["canvas"]!.AsObject().Remove("minigame");
             json["scenes"]![0]!["scriptBlocks"]=new JsonArray(); var old=json.ToJsonString();File.WriteAllText(path,old);
-            var migrated=await new JsonProjectStore().LoadAsync(path);Assert.AreEqual(19,migrated.FormatVersion);Assert.AreEqual(old,File.ReadAllText(path));
+            var migrated=await new JsonProjectStore().LoadAsync(path);Assert.AreEqual(NovelProject.CurrentFormatVersion,migrated.FormatVersion);Assert.AreEqual(old,File.ReadAllText(path));
             Assert.IsTrue(migrated.Scenes.All(s=>s.Canvas.Minigame is null));
             using var player=new ScenarioPlayer(migrated,migrated.Scenes[0].Id,"ru");var save=JsonNode.Parse(GameSave.Serialize(player))!;save["Version"]=1;
             GameSave.Load(player,save.ToJsonString());

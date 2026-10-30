@@ -38,6 +38,27 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task ReleaseSettingsControlsBindValidateAndUndo() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); await session.NewProjectAsync();
+        session.AddScene(); session.ActiveScene!.AddLine();
+        var view = new ProjectSettingsView { DataContext = session }; var window = new Window { Content = view, Width = 900, Height = 900 };
+        window.Show(); Dispatcher.UIThread.RunJobs();
+        var enabled = view.FindControl<CheckBox>("ReleaseCheckEnabledBox")!;
+        enabled.IsChecked = true; Dispatcher.UIThread.RunJobs(); Assert.IsTrue(session.ReleaseCheckEnabled);
+        view.FindControl<TextBox>("ReleaseCheckOwnerBox")!.Text = "author";
+        view.FindControl<TextBox>("ReleaseCheckRepositoryBox")!.Text = "novel";
+        view.FindControl<TextBox>("ReleaseCheckVersionBox")!.Text = "2.3.4";
+        Dispatcher.UIThread.RunJobs(); Assert.AreEqual("2.3.4", session.Project!.ReleaseCheck!.CurrentVersion);
+        Assert.IsTrue(session.AreDocumentsValid); Capture(window, "release-settings.png"); session.EndEditGroup();
+        view.FindControl<TextBox>("ReleaseCheckVersionBox")!.Text = "bad"; Dispatcher.UIThread.RunJobs();
+        Assert.IsFalse(session.AreDocumentsValid); Assert.IsFalse(string.IsNullOrEmpty(view.FindControl<TextBlock>("ReleaseCheckValidationText")!.Text));
+        session.Undo(); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual("2.3.4", view.FindControl<TextBox>("ReleaseCheckVersionBox")!.Text);
+        Assert.IsTrue(session.AreDocumentsValid); window.Close();
+    });
+
+    [TestMethod]
     [DataRow(LuaValueKind.Null, false)]
     [DataRow(LuaValueKind.Boolean, false)]
     [DataRow(LuaValueKind.Number, false)]

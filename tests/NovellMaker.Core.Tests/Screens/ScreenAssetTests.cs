@@ -61,7 +61,7 @@ public sealed class ScreenAssetTests
         try
         {
             var store = new JsonProjectStore(); await store.SaveAsync(path, NovelProject.Create("Старый проект"));
-            var doc = JsonNode.Parse(File.ReadAllText(path))!.AsObject(); doc["formatVersion"] = version; doc.AsObject().Remove("startScreenSceneId");
+            var doc = JsonNode.Parse(File.ReadAllText(path))!.AsObject(); doc["formatVersion"] = version; doc.AsObject().Remove("releaseCheck"); doc.AsObject().Remove("startScreenSceneId");
             doc.Remove("inputBindings"); doc.Remove("screens"); doc.Remove("pauseScreenId"); doc.AsObject().Remove("inputBindings");
             if (doc["scenes"] is JsonArray legacyScenes) foreach (var legacyScene in legacyScenes) legacyScene!.AsObject().Remove("canvas");
             if (version < 10) doc.Remove("scripts");

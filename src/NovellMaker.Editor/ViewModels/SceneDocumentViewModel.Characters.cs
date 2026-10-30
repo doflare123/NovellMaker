@@ -100,6 +100,8 @@ public sealed partial class SceneDocumentViewModel
         SampleFrame = null;
         if (IsEditingLanguageValid && Session.Project is { } project)
         {
+            // Static author composition does not use external services. Incomplete settings must remain editable.
+            project = project with { ReleaseCheck = null };
             if (!scene.HasLegacyActionScript && !scene.ScriptBlocks.IsEmpty)
             {
                 // Static composition of the selected phrase. Dynamic Lua/control flow runs through F6.

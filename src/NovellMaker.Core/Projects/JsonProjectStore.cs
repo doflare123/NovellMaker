@@ -29,11 +29,11 @@ public sealed class JsonProjectStore : IProjectStore
         {
             throw;
         }
-        catch (JsonException exception)
+        catch (JsonException)
         {
+            // JSON paths/property names can contain untrusted credential text. Do not retain raw parser diagnostics in logs.
             throw new ProjectFormatException(
-                "Файл проекта содержит некорректный JSON или не соответствует ожидаемой структуре.",
-                exception);
+                "Файл проекта содержит некорректный JSON или не соответствует ожидаемой структуре.");
         }
         catch (NotSupportedException exception)
         {

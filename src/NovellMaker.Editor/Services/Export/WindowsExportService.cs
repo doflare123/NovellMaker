@@ -1,4 +1,3 @@
-using System.Text.Json;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Styling;
 using NovellMaker.Editor.Services.Assets;
@@ -12,6 +11,7 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
 
     public async Task ExportAsync(NovelProject project, string assetsRoot, Guid startSceneId, string destination)
     {
+        _ = project.ReleaseCheck?.ToConfiguration();
         DialogueDisplayValidation.Validate(project);
         await Task.Run(() => NovellMaker.Core.Scripting.LuaModuleLibrary.ValidateProject(project));
         destination = Path.GetFullPath(destination);
@@ -21,7 +21,7 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
             ?? throw new ArgumentException("Выберите стартовую сцену игры.");
         if (startScene.Lines.IsEmpty && !startScene.HasActionScript && !startScene.HasPresentation)
             throw new ArgumentException("В стартовой сцене нет компонентов, задника, фраз или скрипта.");
-        ValidateTemplate(templateDirectory);
+        var runtime = RuntimeTemplateManifest.Validate(templateDirectory);
         _ = DialogueCssParser.Parse(project.DialogueUi.Css);
         foreach (var scene in project.Scenes)
             if (scene.DialogueCssOverride is { } css) _ = DialogueCssParser.Parse(css);
@@ -40,15 +40,8 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
             await new JsonProjectStore().SaveAsync(Path.Combine(staging, GamePackage.ProjectName), project);
             await images.CopyAsync(assetsRoot, staging, project.Images);
             await AudioAssetService.CopyAsync(assetsRoot, staging, project.Audio.Assets);
-            foreach (var path in Directory.EnumerateFiles(templateDirectory, "*", SearchOption.AllDirectories))
-            {
-                if (Path.GetExtension(path).Equals(".pdb", StringComparison.OrdinalIgnoreCase)) continue;
-                var relative = Path.GetRelativePath(templateDirectory, path);
-                var target = Path.Combine(staging, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                File.Copy(path, target, overwrite: false);
-            }
-            await new GamePackage(2, project.Id, startSceneId, project.DefaultLanguage, project.Name)
+            runtime.CopyTo(staging);
+            await new GamePackage(GamePackage.CurrentVersion, project.Id, startSceneId, project.DefaultLanguage, project.Name)
                 { StartScreenSceneId = project.StartScreenSceneId }.SaveAsync(staging);
             await File.WriteAllTextAsync(Path.Combine(staging, "Как играть.txt"),
                 $"{project.Name}\n\nЗапустите NovellMaker.Runtime.exe. Переносите всю папку целиком.\n" +
@@ -66,15 +59,4 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
         }
     }
 
-    internal static void ValidateTemplate(string directory)
-    {
-        foreach (var file in new[] { "NovellMaker.Runtime.exe", "NovellMaker.Runtime.dll", "NovellMaker.Core.dll",
-                     "NovellMaker.Runtime.deps.json", "NovellMaker.Runtime.runtimeconfig.json", "coreclr.dll", "hostfxr.dll", "hostpolicy.dll", "System.Private.CoreLib.dll", "SDL2.dll", "openal.dll", "libSkiaSharp.dll" })
-            if (!File.Exists(Path.Combine(directory, file)))
-                throw new IOException($"Не найден автономный шаблон Windows x64 ({file}). Подготовьте поставку редактора скриптом scripts/prepare-windows-export.ps1.");
-        using var config = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "NovellMaker.Runtime.runtimeconfig.json")));
-        var options = config.RootElement.GetProperty("runtimeOptions");
-        if (options.TryGetProperty("framework", out _) || options.TryGetProperty("frameworks", out _) || !options.TryGetProperty("includedFrameworks", out _))
-            throw new IOException("Шаблон Windows должен включать .NET (self-contained).");
-    }
 }

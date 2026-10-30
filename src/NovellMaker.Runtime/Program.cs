@@ -15,6 +15,12 @@ internal static class Program
     {
         if (args.Length == 1 && args[0] == "--lua-worker") return LuaWorkerEntry.Run();
         if (args.Length == 1 && args[0] == "--screen-lua-worker") return NovellMaker.Core.Screens.Lua.ScreenLuaWorkerEntry.Run();
+        if (args.Length == 1 && args[0] == "--prepare-export-template")
+        {
+            try { RuntimeTemplateManifest.Create(AppContext.BaseDirectory); return 0; }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            { Console.Error.WriteLine(error.Message); return 1; }
+        }
         return RunGame(args);
     }
 

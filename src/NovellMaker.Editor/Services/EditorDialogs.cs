@@ -60,7 +60,7 @@ public sealed class EditorDialogs(Window owner) : IEditorDialogs
         var dialog = CreateDialog("Установщик игры EXE — Windows x64");
         var picker = new ComboBox { Name = "InstallerStartScene", ItemsSource = project.Scenes.Select(s => new StartScene(s.Id, s.Name)).ToArray(), SelectedIndex = 0,
             HorizontalAlignment = HorizontalAlignment.Stretch };
-        var version = new TextBox { Name = "InstallerVersion", Text = "1.0.0" };
+        var version = new TextBox { Name = "InstallerVersion", Text = project.ReleaseCheck?.CurrentVersion ?? "1.0.0" };
         var iconLabel = new TextBlock { Name = "InstallerIconPath", Text = "Стандартная иконка", TextWrapping = Avalonia.Media.TextWrapping.Wrap };
         string? iconPath = null;
         var icon = new Button { Content = "Выбрать ICO…", Name = "PickInstallerIcon" };
@@ -82,7 +82,7 @@ public sealed class EditorDialogs(Window owner) : IEditorDialogs
         cancel.Click += (_, _) => dialog.Close(false);
         export.Click += (_, _) =>
         {
-            try { _ = new Export.WindowsInstallerOptions(version.Text ?? "").ValidateVersion(); dialog.Close(true); }
+            try { new Export.WindowsInstallerOptions(version.Text ?? "").ValidateProjectVersion(project); dialog.Close(true); }
             catch (ArgumentException error) { errorText.Text = error.Message; }
         };
         dialog.Content = new StackPanel { Margin = new Thickness(24), Spacing = 12, Children =

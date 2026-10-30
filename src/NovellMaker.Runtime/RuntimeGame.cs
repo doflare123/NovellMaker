@@ -85,9 +85,10 @@ internal sealed partial class RuntimeGame : Game
         services = new(session, slots);
         this.showNavigationControls = showNavigationControls;
         screens = new(Guid.NewGuid(), enableLua: true, hostAction: ApplyProjectCommand, hostService: ApplyService);
-        // Project configuration/GUI is a separate delivery. No automatic network request at startup.
+        // A declaration enables explicit Lua requests; startup itself never sends HTTP.
         releaseProvider = new();
-        releaseChecks = new(player.Execution.Project.Id, arguments.Package is null, releaseProvider);
+        releaseChecks = new(player.Execution.Project.Id, arguments.Package is null, releaseProvider,
+            player.Execution.Project.ReleaseCheck?.ToConfiguration());
         screens.Scripts!.ConnectReleaseChecks(releaseChecks, () => player.Execution.State.Variables);
         services.IsCurrentOrigin = origin => screens.Stack.Instances.Any(i => ReferenceEquals(i, origin));
         services.Completed += (origin, result) => serviceFeedbackDelivered = screens.DeliverServiceResult(origin, result);

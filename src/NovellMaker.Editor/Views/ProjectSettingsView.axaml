@@ -19,6 +19,19 @@
       </ComboBox>
       <TextBlock Text="Файл проекта" Classes="section" />
       <SelectableTextBlock Text="{Binding PathDisplay}" TextWrapping="Wrap" />
+      <TextBlock Text="ПРОВЕРКА ВЫПУСКА ИГРЫ" Classes="section" Margin="0,14,0,0" />
+      <CheckBox Name="ReleaseCheckEnabledBox" Content="Разрешить проверку выпусков GitHub Releases" IsChecked="{Binding ReleaseCheckEnabled, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
+      <TextBlock Text="Провайдер: публичный GitHub Releases. Запрос выполняется только по команде Lua. Авторизация не используется." TextWrapping="Wrap" />
+      <StackPanel Spacing="8" IsVisible="{Binding ReleaseCheckEnabled}" IsEnabled="{Binding CanEdit}">
+        <TextBlock Text="Владелец репозитория" />
+        <TextBox Name="ReleaseCheckOwnerBox" Text="{Binding ReleaseCheckOwner, Mode=TwoWay}" IsUndoEnabled="False" PlaceholderText="author" />
+        <TextBlock Text="Репозиторий" />
+        <TextBox Name="ReleaseCheckRepositoryBox" Text="{Binding ReleaseCheckRepository, Mode=TwoWay}" IsUndoEnabled="False" PlaceholderText="my-novel" />
+        <TextBlock Text="Версия этой поставки игры" />
+        <TextBox Name="ReleaseCheckVersionBox" Text="{Binding ReleaseCheckVersion, Mode=TwoWay}" IsUndoEnabled="False" PlaceholderText="1.0.0" />
+        <TextBlock Text="Только публичные метаданные выпуска. Не вводите токены или пароли." TextWrapping="Wrap" />
+      </StackPanel>
+      <TextBlock Name="ReleaseCheckValidationText" Text="{Binding ReleaseCheckValidation}" Foreground="#D9B68C" TextWrapping="Wrap" />
       <TextBlock Text="ДИАЛОГОВЫЙ ИНТЕРФЕЙС" Classes="section" Margin="0,14,0,0" />
       <CheckBox Content="Показывать прогресс озвучки" IsChecked="{Binding ShowVoiceProgress, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
       <CheckBox Content="Показывать паузу и продолжение озвучки" IsChecked="{Binding ShowVoiceControls, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />

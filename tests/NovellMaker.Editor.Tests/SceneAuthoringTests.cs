@@ -12,6 +12,48 @@ namespace NovellMaker.Editor.Tests;
 public sealed class SceneAuthoringTests
 {
     [TestMethod]
+    public async Task ReleaseSettingsSupportUndoSaveAsReopenAndSafeValidation()
+    {
+        using var directory = TemporaryDirectory.Create(); var path = Path.Combine(directory.Path, "source.novell");
+        var dialogs = new Dialogs { SavePath = path, OpenPath = path }; var preview = new ReleasePreview();
+        using var session = new EditorSession(new JsonProjectStore(), dialogs, new Git(), previewService: preview);
+        await session.NewProjectAsync();
+        session.AddScene(); session.ActiveScene!.AddLine(); session.ActiveScene.LineText = "Проверка";
+        Assert.IsFalse(session.ReleaseCheckEnabled);
+        session.ReleaseCheckEnabled = true; Assert.IsFalse(session.AreDocumentsValid);
+        session.ReleaseCheckOwner = "author"; session.ReleaseCheckRepository = "novel"; session.ReleaseCheckVersion = "2.3.4";
+        Assert.IsTrue(session.AreDocumentsValid); session.EndEditGroup();
+        await session.PreviewSceneAsync(); Assert.AreEqual(session.Project!.ReleaseCheck, preview.Request!.Project.ReleaseCheck);
+        Assert.AreEqual(1, preview.Calls);
+        await session.SaveAsync(false); var original = await File.ReadAllBytesAsync(path);
+        Assert.IsFalse(session.IsDirty);
+        session.ReleaseCheckVersion = "2.4.0"; session.EndEditGroup(); Assert.IsTrue(session.IsDirty);
+        session.Undo(); Assert.AreEqual("2.3.4", session.ReleaseCheckVersion); Assert.IsFalse(session.IsDirty);
+        session.Redo(); Assert.AreEqual("2.4.0", session.ReleaseCheckVersion);
+        var target = Path.Combine(directory.Path, "copy"); Directory.CreateDirectory(target); dialogs.SavePath = Path.Combine(target, "copy.novell");
+        await session.SaveAsync(true); CollectionAssert.AreEqual(original, await File.ReadAllBytesAsync(path));
+        Assert.AreEqual(session.Project!.ReleaseCheck, (await new JsonProjectStore().LoadAsync(dialogs.SavePath)).ReleaseCheck);
+        dialogs.OpenPath = dialogs.SavePath; await session.OpenProjectAsync(); Assert.AreEqual("2.4.0", session.ReleaseCheckVersion);
+        const string secret = "PRIVATE-CREDENTIAL-DO-NOT-LOG!";
+        session.ReleaseCheckOwner = secret; session.EndEditGroup(); Assert.IsFalse(session.AreDocumentsValid);
+        Assert.IsFalse(session.ReleaseCheckValidation.Contains(secret, StringComparison.Ordinal));
+        await session.SaveAsync(false); await session.PreviewSceneAsync();
+        Assert.AreEqual(1, preview.Calls);
+        Assert.IsFalse(string.Join(" ", session.Diagnostics).Contains(secret, StringComparison.Ordinal));
+        Assert.IsFalse(dialogs.Errors.Any(e => e.Message.Contains(secret, StringComparison.Ordinal)));
+        session.ReleaseCheckEnabled = false; Assert.IsTrue(session.AreDocumentsValid); session.Undo(); Assert.IsTrue(session.ReleaseCheckEnabled);
+    }
+
+    private sealed class ReleasePreview : NovellMaker.Editor.Services.Preview.IPreviewService
+    {
+        internal NovellMaker.Editor.Services.Preview.PreviewRequest? Request;
+        internal int Calls;
+        public Task StartAsync(NovellMaker.Editor.Services.Preview.PreviewRequest request, Action<string> report)
+        { Request = request; Calls++; return Task.CompletedTask; }
+        public void Dispose() { }
+    }
+
+    [TestMethod]
     public async Task AddAndOpenScenes_CreatesIndependentIdsAndClosingTabRetainsEdits()
     {
         var session = await NewSessionAsync();

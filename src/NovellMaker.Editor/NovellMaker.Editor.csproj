@@ -29,9 +29,11 @@
     <ItemGroup>
       <ExportTemplateFile Include="$(ExportTemplateRoot)**/*" />
     </ItemGroup>
+    <RemoveDir Directories="$(ExportTemplateOutput)" Condition="Exists('$(ExportTemplateRoot)runtime-template.json')" />
     <Copy SourceFiles="@(ExportTemplateFile)" DestinationFiles="@(ExportTemplateFile->'$(ExportTemplateOutput)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
   <Target Name="PublishWindowsExportTemplate" AfterTargets="Publish" DependsOnTargets="CopyWindowsExportTemplate">
+    <RemoveDir Directories="$(PublishDir)ExportTemplates/win-x64/" />
     <Copy SourceFiles="@(ExportTemplateFile)" DestinationFiles="@(ExportTemplateFile->'$(PublishDir)ExportTemplates/win-x64/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
   <Target Name="PublishRuntimeHost" AfterTargets="Publish" DependsOnTargets="CopyRuntimeHost">
