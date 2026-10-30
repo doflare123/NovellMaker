@@ -93,6 +93,20 @@ public interface IReleaseCheckProvider
 public sealed record ReleaseCheckResult(Guid RequestId, ReleaseCheckCode Code, ReleaseCheckData? Release,
     int? RetryAfterSeconds, Guid Origin, int Depth)
 {
+    public void Validate()
+    {
+        if (RequestId == Guid.Empty || Origin == Guid.Empty || Depth is < 1 or > 32 || !Enum.IsDefined(Code) ||
+            (Code == ReleaseCheckCode.RateLimited ? RetryAfterSeconds is null or <= 0 : RetryAfterSeconds is not null) ||
+            (Success ? Release is null : Release is not null)) throw new ArgumentException("Некорректный результат проверки выпуска.");
+        if (Release is { } data)
+        {
+            // Reconstruct the restricted repository configuration to validate the wire projection too.
+            var parts = data.PageUrl?.Split('/');
+            if (parts is not { Length: 8 }) throw new ArgumentException("Некорректная страница выпуска.");
+            var configuration = new ReleaseCheckConfiguration(parts[3], parts[4], data.CurrentVersion);
+            if (!data.IsValid(configuration)) throw new ArgumentException("Некорректные данные выпуска.");
+        }
+    }
     public bool Success => Code == ReleaseCheckCode.Ok;
     public string Provider => ReleaseCheckConfiguration.Provider;
     public string Operation => "CheckGameRelease";

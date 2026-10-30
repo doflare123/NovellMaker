@@ -85,16 +85,25 @@ public sealed class ReleaseCheckService : IDisposable, IAsyncDisposable
         if (owner is null || owner.Closed || !owners.Contains(owner)) throw new ArgumentException("Владелец проверки выпуска недействителен.");
     }
 
+    public bool IsCurrentOwner(Owner owner) => !disposed && owner is not null && !owner.Closed && owners.Contains(owner);
+
     public bool IsBusy(Owner owner) { ValidateOwner(owner); return owner.Outstanding is not null; }
 
     /// <summary>Reserves bounded result storage before effects. Call only after the caller's entire batch was validated.</summary>
-    public Guid Check(Owner owner, int sourceDepth = 0, Guid? origin = null)
+    public void ValidateCheck(Owner owner, Guid requestId, int sourceDepth = 0, Guid? origin = null)
     {
         ValidateOwner(owner);
-        if (sourceDepth is < 0 or >= 32 || origin == Guid.Empty) throw new ArgumentException("Превышен бюджет цепочки проверки выпуска.");
+        if (requestId == Guid.Empty || owner.Requests.ContainsKey(requestId) || sourceDepth is < 0 or >= 32 || origin == Guid.Empty)
+            throw new ArgumentException("Превышен бюджет цепочки или неверный ID проверки выпуска.");
         if (owner.Requests.Count >= MaximumRequestsPerOwner || reservations >= MaximumReservations)
             throw new InvalidOperationException("Превышен бюджет запросов или результатов проверки выпуска.");
-        var request = new Request(owner, Guid.NewGuid(), origin ?? Guid.NewGuid(), sourceDepth + 1, clock.GetTimestamp(), configuration);
+    }
+
+    public Guid Check(Owner owner, int sourceDepth = 0, Guid? origin = null, Guid? requestId = null)
+    {
+        var id = requestId ?? Guid.NewGuid();
+        ValidateCheck(owner, id, sourceDepth, origin);
+        var request = new Request(owner, id, origin ?? Guid.NewGuid(), sourceDepth + 1, clock.GetTimestamp(), configuration);
         owner.Requests.Add(request.Id, request); reservations++;
         if (configuration is null) Complete(request, ReleaseCheckCode.Disabled);
         else if (owner.Outstanding is not null) Complete(request, ReleaseCheckCode.Busy);
@@ -133,6 +142,13 @@ public sealed class ReleaseCheckService : IDisposable, IAsyncDisposable
         result = request.Result;
         Release(request);
         return true;
+    }
+
+    /// <summary>Host bridge retains reservations/busy ownership until the result handler commits.</summary>
+    public System.Collections.Immutable.ImmutableArray<ReleaseCheckResult> PendingResults(Owner owner)
+    {
+        ValidateOwner(owner);
+        return [.. owner.Results.Select(r => r.Result!)];
     }
 
     public void Close(Owner owner)

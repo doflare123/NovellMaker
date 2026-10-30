@@ -11,6 +11,93 @@ namespace NovellMaker.Runtime.Tests;
 [TestClass]
 public sealed class RuntimeMinigameTests
 {
+    private sealed class ReleaseProvider : NovellMaker.Core.ExternalServices.IReleaseCheckProvider
+    {
+        internal int Calls;
+        internal readonly TaskCompletionSource<NovellMaker.Core.ExternalServices.ReleaseProviderReply> Result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<NovellMaker.Core.ExternalServices.ReleaseProviderReply> CheckAsync(NovellMaker.Core.ExternalServices.ReleaseCheckConfiguration configuration, CancellationToken token)
+        { Interlocked.Increment(ref Calls); return Result.Task; }
+    }
+
+    [TestMethod]
+    [DataRow(false)] [DataRow(true)]
+    public async Task ReleaseResultWaitsForMinigameLifecyclePauseAndIsDeliveredOnce(bool pauseScenario)
+    {
+        var project = Project("""
+            return {on_load=function() ui.check_game_release() end,on_event=function(e)
+              if e.kind=='service_result' then
+                local state=ui.get_state(); state.deliveries=(state.deliveries or 0)+1
+                ui.set_state(state); ui.set_text(refs.label,'DELIVERED')
+              end
+            end}
+            """);
+        using var player = new ScenarioPlayer(project, project.Scenes[0].Id, "ru"); await using var host = Host(project, () => player);
+        var provider = new ReleaseProvider();
+        await using var service = new NovellMaker.Core.ExternalServices.ReleaseCheckService(project.Id, true, provider, new("author", "novel", "1.0.0"));
+        host.Scripts!.ConnectReleaseChecks(service); await Drain(host);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (provider.Calls == 0) { timeout.Token.ThrowIfCancellationRequested(); host.Poll(); await Task.Delay(1); }
+        var instance = host.Stack.Instances.Single(); var before = instance.Definition;
+        var overlay = host.Stack.Open(Guid.NewGuid(), ScreenFixture.Create("Слой").Definition(), new(true, pauseScenario));
+        host.Poll(); Assert.AreEqual(MinigamePhase.Paused, host.ActiveMinigame!.Phase);
+        provider.Result.SetResult(new(NovellMaker.Core.ExternalServices.ReleaseCheckCode.NetworkUnavailable));
+        while (service.HasRunningTransport) { timeout.Token.ThrowIfCancellationRequested(); host.Poll(); await Task.Delay(1); }
+        await Drain(host);
+        Assert.AreEqual(MinigamePhase.Paused, host.ActiveMinigame.Phase);
+        Assert.AreSame(before, instance.Definition);
+        Assert.IsFalse(host.Scripts.GetState(instance).Properties!.ContainsKey("deliveries"));
+        Assert.AreEqual(1, service.ReservationCount); Assert.AreEqual(1, host.Scripts.ReservedServiceReplies);
+        host.Stack.Close(overlay); await Drain(host);
+        Assert.AreEqual(MinigamePhase.Running, host.ActiveMinigame.Phase);
+        Assert.AreEqual("DELIVERED", instance.Definition.Nodes[1].Text);
+        Assert.AreEqual(1d, host.Scripts.GetState(instance).Properties!["deliveries"].Number);
+        Assert.AreEqual(0, service.ReservationCount); Assert.AreEqual(0, host.Scripts.ReservedServiceReplies);
+        await Drain(host);
+        Assert.AreEqual(1d, host.Scripts.GetState(instance).Properties!["deliveries"].Number);
+        Assert.IsEmpty(host.Diagnostics);
+    }
+
+    [TestMethod]
+    public async Task ReleaseRequestBlocksSaveUntilHandledAndLoadDoesNotReplayNetwork()
+    {
+        var project = Project("return {on_load=function() if not ui.is_restoring() then ui.check_game_release() end end,on_event=function(e) if e.kind=='service_result' then ui.set_text(refs.label,e.code) end end}");
+        using var player = new ScenarioPlayer(project, project.Scenes[0].Id, "ru"); await using var host = Host(project, () => player);
+        var provider = new ReleaseProvider();
+        await using var service = new NovellMaker.Core.ExternalServices.ReleaseCheckService(project.Id, true, provider, new("author", "novel", "1.0.0"));
+        host.Scripts!.ConnectReleaseChecks(service); await Drain(host);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (provider.Calls == 0) { timeout.Token.ThrowIfCancellationRequested(); host.Poll(); await Task.Delay(1); }
+        var instance = host.Stack.Instances.Single();
+        StringAssert.Contains(Assert.Throws<InvalidOperationException>(() => GameSave.Capture(player)).Message, "проверки выпуска");
+        Assert.Throws<ArgumentException>(() => GameSave.Load(player, "{}")); host.Poll();
+        Assert.IsTrue(host.Scripts.HasReleaseChecks(instance));
+        provider.Result.SetResult(new(NovellMaker.Core.ExternalServices.ReleaseCheckCode.NetworkUnavailable));
+        while (host.Scripts.HasReleaseChecks(instance)) { timeout.Token.ThrowIfCancellationRequested(); host.Poll(); await Task.Delay(1); }
+        await Drain(host); Assert.AreEqual("NetworkUnavailable", instance.Definition.Nodes[1].Text);
+        var saved = GameSave.Serialize(player);
+        Assert.IsFalse(saved.Contains("CheckGameRelease", StringComparison.Ordinal));
+        GameSave.Load(player, saved); host.Reset(); host.SyncScene(player.State.SceneId); host.Poll(); await Drain(host);
+        Assert.AreEqual(1, provider.Calls); Assert.AreEqual(0, service.ReservationCount);
+        Assert.IsNotNull(GameSave.Capture(player)); Assert.IsEmpty(host.Diagnostics);
+    }
+
+    [TestMethod]
+    [DataRow("ui.check_game_release()")]
+    [DataRow("ui.cancel_release_check('11111111111111111111111111111111')")]
+    public async Task RestoringRejectsReleaseCommandsBeforeEffects(string command)
+    {
+        var project = Project("return {on_load=function() if ui.is_restoring() then ui.set_text(refs.label,'bad'); " + command + " end end,on_event=function() end}");
+        using var player = new ScenarioPlayer(project, project.Scenes[0].Id, "ru"); await using var host = Host(project, () => player);
+        var provider = new ReleaseProvider();
+        await using var service = new NovellMaker.Core.ExternalServices.ReleaseCheckService(project.Id, true, provider, new("author", "novel", "1.0.0"));
+        host.Scripts!.ConnectReleaseChecks(service); await Drain(host);
+        var saved = GameSave.Serialize(player); GameSave.Load(player, saved); host.Reset(); host.SyncScene(player.State.SceneId); host.Poll(); await Drain(host);
+        Assert.AreEqual(0, provider.Calls); Assert.AreEqual(0, service.ReservationCount);
+        Assert.IsNull(host.ActiveMinigame);
+        Assert.AreEqual(MinigamePhase.Failed, player.State.MinigameOutcome!.Result.Phase);
+        StringAssert.Contains(player.State.MinigameOutcome.Result.Message, "Восстановление");
+    }
+
     private sealed class AudioBackend : NovellMaker.Core.Audio.IAudioBackend
     {
         internal int Opened, Disposed;

@@ -4,6 +4,7 @@ using NovellMaker.Core.Screens;
 using NovellMaker.Core.Screens.Lua;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Scripting;
+using NovellMaker.Core.Minigames;
 
 namespace NovellMaker.Runtime;
 
@@ -49,6 +50,14 @@ internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
     public bool Poll()
     {
         SyncMinigame();
+        foreach (var instance in Stack.Instances)
+        {
+            // A covered mini-game pauses even when the upper layer does not pause the scenario.
+            var minigamePaused = ReferenceEquals(instance, minigameInstance) &&
+                (ActiveMinigame?.Phase == MinigamePhase.Paused || !ReferenceEquals(Stack.Instances.LastOrDefault(), instance));
+            Scripts?.Suspend(instance, !minigameHostActive || minigamePaused ||
+                Stack.Instances.SkipWhile(i => !ReferenceEquals(i, instance)).Skip(1).Any(i => i.Policy.PauseScenario));
+        }
         var changed = Scripts?.Poll() ?? false;
         CommitMinigame();
         foreach (var invocation in Scripts?.DrainServices() ?? [])

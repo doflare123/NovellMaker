@@ -1,5 +1,5 @@
 ---@meta NovellMaker.ui
--- NovellMaker screen API, wire 17 / Lua 5.2. Tooling only; never execute this file.
+-- NovellMaker screen API, wire 18 / Lua 5.2. Tooling only; never execute this file.
 -- Calls enqueue one atomic batch. A handler must return; waits do not suspend Lua.
 
 ---@alias NMHandle string Opaque resource/instance/node identity, valid only in its live instance.
@@ -43,7 +43,18 @@
 ---@field revision? string
 ---@field saved_at? string UTC ISO 8601.
 ---@field game_time? number
+---@class NMRelease
+---@field current_version string Canonical four-part version.
+---@field latest_version string
+---@field update_available boolean
+---@field page_url string Validated GitHub HTTPS page; data only.
+---@field checked_at string UTC ISO 8601.
+---@field from_cache boolean
 ---@class NMEvent
+---@field provider? string github_releases_v1 for CheckGameRelease.
+---@field code? string Ok/Disabled/Busy/RateLimited/Cancelled/Timeout or provider error.
+---@field retry_after_seconds? integer
+---@field release? NMRelease
 ---@field kind 'click'|'move'|'hover'|'update'|'trigger'|'service_result'|'animation_result'|'audio_result'|'pointer_down'|'pointer_up'|'pointer_cancel'|'drag_start'|'drag'|'drag_end'|'hover_enter'|'hover_leave'|'focus'|'blur'|'key_down'|'key_up'|'input_reset'
 ---@field audio_id? string ID returned by ui.play_audio.
 ---@field animation_id? string ID returned by ui.animate.
@@ -220,6 +231,12 @@ function ui.load_slot(id) end
 function ui.delete_slot(id) end
 ---@return string request_id
 function ui.get_settings() end
+---Exactly zero arguments. No network until the whole batch commits. No automatic retry.
+---@return string request_id Result arrives as service_result, operation CheckGameRelease.
+function ui.check_game_release() end
+---Exactly one own request ID. Completed request is a no-op; foreign ID rejects the batch.
+---@param request_id string
+function ui.cancel_release_check(request_id) end
 ---@param key 'master_volume'|'master_muted'|'sound_volume'|'sound_muted'|'effect_volume'|'effect_muted'|'voice_volume'|'voice_muted'|'fullscreen'
 ---@param value number|boolean Volume 0..1, flags boolean.
 ---@return string request_id

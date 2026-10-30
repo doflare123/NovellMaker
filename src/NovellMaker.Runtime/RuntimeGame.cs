@@ -21,6 +21,8 @@ internal sealed partial class RuntimeGame : Game
     private readonly GameSession session;
     private readonly GameSessionSlots slots;
     private readonly RuntimeGameServices services;
+    private readonly NovellMaker.Core.ExternalServices.ReleaseCheckService releaseChecks;
+    private readonly ExternalServices.GitHubReleaseProvider releaseProvider;
     private readonly PlayerSettingsSession settings;
     private readonly LuaJournalFile luaJournal;
     internal Task FlushLuaJournalAsync()
@@ -83,6 +85,10 @@ internal sealed partial class RuntimeGame : Game
         services = new(session, slots);
         this.showNavigationControls = showNavigationControls;
         screens = new(Guid.NewGuid(), enableLua: true, hostAction: ApplyProjectCommand, hostService: ApplyService);
+        // Project configuration/GUI is a separate delivery. No automatic network request at startup.
+        releaseProvider = new();
+        releaseChecks = new(player.Execution.Project.Id, arguments.Package is null, releaseProvider);
+        screens.Scripts!.ConnectReleaseChecks(releaseChecks, () => player.Execution.State.Variables);
         services.IsCurrentOrigin = origin => screens.Stack.Instances.Any(i => ReferenceEquals(i, origin));
         services.Completed += (origin, result) => serviceFeedbackDelivered = screens.DeliverServiceResult(origin, result);
         settingsServices = new(session, settings, ApplyPlayerSettings);
@@ -322,6 +328,8 @@ internal sealed partial class RuntimeGame : Game
         session.Dispose();
         session.Resetting -= ResetSessionResources;
         screens.Dispose();
+        releaseChecks.Dispose();
+        releaseProvider.Dispose();
         componentTextures?.Dispose();
         componentEffect?.Dispose();
         audio?.Dispose();
@@ -496,7 +504,13 @@ internal sealed partial class RuntimeGame : Game
         return success;
     }
 
-    internal ValueTask DisposeSlotsAsync() { services.Dispose(); return slots.DisposeAsync(); }
+    internal async ValueTask DisposeSlotsAsync()
+    {
+        services.Dispose();
+        await slots.DisposeAsync();
+        await releaseChecks.DisposeAsync();
+        releaseProvider.Dispose();
+    }
     private void ApplyService(ScreenInstance? origin, GameServiceCommand command, long generation)
     {
         serviceFeedbackDelivered = false;

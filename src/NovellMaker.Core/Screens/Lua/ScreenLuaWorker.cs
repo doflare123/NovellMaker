@@ -134,6 +134,18 @@ internal sealed class ScreenLuaVm
         Bind("load_slot", a => Service(GameServiceAction.LoadSlot, Str(a, 0)));
         Bind("delete_slot", a => Service(GameServiceAction.DeleteSlot, Str(a, 0)));
         Bind("get_settings", _ => Service(GameServiceAction.GetSettings));
+        Bind("check_game_release", a =>
+        {
+            if (a.Count != 0) throw new ScriptRuntimeException("check_game_release ожидает 0 аргументов.");
+            return Service(GameServiceAction.CheckGameRelease);
+        });
+        Bind("cancel_release_check", a =>
+        {
+            if (a.Count != 1 || !Guid.TryParseExact(ExactString(a, 0), "N", out var id) || id == Guid.Empty)
+                throw new ScriptRuntimeException("cancel_release_check ожидает ID запроса.");
+            var command = new GameServiceCommand(Guid.NewGuid(), GameServiceAction.CancelReleaseCheck) { ReleaseRequestId = id };
+            command.Validate(); Add(new("service", null, null, null) { Service = command }); return DynValue.Nil;
+        });
         Bind("get_persistent", a => Service(GameServiceAction.GetPersistent, key: ExactString(a, 0)));
         Bind("set_persistent", a => Service(GameServiceAction.SetPersistent, key: ExactString(a, 0), data: OptionalString(a, 1)));
         Bind("set_setting", a =>
@@ -204,6 +216,23 @@ internal sealed class ScreenLuaVm
                 argument.Set("operation", DynValue.NewString(result.Action.ToString()));
                 argument.Set("success", DynValue.NewBoolean(result.Success));
                 argument.Set("message", DynValue.NewString(result.Message));
+                if (result.ReleaseCheck is { } check)
+                {
+                    argument.Set("provider", DynValue.NewString(check.Provider));
+                    argument.Set("code", DynValue.NewString(check.Code.ToString()));
+                    if (check.RetryAfterSeconds is { } retry) argument.Set("retry_after_seconds", DynValue.NewNumber(retry));
+                    if (check.Release is { } release)
+                    {
+                        var releaseTable = new Table(script);
+                        releaseTable.Set("current_version", DynValue.NewString(release.CurrentVersion));
+                        releaseTable.Set("latest_version", DynValue.NewString(release.LatestVersion));
+                        releaseTable.Set("update_available", DynValue.NewBoolean(release.UpdateAvailable));
+                        releaseTable.Set("page_url", DynValue.NewString(release.PageUrl));
+                        releaseTable.Set("checked_at", DynValue.NewString(release.CheckedAt.ToString("O")));
+                        releaseTable.Set("from_cache", DynValue.NewBoolean(release.FromCache));
+                        argument.Set("release", DynValue.NewTable(releaseTable));
+                    }
+                }
                 argument.Set("persisted", result.ProfileSaved is { } saved ? DynValue.NewBoolean(saved) : DynValue.Nil);
                 argument.Set("slot_id", result.SlotId is { } slot ? DynValue.NewString(slot) : DynValue.Nil);
                 argument.Set("key", result.Key is { } key ? DynValue.NewString(key) : DynValue.Nil);

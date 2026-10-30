@@ -68,6 +68,8 @@ internal sealed partial class RuntimeScreens
                     ? "Дождитесь завершения анимации мини-игры перед сохранением."
                     : minigameInstance is not null && Scripts?.HasAudio(minigameInstance) == true
                     ? "Остановите звук мини-игры и дождитесь результата перед сохранением."
+                    : minigameInstance is not null && Scripts?.HasReleaseChecks(minigameInstance) == true
+                    ? "Дождитесь обработки результата проверки выпуска перед сохранением мини-игры."
                     : minigameInstance is null || Scripts?.IsSettled(minigameInstance) != true || ActiveMinigame?.Phase == MinigamePhase.Starting
                     ? "Обработчик мини-игры ещё выполняется. Повторите сохранение после завершения операции." : null;
             }

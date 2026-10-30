@@ -3,15 +3,17 @@ using NovellMaker.Core.Profiles;
 
 namespace NovellMaker.Core.Execution;
 
-public enum GameServiceAction { NewGame, MainMenu, EndSession, ContinueGame, ListSlots, SaveSlot, LoadSlot, DeleteSlot, GetSettings, SetSetting, GetPersistent, SetPersistent }
+public enum GameServiceAction { NewGame, MainMenu, EndSession, ContinueGame, ListSlots, SaveSlot, LoadSlot, DeleteSlot, GetSettings, SetSetting, GetPersistent, SetPersistent, CheckGameRelease, CancelReleaseCheck }
 public sealed record GameServiceCommand(Guid RequestId, GameServiceAction Action, string? SlotId = null, string? Title = null, Guid? SceneId = null)
 {
     public PlayerSettingChange? Setting { get; init; }
     public string? Key { get; init; }
     public string? DataValue { get; init; }
+    public Guid? ReleaseRequestId { get; init; }
     public void Validate()
     {
         if (RequestId == Guid.Empty || !Enum.IsDefined(Action) ||
+            (Action == GameServiceAction.CancelReleaseCheck ? ReleaseRequestId is null || ReleaseRequestId == Guid.Empty : ReleaseRequestId is not null) ||
             (Action is GameServiceAction.SaveSlot or GameServiceAction.LoadSlot or GameServiceAction.DeleteSlot
                 ? SlotId is not null && !GameSlotStore.IsValidSlotId(SlotId) || Action != GameServiceAction.SaveSlot && SlotId is null
                 : SlotId is not null) ||
@@ -29,6 +31,7 @@ public sealed record GameServiceCommand(Guid RequestId, GameServiceAction Action
 public sealed record GameServiceResult(Guid RequestId, GameServiceAction Action, bool Success, string Message,
     string? SlotId, ImmutableArray<GameSlotInfo> Slots)
 {
+    public NovellMaker.Core.ExternalServices.ReleaseCheckResult? ReleaseCheck { get; init; }
     public PlayerSettings? Settings { get; init; }
     public bool? ProfileSaved { get; init; }
     public string? Key { get; init; }
@@ -36,6 +39,8 @@ public sealed record GameServiceResult(Guid RequestId, GameServiceAction Action,
     public void Validate()
     {
         if (RequestId == Guid.Empty || !Enum.IsDefined(Action) || Message is null || Message.Length > 1024 ||
+            Action == GameServiceAction.CancelReleaseCheck ||
+            (Action == GameServiceAction.CheckGameRelease ? ReleaseCheck is null || ReleaseCheck.RequestId != RequestId || ReleaseCheck.Success != Success || Message != ReleaseCheck.Message || SlotId is not null : ReleaseCheck is not null) ||
             SlotId is not null && !GameSlotStore.IsValidSlotId(SlotId) || Slots.IsDefault || Slots.Length > GameSlotStore.MaxSlots ||
             Action != GameServiceAction.ListSlots && !Slots.IsEmpty || !Success && !Slots.IsEmpty ||
             Slots.Any(s => s is null || !GameSlotStore.IsValidSlotId(s.Id) || !Enum.IsDefined(s.Status) || s.Diagnostic?.Length > 1024 ||
@@ -49,5 +54,6 @@ public sealed record GameServiceResult(Guid RequestId, GameServiceAction Action,
                 : Key is not null || DataValue is not null))
             throw new ArgumentException("Некорректный результат игрового сервиса.");
         Settings?.Validate();
+        ReleaseCheck?.Validate();
     }
 }
