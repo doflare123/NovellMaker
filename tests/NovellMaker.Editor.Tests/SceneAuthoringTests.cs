@@ -12,6 +12,26 @@ namespace NovellMaker.Editor.Tests;
 public sealed class SceneAuthoringTests
 {
     [TestMethod]
+    public async Task AudioEnvelopesSupportUndoSaveAndReopen()
+    {
+        using var directory = TemporaryDirectory.Create(); var path = Path.Combine(directory.Path, "audio.novell");
+        var dialogs = new Dialogs { SavePath = path, OpenPath = path };
+        using var session = new EditorSession(new JsonProjectStore(), dialogs, new Git());
+        await session.NewProjectAsync();
+        session.AudioFadeInSeconds = .25; session.AudioFadeOutSeconds = .5; session.AudioCrossfadeSeconds = 1.5;
+        session.AudioDuckingEnabled = true; session.AudioDuckingVolume = .2;
+        session.AudioDuckingAttackSeconds = .1; session.AudioDuckingReleaseSeconds = .4;
+        await session.SaveAsync(false); Assert.IsFalse(session.IsDirty);
+        session.AudioCrossfadeSeconds = 2; Assert.IsTrue(session.IsDirty);
+        session.Undo(); Assert.AreEqual(1.5, session.AudioCrossfadeSeconds); Assert.IsFalse(session.IsDirty);
+        session.Redo(); Assert.AreEqual(2d, session.AudioCrossfadeSeconds);
+        await session.SaveAsync(false); await session.OpenProjectAsync();
+        Assert.AreEqual(.25, session.AudioFadeInSeconds); Assert.AreEqual(.5, session.AudioFadeOutSeconds);
+        Assert.AreEqual(2d, session.AudioCrossfadeSeconds); Assert.IsTrue(session.AudioDuckingEnabled);
+        Assert.AreEqual(.2, session.AudioDuckingVolume, .00001);
+        Assert.AreEqual(.1, session.AudioDuckingAttackSeconds); Assert.AreEqual(.4, session.AudioDuckingReleaseSeconds);
+    }
+    [TestMethod]
     public async Task ReleaseSettingsSupportUndoSaveAsReopenAndSafeValidation()
     {
         using var directory = TemporaryDirectory.Create(); var path = Path.Combine(directory.Path, "source.novell");

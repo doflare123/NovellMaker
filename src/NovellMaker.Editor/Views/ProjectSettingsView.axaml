@@ -32,6 +32,23 @@
         <TextBlock Text="Только публичные метаданные выпуска. Не вводите токены или пароли." TextWrapping="Wrap" />
       </StackPanel>
       <TextBlock Name="ReleaseCheckValidationText" Text="{Binding ReleaseCheckValidation}" Foreground="#D9B68C" TextWrapping="Wrap" />
+      <TextBlock Text="ВОСПРОИЗВЕДЕНИЕ ЗВУКА" Classes="section" />
+      <StackPanel Spacing="6" IsEnabled="{Binding CanEdit}">
+        <TextBlock Text="Плавное начало источников, с (0 — сразу)" />
+        <NumericUpDown Name="AudioFadeInBox" Value="{Binding AudioFadeInSeconds, Mode=TwoWay}" Minimum="0" Maximum="30" Increment="0.05" FormatString="0.##" />
+        <TextBlock Text="Затухание записей и уход музыки сцены, с" />
+        <NumericUpDown Name="AudioFadeOutBox" Value="{Binding AudioFadeOutSeconds, Mode=TwoWay}" Minimum="0" Maximum="30" Increment="0.05" FormatString="0.##" />
+        <TextBlock Text="Перекрёстное затухание sound при смене сцен, с" />
+        <NumericUpDown Name="AudioCrossfadeBox" Value="{Binding AudioCrossfadeSeconds, Mode=TwoWay}" Minimum="0" Maximum="30" Increment="0.05" FormatString="0.##" />
+        <CheckBox Name="AudioDuckingBox" Content="Приглушать sound во время voice" IsChecked="{Binding AudioDuckingEnabled, Mode=TwoWay}" />
+        <StackPanel Spacing="6" IsEnabled="{Binding AudioDuckingEnabled}">
+          <TextBlock Text="Множитель громкости sound при озвучке (0–1)" />
+          <NumericUpDown Value="{Binding AudioDuckingVolume, Mode=TwoWay}" Minimum="0" Maximum="1" Increment="0.05" FormatString="0.##" />
+          <TextBlock Text="Время приглушения / восстановления, с" />
+          <NumericUpDown Value="{Binding AudioDuckingAttackSeconds, Mode=TwoWay}" Minimum="0" Maximum="30" Increment="0.05" FormatString="0.##" />
+          <NumericUpDown Value="{Binding AudioDuckingReleaseSeconds, Mode=TwoWay}" Minimum="0" Maximum="30" Increment="0.05" FormatString="0.##" />
+        </StackPanel>
+      </StackPanel>
       <TextBlock Text="ДИАЛОГОВЫЙ ИНТЕРФЕЙС" Classes="section" Margin="0,14,0,0" />
       <CheckBox Content="Показывать прогресс озвучки" IsChecked="{Binding ShowVoiceProgress, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
       <CheckBox Content="Показывать паузу и продолжение озвучки" IsChecked="{Binding ShowVoiceControls, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />

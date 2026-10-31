@@ -230,7 +230,9 @@ internal sealed partial class RuntimeGame : Game
             if (mouse.LeftButton != previousMouse.LeftButton)
             {
                 var down = mouse.LeftButton == ButtonState.Pressed;
-                var consumed = RouteScreen(new(down ? ScreenInputKind.PointerDown : ScreenInputKind.PointerUp, logical.X, logical.Y));
+                var consumed = down ? letterbox.Contains(mouse.X, mouse.Y) && ClickVoice(logical) : voicePointerHeld;
+                voicePointerHeld = down && consumed;
+                if (!consumed) consumed = RouteScreen(new(down ? ScreenInputKind.PointerDown : ScreenInputKind.PointerUp, logical.X, logical.Y));
                 if (!consumed && down && letterbox.Contains(mouse.X, mouse.Y))
                 {
                     if (!ClickLogical(logical) && showNavigationControls && RuntimeInputMapper.HitTestNavigation(
@@ -241,7 +243,7 @@ internal sealed partial class RuntimeGame : Game
             previousKeyboard = keyboard;
             previousMouse = mouse;
         }
-        else { previousKeyboard = Keyboard.GetState(); previousMouse = Mouse.GetState(); }
+        else { previousKeyboard = Keyboard.GetState(); previousMouse = Mouse.GetState(); voicePointerHeld = false; }
 
         inputActive = IsActive;
         if (session.Phase == GameSessionPhase.Ended) { base.Update(gameTime); return; }
@@ -296,6 +298,7 @@ internal sealed partial class RuntimeGame : Game
                     foreach (var button in interactionButtons) spriteBatch.Draw(button.Texture.Texture, button.Bounds, Color.White);
                     if (actionHelp is not null) spriteBatch.Draw(actionHelp.Texture, new Vector2(16, 16), Color.White);
                 }
+                DrawVoice(spriteBatch);
                 DrawDiagnostics(spriteBatch);
                 hasPresentedFrame = true;
             }
@@ -351,6 +354,8 @@ internal sealed partial class RuntimeGame : Game
         foreach (var button in interactionButtons) button.Texture.Dispose();
         diagnosticsTexture?.Dispose();
         navigationTexture?.Dispose();
+        voiceLabel?.Dispose();
+        voiceButton?.Dispose();
         imageCache?.Dispose();
         imageLoadingTexture?.Dispose();
         assetTextures.Clear();
@@ -381,6 +386,7 @@ internal sealed partial class RuntimeGame : Game
 
     private bool ClickLogical(Point logical)
     {
+        if (ClickVoice(logical)) return true;
         var hit = interactionButtons.FirstOrDefault(b => b.Bounds.Contains(logical));
         if (hit.Id == Guid.Empty) return false;
         var changed = player.Execution.State.Choice is not null ? player.Choose(hit.Id) : player.Click(hit.Id);
@@ -422,9 +428,11 @@ internal sealed partial class RuntimeGame : Game
                 SynchronizeAudio(); UpdateReading(TimeSpan.FromSeconds(Math.Max(0, player.Execution.State.Time - beforeReadingTick)), true);
                 break;
             case "next": success = ApplyAction(RuntimeAction.Next); break;
+            case "previous": success = ApplyAction(RuntimeAction.Previous); break;
             case "continue_text": success = ApplyAction(RuntimeAction.Continue); break;
             case "click_now":
             case "click":
+                if (ClickVoice(new Point(step.X, step.Y))) break;
                 var consumed = RouteScreen(new(ScreenInputKind.PointerDown, step.X, step.Y));
                 success = RouteScreen(new(ScreenInputKind.PointerUp, step.X, step.Y)) || consumed;
                 if (!success) success = ClickLogical(new Point(step.X, step.Y));
@@ -435,7 +443,10 @@ internal sealed partial class RuntimeGame : Game
             case "window_click":
                 var letterbox = RuntimeInputMapper.CalculateLetterbox(GraphicsDevice.PresentationParameters.BackBufferWidth, GraphicsDevice.PresentationParameters.BackBufferHeight);
                 if (RuntimeInputMapper.TryMapWindowToLogical(new(step.X, step.Y), letterbox, out var mapped))
-                { RouteScreen(new(ScreenInputKind.PointerDown, mapped.X, mapped.Y)); success = RouteScreen(new(ScreenInputKind.PointerUp, mapped.X, mapped.Y)); }
+                {
+                    if (ClickVoice(mapped)) break;
+                    RouteScreen(new(ScreenInputKind.PointerDown, mapped.X, mapped.Y)); success = RouteScreen(new(ScreenInputKind.PointerUp, mapped.X, mapped.Y));
+                }
                 else success = false;
                 break;
             case "pointer_down": success = RouteScreen(new(ScreenInputKind.PointerDown, step.X, step.Y)); break;
@@ -485,6 +496,7 @@ internal sealed partial class RuntimeGame : Game
             AudioOpenedSources = audioBackend.OpenedSources,
             AudioLastSourceVolume = audioBackend.LastSourceVolume,
             AudioSubmittedBytes = audioBackend.SubmittedBytes,
+            Voice = audio?.Voice ?? NovellMaker.Core.Audio.VoicePlayback.None,
             SessionPhase = session.Phase.ToString(), SessionGeneration = session.Generation,
             PendingLua = player.Execution.HasPendingLua, PendingScreenLua = screens.HasPending,
             PendingRelease = releaseChecks.HasRunningTransport, ReleaseReservations = releaseChecks.ReservationCount,
@@ -836,6 +848,7 @@ internal sealed record RuntimeSmokeReport(
 internal sealed record RuntimeSmokeStep(string Kind, double Seconds = 0, int X = 0, int Y = 0, string? Key = null);
 internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState State, string Text)
 {
+    public NovellMaker.Core.Audio.VoicePlayback Voice { get; init; } = NovellMaker.Core.Audio.VoicePlayback.None;
     public float AudioLastSourceVolume { get; init; }
     public Guid[] ScreenInstanceIds { get; init; } = [];
     public string[] PresentedScreenTexts { get; init; } = [];

@@ -10,7 +10,7 @@
 - [Lua-ресурсы и модули](modules.md)
 - [Ввод и авторские триггеры](input-and-triggers.md)
 - [Анимации компонентов](animations.md)
-- [Звук Lua](audio.md)
+- [Звук Lua](audio.md) и [озвучка/fades/ducking проекта](engine-guide.md#озвучка-fades-и-ducking)
 - [Игровой сеанс, слоты, настройки и профиль](session-and-storage.md)
 - [Внешний сервис проверки выпуска](external-services.md)
 - [Мини-игры и возврат результата](minigames.md)

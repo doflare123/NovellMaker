@@ -21,6 +21,10 @@ namespace NovellMaker.Editor.Views;
 /// <summary>A design-time sample of a dialogue skin, not a script interpreter.</summary>
 public sealed partial class DialogueStyleSample : UserControl
 {
+    public static readonly StyledProperty<NovellMaker.Core.Audio.VoicePlayback> VoiceProperty = AvaloniaProperty.Register<DialogueStyleSample, NovellMaker.Core.Audio.VoicePlayback>(nameof(Voice), NovellMaker.Core.Audio.VoicePlayback.None);
+    public NovellMaker.Core.Audio.VoicePlayback Voice { get => GetValue(VoiceProperty); set => SetValue(VoiceProperty, value); }
+    public static readonly StyledProperty<ICommand?> PauseVoiceCommandProperty = AvaloniaProperty.Register<DialogueStyleSample, ICommand?>(nameof(PauseVoiceCommand));
+    public ICommand? PauseVoiceCommand { get => GetValue(PauseVoiceCommandProperty); set => SetValue(PauseVoiceCommandProperty, value); }
     public static readonly StyledProperty<bool> CanvasOnlyProperty = AvaloniaProperty.Register<DialogueStyleSample, bool>(nameof(CanvasOnly));
     public bool CanvasOnly { get => GetValue(CanvasOnlyProperty); set => SetValue(CanvasOnlyProperty, value); }
     public static readonly StyledProperty<DialogueStyle?> StyleSheetProperty = AvaloniaProperty.Register<DialogueStyleSample, DialogueStyle?>(nameof(StyleSheet));

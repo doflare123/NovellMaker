@@ -39,6 +39,8 @@ internal sealed class ScriptAudioFixture : IDisposable
         private float volume;
         public float Volume { get => volume; set { if (Failure == "volume") throw new InvalidOperationException("volume failure"); volume = value; } }
         public bool Finished { get; set; }
+        public TimeSpan Position { get; set; }
+        public TimeSpan Duration { get; set; } = TimeSpan.FromSeconds(1);
         public void Update() { Updates++; if (Failure == "update") throw new IOException("update failure"); }
         public void Pause(bool value) { if (Failure == "pause") throw new InvalidOperationException("pause failure"); Paused = value; }
         public void Dispose() { Disposals++; if (Failure == "dispose") throw new IOException("dispose failure"); }

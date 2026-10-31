@@ -13,13 +13,13 @@
             <TextBlock Name="DialogueSpeaker" FontWeight="SemiBold" IsVisible="False" />
             <TextBlock Name="DialogueText" TextWrapping="Wrap" />
             <StackPanel Name="VoiceProgressPanel" IsVisible="{Binding #Root.ShowVoiceProgress}">
-              <ProgressBar Minimum="0" Maximum="1" Value="0" Height="4" />
-              <TextBlock Text="Нет озвучки" Foreground="#AEB4BD" FontSize="14" Margin="0,4,0,0" />
+              <ProgressBar Name="VoiceProgressBar" Minimum="0" Maximum="1" Value="{Binding #Root.Voice.Progress}" Height="4" />
+              <TextBlock Text="{Binding #Root.Voice.Label}" Foreground="#AEB4BD" FontSize="14" Margin="0,4,0,0" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="10">
               <Button Content="Назад" Command="{Binding #Root.PreviousCommand}" IsVisible="{Binding #Root.ShowNavigationControls}" FontSize="16" />
               <Button Content="Вперёд" Command="{Binding #Root.NextCommand}" IsVisible="{Binding #Root.ShowNavigationControls}" FontSize="16" />
-              <Button Name="PauseVoiceButton" Content="Пауза / продолжить" IsVisible="{Binding #Root.ShowVoiceControls}" IsEnabled="False" FontSize="16" />
+              <Button Name="PauseVoiceButton" Content="Пауза / продолжить" Command="{Binding #Root.PauseVoiceCommand}" IsVisible="{Binding #Root.ShowVoiceControls}" IsEnabled="{Binding #Root.Voice.Available}" FontSize="16" />
             </StackPanel>
           </StackPanel>
         </Border>

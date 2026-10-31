@@ -18,6 +18,68 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ScriptAudioNativeTests
 {
     [TestMethod]
+    [DataRow(false)] [DataRow(true)]
+    public async Task VoiceCursorPauseResumeCompletionAndNavigationUseNativePlayback(bool packaged)
+    {
+        if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1" || packaged && Environment.GetEnvironmentVariable("NOVELLMAKER_EXPORT_SMOKE") != "1")
+            Assert.Inconclusive("Enable NativeRuntime and WindowsExport smoke.");
+        var repo = new DirectoryInfo(AppContext.BaseDirectory);
+        while (repo is not null && !File.Exists(Path.Combine(repo.FullName, "NovellMaker.slnx"))) repo = repo.Parent;
+        var directory = Path.Combine(repo!.FullName, "artifacts", "screenshots", "voice-playback", packaged ? "export" : "preview", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var scene = NovelScene.Create("Озвучка") with { Lines = [DialogueLine.Create("ru", "Проверка позиции и паузы озвучки"), DialogueLine.Create("ru", "Озвучка следующей реплики")] };
+        scene = scene with { Canvas = scene.Canvas with { Nodes = DialogueCanvas.Add(scene.Canvas.Nodes, scene.Id,
+            NovellMaker.Core.Styling.DialogueCssParser.Parse(".dialogue {}"), legacy: true) } };
+        var p = AudioFixture.Attach(NovelProject.Create("Voice playback") with { Scenes = [scene] }, directory);
+        p = p with { Audio = p.Audio with { SceneSounds = ImmutableDictionary<Guid, Guid>.Empty,
+            LineEffects = ImmutableDictionary<Guid, Guid>.Empty,
+            Voices = p.Audio.Voices.Add(scene.Lines[1].Id, p.Audio.Voices[scene.Lines[0].Id]),
+            Playback = new() { FadeInSeconds = .1, FadeOutSeconds = .2, DuckingEnabled = true } } };
+        File.WriteAllBytes(Path.Combine(directory, p.Audio.Assets[0].RelativePath), AudioFixture.Wave(24000 * 4));
+        var file = Path.Combine(directory, "voice.novell"); await new JsonProjectStore().SaveAsync(file, p);
+        var plan = Path.Combine(directory, "plan.json"); await File.WriteAllTextAsync(plan, """
+            [{"Kind":"wait_now","Seconds":0.45}, {"Kind":"click","X":800,"Y":688},
+             {"Kind":"wait_now","Seconds":0.4}, {"Kind":"click","X":800,"Y":688},
+             {"Kind":"wait_now","Seconds":0.35}, {"Kind":"wait_now","Seconds":4.3},
+             {"Kind":"next"}, {"Kind":"previous"}, {"Kind":"wait_now","Seconds":0.4},
+             {"Kind":"click","X":800,"Y":688}, {"Kind":"tick","Seconds":1}]
+            """);
+        var runtime = Path.Combine(repo.FullName, "src", "NovellMaker.Runtime", "bin", "Release", "net10.0", "NovellMaker.Runtime.exe");
+        if (packaged)
+        {
+            var output = Path.Combine(directory, "game");
+            await new WindowsExportService(Path.Combine(repo.FullName, "artifacts", "export-templates", "win-x64"), new ImageAssetService()).ExportAsync(p, directory, scene.Id, output);
+            runtime = Path.Combine(output, "NovellMaker.Runtime.exe");
+        }
+        var reportPath = Path.Combine(directory, "voice.json");
+        var start = new ProcessStartInfo(runtime) { WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardError = true, RedirectStandardOutput = true, WindowStyle = ProcessWindowStyle.Hidden };
+        if (!packaged) foreach (var arg in new[] { "--project", file, "--assets-root", directory, "--scene", scene.Id.ToString(), "--language", "ru" }) start.ArgumentList.Add(arg);
+        else { start.Environment["DOTNET_ROOT"] = Path.Combine(directory, "absent"); start.Environment["DOTNET_ROOT_X64"] = Path.Combine(directory, "absent"); start.Environment["PATH"] = Environment.GetFolderPath(Environment.SpecialFolder.System); }
+        foreach (var arg in new[] { "--smoke-output", Path.Combine(directory, "voice.png"), "--smoke-report", reportPath, "--smoke-plan", plan }) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!; var stderr = process.StandardError.ReadToEndAsync(); var stdout = process.StandardOutput.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException) { process.Kill(true); await process.WaitForExitAsync(); Assert.Fail("Voice playback smoke timed out."); }
+        Assert.AreEqual(0, process.ExitCode, await stderr + await stdout);
+        using var json = JsonDocument.Parse(File.ReadAllText(reportPath)); var report = json.RootElement; var trace = report.GetProperty("ActionTrace");
+        Assert.AreEqual(0, report.GetProperty("Diagnostics").GetArrayLength());
+        double Progress(int index) => trace[index].GetProperty("Voice").GetProperty("Progress").GetDouble();
+        bool Paused(int index) => trace[index].GetProperty("Voice").GetProperty("Paused").GetBoolean();
+        Assert.IsTrue(Progress(0) > 0 && Progress(0) < .5, "Read-ahead data must not be counted as played.");
+        Assert.IsTrue(Paused(1)); Assert.IsTrue(Paused(2)); Assert.AreEqual(Progress(1), Progress(2));
+        Assert.IsFalse(Paused(3)); Assert.IsTrue(Progress(4) > Progress(2));
+        Assert.IsFalse(trace[5].GetProperty("Voice").GetProperty("Available").GetBoolean(), "Native completion must release the voice.");
+        Assert.AreEqual(scene.Lines[1].Id, trace[6].GetProperty("State").GetProperty("LineId").GetGuid());
+        Assert.IsTrue(trace[6].GetProperty("Voice").GetProperty("Available").GetBoolean(), "The next line starts its own voice.");
+        // Author seek is intentionally unavailable during packaged game playback.
+        Assert.AreEqual(!packaged, trace[7].GetProperty("Success").GetBoolean());
+        Assert.AreEqual(scene.Lines[packaged ? 1 : 0].Id, trace[7].GetProperty("State").GetProperty("LineId").GetGuid());
+        Assert.IsTrue(Progress(8) > 0); Assert.IsTrue(Paused(9));
+        Assert.AreEqual(TimeSpan.FromSeconds(4), trace[9].GetProperty("Voice").GetProperty("Duration").Deserialize<TimeSpan>());
+        Assert.AreEqual(2, report.GetProperty("AudioPlaybackPauseCount").GetInt32());
+    }
+    [TestMethod]
     [DataRow(false, 20d)] [DataRow(true, 20d)] [DataRow(false, 5d)] [DataRow(true, 5d)]
     public async Task RealtimeMiniGameUpdatesDoNotInterruptTheNativeAudioSource(bool packaged, double updatesPerSecond)
     {

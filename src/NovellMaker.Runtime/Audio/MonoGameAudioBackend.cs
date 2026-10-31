@@ -33,6 +33,13 @@ internal sealed class MonoGameAudioBackend : IAudioBackend
         private readonly MonoGameAudioBackend metrics;
         private bool started;
         private long? playbackPausedAt;
+        private readonly Queue<int> queuedBytes = new();
+        private long consumedBytes;
+        public TimeSpan Duration => TimeSpan.FromSeconds(wave.Length / (double)(wave.SampleRate * wave.Channels * 2));
+        // Native processed-buffer count, quantized to the existing 100 ms streaming chunks.
+        // Submitted/read-ahead bytes and wall time are deliberately excluded.
+        public TimeSpan Position => TimeSpan.FromSeconds((loop ? consumedBytes % wave.Length : Math.Min(consumedBytes, wave.Length)) /
+            (double)(wave.SampleRate * wave.Channels * 2));
         public float Volume { set { AudioOperation(() => sound.Volume = value); metrics.LastSourceVolume = value; } }
         public bool Finished => !loop && remaining == 0 && sound.PendingBufferCount == 0;
         public WaveSource(string path, bool loop, MonoGameAudioBackend metrics)
@@ -61,6 +68,7 @@ internal sealed class MonoGameAudioBackend : IAudioBackend
         private void UpdateCore()
         {
             if (paused) return;
+            while (queuedBytes.Count > sound.PendingBufferCount) consumedBytes += queuedBytes.Dequeue();
             if (started && loop && sound.State == SoundState.Stopped && sound.PendingBufferCount == 0) metrics.BufferUnderruns++;
             while (sound.PendingBufferCount < 3)
             {
@@ -78,6 +86,7 @@ internal sealed class MonoGameAudioBackend : IAudioBackend
                     if (remaining == 0 && loop) { stream.Position = wave.Offset; remaining = wave.Length; }
                 } while (loop && count < buffer.Length);
                 sound.SubmitBuffer(buffer, 0, count);
+                queuedBytes.Enqueue(count);
                 metrics.SubmittedBytes += count;
             }
             if (sound.PendingBufferCount > 0 && sound.State == SoundState.Stopped) { sound.Play(); started = true; }

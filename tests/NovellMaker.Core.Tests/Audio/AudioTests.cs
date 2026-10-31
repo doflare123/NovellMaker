@@ -1,4 +1,4 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using System.Text.Json.Nodes;
 using NovellMaker.Core.Audio;
 using NovellMaker.Core.Execution;
@@ -116,6 +116,8 @@ public sealed class AudioTests
     {
         public bool Loop { get; init; } public float Volume { get; set; } public bool Paused { get; private set; }
         public bool Disposed { get; private set; } public bool Finished { get; set; }
+        public TimeSpan Position { get; set; }
+        public TimeSpan Duration { get; set; } = TimeSpan.FromSeconds(1);
         public void Update() { } public void Pause(bool paused) => Paused = paused; public void Dispose() => Disposed = true;
     }
 }

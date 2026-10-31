@@ -285,6 +285,7 @@ public sealed partial class EditorSession
         }
         if (SelectedDocument is null || !Documents.Contains(SelectedDocument)) SelectedDocument = Documents.FirstOrDefault();
         foreach (var document in Documents) document.RefreshHeader();
+        NotifyAudioPlayback();
         try { projectStyle = DialogueCssParser.Parse(DialogueCss); projectCssError = ""; }
         catch (DialogueCssException error) { projectCssError = error.Message; }
         foreach (var property in new[] { nameof(DefaultLanguage), nameof(DialogueCss), nameof(ShowVoiceProgress), nameof(ShowVoiceControls),

@@ -38,6 +38,24 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task AudioSettingsControlsBindAndUndo() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); await session.NewProjectAsync();
+        var view = new ProjectSettingsView { DataContext = session }; var window = new Window { Content = view, Width = 900, Height = 900 };
+        window.Show(); Dispatcher.UIThread.RunJobs();
+        view.FindControl<NumericUpDown>("AudioFadeInBox")!.Value = .25m;
+        view.FindControl<NumericUpDown>("AudioFadeOutBox")!.Value = .5m;
+        view.FindControl<NumericUpDown>("AudioCrossfadeBox")!.Value = 1.5m;
+        Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(.25, session.AudioFadeInSeconds); Assert.AreEqual(.5, session.AudioFadeOutSeconds);
+        Assert.AreEqual(1.5, session.AudioCrossfadeSeconds);
+        view.FindControl<CheckBox>("AudioDuckingBox")!.IsChecked = true; Dispatcher.UIThread.RunJobs();
+        Assert.IsTrue(session.AudioDuckingEnabled);
+        session.Undo(); Dispatcher.UIThread.RunJobs();
+        Assert.IsFalse(view.FindControl<CheckBox>("AudioDuckingBox")!.IsChecked);
+        window.Close();
+    });
+    [TestMethod]
     public Task ReleaseSettingsControlsBindValidateAndUndo() => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); await session.NewProjectAsync();
@@ -1110,6 +1128,18 @@ public sealed class EditorWindowTests
         Assert.IsTrue(Find<Button>(sample, "PauseVoiceButton").IsVisible);
         Assert.IsFalse(Find<Button>(sample, "PauseVoiceButton").IsEffectivelyEnabled,
             "No real voice backend is present; an authoring sample must not fake playback.");
+        sample.Voice = new(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(4), true, false);
+        sample.PauseVoiceCommand = new NovellMaker.Editor.ViewModels.AsyncCommand(() =>
+        {
+            sample.Voice = sample.Voice with { Paused = !sample.Voice.Paused };
+            return Task.CompletedTask;
+        }, () => true);
+        Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(.25, Find<ProgressBar>(sample, "VoiceProgressBar").Value);
+        Assert.IsTrue(Find<Button>(sample, "PauseVoiceButton").IsEffectivelyEnabled);
+        Click(window, Find<Button>(sample, "PauseVoiceButton"));
+        Assert.IsTrue(sample.Voice.Paused);
+        sample.Voice = NovellMaker.Core.Audio.VoicePlayback.None;
         sample.SampleAt(TimeSpan.FromSeconds(2));
         Capture(window, "editor-dialogue-style.png");
         dialogs.Decision = UnsavedChangesDecision.Discard;

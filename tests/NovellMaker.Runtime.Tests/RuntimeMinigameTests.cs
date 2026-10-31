@@ -107,6 +107,8 @@ public sealed class RuntimeMinigameTests
         {
             public float Volume { set { } }
             public bool Finished => backend.Finished;
+            public TimeSpan Position => TimeSpan.Zero;
+            public TimeSpan Duration => TimeSpan.FromSeconds(1);
             public void Update() { }
             public void Pause(bool paused) { }
             public void Dispose() => backend.Disposed++;

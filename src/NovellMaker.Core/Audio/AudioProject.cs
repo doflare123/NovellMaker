@@ -8,6 +8,8 @@ public sealed record AudioAsset(Guid Id, string Name, string RelativePath);
 public sealed record AudioBus(float Volume = 1, bool Muted = false);
 public sealed record AudioProject
 {
+    // Optional additive v21 field: old projects retain immediate, unducked playback.
+    public AudioMixSettings Playback { get; init; } = new();
     [System.Text.Json.Serialization.JsonRequired]
     public ImmutableArray<AudioAsset> Assets { get; init; } = [];
     [System.Text.Json.Serialization.JsonRequired]
@@ -22,6 +24,7 @@ public sealed record AudioProject
     public static void Validate(NovelProject project)
     {
         var audio = project.Audio ?? throw new ArgumentException("Нет настроек звука.");
+        (audio.Playback ?? throw new ArgumentException("Нет настроек воспроизведения.")).Validate();
         if (audio.Assets.IsDefault || audio.SceneSounds is null || audio.LineEffects is null || audio.Voices is null || audio.Mixer is null)
             throw new ArgumentException("Коллекции звука не инициализированы.");
         var ids = project.Images.Select(a => a.Id).Concat(project.Characters.Select(c => c.Id))
