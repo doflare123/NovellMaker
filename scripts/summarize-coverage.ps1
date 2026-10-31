@@ -30,7 +30,7 @@ foreach ($report in $reports) {
     }
 }
 $rows.Add('')
-$rows.Add('Child worker coverage is not guaranteed: production disables CLR diagnostics. Unobserved worker paths remain in the denominator. Native/GUI behaviour requires the corresponding smoke tests. See docs/lua-execution-contract.md.')
+$rows.Add('Child worker coverage is not guaranteed: production disables CLR diagnostics. Unobserved worker paths remain in the denominator. Native/GUI behaviour requires the corresponding smoke tests. See docs/lua-reference/execution-model.md.')
 $summary = Join-Path $ResultsDirectory 'coverage-summary.md'
 Set-Content -LiteralPath $summary -Value $rows -Encoding utf8
 $rows | Write-Output

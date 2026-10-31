@@ -107,6 +107,7 @@ public sealed class ScreenPropertiesView : UserControl
         var settings = new StackPanel { Spacing = 7 }; Field(settings, "Название сцены", screenName);
         settings.Children.Add(startScreen);
         Button(settings, "AddGameMenusExample", "Добавить пример главного меню и слотов", () => session?.AddGameMenusExample());
+        Button(settings, "AddReleaseCheckExample", "Добавить пример проверки выпуска (F5)", () => session?.AddReleaseCheckExample());
         Button(settings, "AddPlayerSettingsExample", "Добавить пример настроек игрока (F9)", () => session?.AddPlayerSettingsExample());
         Button(settings, "AddTriggersExample", "Добавить пример триггеров и данных (F8)", () => session?.AddTriggersExample());
         Button(settings, "AddComponentStateExample", "Добавить пример состояния компонентов (F7)", () => session?.AddComponentStateExample());

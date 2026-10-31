@@ -12,17 +12,17 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ScreenAuthoringTests
 {
     [TestMethod]
-    [DataRow(0)] [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)] [DataRow(5)]
+    [DataRow(0)] [DataRow(1)] [DataRow(2)] [DataRow(3)] [DataRow(4)] [DataRow(5)] [DataRow(6)]
     public async Task AuthorExamplesHaveHistoryExternalLuaAndSurviveSaveAsAndPreview(int exampleKind)
     {
         using var folder = new Folder(); var dialogs = new Dialogs { SavePath = Path.Combine(folder.Path, "settings.novell") }; var preview = new Preview();
         using var session = await Session(dialogs, preview: preview); session.AddScene(); session.ActiveScene!.AddLine();
         var before = session.Project!; var active = session.ActiveScene.Id;
-        if (exampleKind == 5) session.AddLuaRandomExample(); else if (exampleKind == 4) session.AddLuaLibraryExample(); else if (exampleKind == 3) session.AddLuaModulesExample(); else if (exampleKind == 2) session.AddComponentStateExample(); else if (exampleKind == 1) session.AddTriggersExample(); else session.AddPlayerSettingsExample();
+        if (exampleKind == 6) session.AddReleaseCheckExample(); else if (exampleKind == 5) session.AddLuaRandomExample(); else if (exampleKind == 4) session.AddLuaLibraryExample(); else if (exampleKind == 3) session.AddLuaModulesExample(); else if (exampleKind == 2) session.AddComponentStateExample(); else if (exampleKind == 1) session.AddTriggersExample(); else session.AddPlayerSettingsExample();
         var after = session.Project!;
         Assert.AreEqual(before.Scenes.Length + 1, after.Scenes.Length); Assert.AreEqual(before.Scripts.Length + (exampleKind == 3 ? 3 : 1), after.Scripts.Length);
         Assert.IsNull(after.StartScreenSceneId); Assert.AreEqual(active, session.ActiveScene.Id);
-        var example = after.Scenes.Last(); Assert.AreEqual(example.Id, after.InputBindings.Single(b => b.Key == (exampleKind == 5 ? "F2" : exampleKind == 4 ? "F3" : exampleKind == 3 ? "F4" : exampleKind == 2 ? "F7" : exampleKind == 1 ? "F8" : "F9")).TargetSceneId);
+        var example = after.Scenes.Last(); Assert.AreEqual(example.Id, after.InputBindings.Single(b => b.Key == (exampleKind == 6 ? "F5" : exampleKind == 5 ? "F2" : exampleKind == 4 ? "F3" : exampleKind == 3 ? "F4" : exampleKind == 2 ? "F7" : exampleKind == 1 ? "F8" : "F9")).TargetSceneId);
         Assert.IsTrue(after.Scripts.Any(s => s.Id == example.Canvas.HandlerScriptId));
         session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo(); Assert.IsTrue(after.ContentEquals(session.Project));
         await session.SaveAsync(); Assert.IsTrue(after.ContentEquals(await new JsonProjectStore().LoadAsync(dialogs.SavePath)));

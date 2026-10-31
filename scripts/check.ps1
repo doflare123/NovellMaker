@@ -1,10 +1,12 @@
 param([switch]$CaptureScreenshots, [switch]$NativeRuntime, [switch]$WindowsExport, [switch]$WindowsInstaller,
-      [switch]$Coverage, [switch]$MeasureLua, [switch]$MeasureFramePreparation, [switch]$LuaLanguageServer)
+      [switch]$Coverage, [switch]$MeasureLua, [switch]$MeasureFramePreparation, [switch]$LuaLanguageServer,
+      [switch]$ReleaseLive)
 
 $ErrorActionPreference = 'Stop'
 $environmentNames = @('AVALONIA_TELEMETRY_OPTOUT', 'DOTNET_CLI_TELEMETRY_OPTOUT',
     'NOVELLMAKER_NATIVE_SMOKE', 'NOVELLMAKER_EXPORT_SMOKE', 'NOVELLMAKER_INSTALLER_SMOKE',
-    'NOVELLMAKER_CAPTURE_DIR', 'NOVELLMAKER_LUA_BENCHMARK_DIR', 'NOVELLMAKER_FRAME_BENCHMARK_DIR')
+    'NOVELLMAKER_CAPTURE_DIR', 'NOVELLMAKER_LUA_BENCHMARK_DIR', 'NOVELLMAKER_FRAME_BENCHMARK_DIR',
+    'NOVELLMAKER_RELEASE_LIVE_SMOKE')
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name) }
 $env:AVALONIA_TELEMETRY_OPTOUT = '1'
@@ -28,6 +30,7 @@ try {
         $env:NOVELLMAKER_CAPTURE_DIR = Join-Path (Get-Location) 'artifacts/screenshots'
     }
     if ($NativeRuntime) { $env:NOVELLMAKER_NATIVE_SMOKE = '1' }
+    if ($ReleaseLive) { $env:NOVELLMAKER_RELEASE_LIVE_SMOKE = '1' }
     # The optional benchmark runs separately, after all functional tests and without coverage.
     if ($MeasureLua) { [Environment]::SetEnvironmentVariable('NOVELLMAKER_LUA_BENCHMARK_DIR', $null) }
     if ($MeasureFramePreparation) { [Environment]::SetEnvironmentVariable('NOVELLMAKER_FRAME_BENCHMARK_DIR', $null) }

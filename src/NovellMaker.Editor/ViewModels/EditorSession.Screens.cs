@@ -105,6 +105,12 @@ public sealed partial class EditorSession
         EditProject(Examples.ExamplePlayerSettingsModule.AddTo(project));
     }
 
+    public void AddReleaseCheckExample()
+    {
+        if (!CanEdit || project is null) return;
+        EditProject(Examples.ExampleReleaseCheckModule.AddTo(project));
+    }
+
     public void AddTriggersExample()
     {
         if (!CanEdit || project is null) return;

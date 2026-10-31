@@ -240,6 +240,22 @@ public sealed class EditorWindowTests
     });
 
     [TestMethod]
+    public Task ReleaseCheckExampleIsAvailableInActualInspector() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); session.AddScene(); session.OpenScreenLibrary();
+        Dispatcher.UIThread.RunJobs();
+        var inspector = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single();
+        var before = session.Project!;
+        Find<Button>(inspector, "AddReleaseCheckExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.AreEqual(before.Scenes.Length + 1, session.Project!.Scenes.Length);
+        Assert.IsNull(session.Project.ReleaseCheck, "The example must not enable HTTP or choose the author's repository.");
+        session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo();
+        session.OpenScreenLibrary(session.Project!.Scenes.Last().Id); Dispatcher.UIThread.RunJobs();
+        Capture(window, "editor-release-check.png"); window.Close();
+    });
+
+    [TestMethod]
     public Task NamedSlotCommandsAndExampleAreEditableInActualInspector() => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();

@@ -68,6 +68,8 @@ internal sealed partial class RuntimeGame : Game
     private bool pendingSmokeSuccess;
     private bool pendingSmokeSlots;
     private int pendingSlotDrawFrames;
+    private int pendingReleaseDrawFrames;
+    private readonly System.Diagnostics.Stopwatch smokeStepClock = new();
     private bool serviceFeedbackDelivered;
     private RenderedTexture? actionHelp;
     private string saveMessage = "";
@@ -307,6 +309,7 @@ internal sealed partial class RuntimeGame : Game
         drawFrames++;
         if (player.Execution.HasPendingLua) pendingLuaDrawFrames++;
         if (screens.HasPending) pendingScreenLuaDrawFrames++;
+        if (releaseChecks.HasRunningTransport) pendingReleaseDrawFrames++;
         if (slots.IsBusy) pendingSlotDrawFrames++;
         if (imagesPending) pendingImageDrawFrames++;
         if (arguments.SmokeOutputPath is not null && drawFrames >= 4 &&
@@ -389,6 +392,15 @@ internal sealed partial class RuntimeGame : Game
         var index = actionTrace.Count;
         if (index < 0 || index >= smokePlan!.Length) return;
         var step = smokePlan[index];
+        // Real wall time, without sleeping Update/Draw. Used to observe network pending and late completion.
+        if (step.Kind == "wait_now")
+        {
+            if (!double.IsFinite(step.Seconds) || step.Seconds is < 0 or > 30) throw new ArgumentException("Недопустимое smoke-ожидание.");
+            if (!smokeStepClock.IsRunning) smokeStepClock.Start();
+            if (smokeStepClock.Elapsed.TotalSeconds < step.Seconds) return;
+            smokeStepClock.Reset();
+        }
+        if (step.Kind == "wait_release" && releaseChecks.ReservationCount != 0) return;
         var success = true;
         var path = Path.ChangeExtension(arguments.SmokeReportPath!, ".save.json");
         switch (step.Kind)
@@ -422,6 +434,8 @@ internal sealed partial class RuntimeGame : Game
             case "key_now":
             case "key": success = RouteProjectKey(step.Key ?? ""); break;
             case "probe_now": break;
+            case "wait_now":
+            case "wait_release": break;
             case "back": success = RouteScreen(new(ScreenInputKind.Back)); break;
             case "activate": success = RouteScreen(new(ScreenInputKind.Activate)); break;
             case "tab": success = RouteScreen(new(ScreenInputKind.FocusNext)); break;
@@ -460,6 +474,9 @@ internal sealed partial class RuntimeGame : Game
             AudioSubmittedBytes = audioBackend.SubmittedBytes,
             SessionPhase = session.Phase.ToString(), SessionGeneration = session.Generation,
             PendingLua = player.Execution.HasPendingLua, PendingScreenLua = screens.HasPending,
+            PendingRelease = releaseChecks.HasRunningTransport, ReleaseReservations = releaseChecks.ReservationCount,
+            DrawFrames = drawFrames,
+            ScreenLuaAppliedBatches = screens.Scripts?.AppliedBatches ?? 0,
             PendingSlots = slots.IsBusy, SlotMessage = slots.LastResult?.Message ?? "",
             Slots = slots.LastResult?.Slots.IsDefault == false ? slots.LastResult.Slots : [],
             PlayerSettings = settings.Current, Fullscreen = graphics.IsFullScreen,
@@ -722,6 +739,7 @@ internal sealed partial class RuntimeGame : Game
                 PendingLuaDrawFrames = pendingLuaDrawFrames,
                 PendingScreenLuaDrawFrames = pendingScreenLuaDrawFrames,
                 PendingSlotDrawFrames = pendingSlotDrawFrames,
+                PendingReleaseDrawFrames = pendingReleaseDrawFrames,
                 PendingImageDrawFrames = pendingImageDrawFrames,
                 HeldImageDrawFrames = heldImageDrawFrames,
                 ImageDecodeCount = imageCache?.DecodeCount ?? 0,
@@ -776,6 +794,7 @@ internal sealed record RuntimeSmokeReport(
     public int PendingLuaDrawFrames { get; init; }
     public int PendingScreenLuaDrawFrames { get; init; }
     public int PendingSlotDrawFrames { get; init; }
+    public int PendingReleaseDrawFrames { get; init; }
     public int PendingImageDrawFrames { get; init; }
     public int HeldImageDrawFrames { get; init; }
     public int ImageDecodeCount { get; init; }
@@ -807,6 +826,10 @@ internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState S
     public bool PendingLua { get; init; }
     public bool PendingScreenLua { get; init; }
     public bool PendingSlots { get; init; }
+    public bool PendingRelease { get; init; }
+    public int ReleaseReservations { get; init; }
+    public int DrawFrames { get; init; }
+    public int ScreenLuaAppliedBatches { get; init; }
     public string SlotMessage { get; init; } = "";
     public IReadOnlyList<GameSlotInfo> Slots { get; init; } = [];
     public PlayerSettings? PlayerSettings { get; init; }
