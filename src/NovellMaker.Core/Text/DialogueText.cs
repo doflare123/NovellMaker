@@ -7,6 +7,27 @@ public sealed record TextRun(string Text, string? Color);
 /// <summary>Color-only inline syntax. Unsupported sequences remain literal text.</summary>
 public static class DialogueText
 {
+    /// <summary>Reveal Unicode text elements while retaining color markup. Never split a surrogate pair or combining sequence.</summary>
+    public static string Prefix(string text, int elements)
+    {
+        var runs = Parse(text);
+        var plain = string.Concat(runs.Select(r => r.Text));
+        var starts = System.Globalization.StringInfo.ParseCombiningCharacters(plain);
+        var remaining = elements <= 0 ? 0 : elements >= starts.Length ? plain.Length : starts[elements];
+        var result = new StringBuilder();
+        foreach (var run in runs)
+        {
+            if (remaining <= 0) break;
+            var take = Math.Min(remaining, run.Text.Length);
+            if (run.Color is { } color) result.Append('§').Append(color);
+            var part = run.Text[..take];
+            result.Append(part.Replace("§", "§§", StringComparison.Ordinal));
+            if (run.Color is not null) result.Append("§r");
+            remaining -= take;
+        }
+        return result.ToString();
+    }
+
     public static IReadOnlyList<TextRun> Parse(string text)
     {
         ArgumentNullException.ThrowIfNull(text);

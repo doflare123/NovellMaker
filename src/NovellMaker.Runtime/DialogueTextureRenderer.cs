@@ -10,6 +10,22 @@ namespace NovellMaker.Runtime;
 
 internal static class DialogueTextureRenderer
 {
+    internal static IReadOnlyList<string> HistoryLines(string text)
+    {
+        using var typeface = CreateTypeface("Segoe UI");
+        using var font = new SKFont(typeface, 18);
+        var lines = new List<string>(); var line = new StringBuilder();
+        var elements = StringInfo.GetTextElementEnumerator(string.Concat(DialogueText.Parse(text).Select(r => r.Text)).Replace("\r\n", "\n", StringComparison.Ordinal));
+        while (elements.MoveNext())
+        {
+            var element = elements.GetTextElement();
+            if (element is "\n" or "\r") { lines.Add(line.ToString()); line.Clear(); continue; }
+            if (line.Length > 0 && font.MeasureText(line.ToString() + element) > 1090) { lines.Add(line.ToString()); line.Clear(); }
+            line.Append(element);
+        }
+        lines.Add(line.ToString()); return lines;
+    }
+
     internal static RenderedTexture RenderComponent(GraphicsDevice device, ScreenRaster raster)
     {
         if (raster.Dialogue == NovellMaker.Core.Screens.DialogueBinding.None || raster.Style is null)

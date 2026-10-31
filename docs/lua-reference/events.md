@@ -252,7 +252,7 @@ end}
 
 ### settings и persisted
 
-settings — таблица ровно с доступными полями: `master_volume`, `sound_volume`, `effect_volume`, `voice_volume` — number [0,1]; `master_muted`, `sound_muted`, `effect_muted`, `voice_muted`, `fullscreen` — boolean. Изменение этой таблицы само профиль не меняет.
+settings — таблица ровно с доступными полями: `master_volume`, `sound_volume`, `effect_volume`, `voice_volume` — number [0,1]; `master_muted`, `sound_muted`, `effect_muted`, `voice_muted`, `fullscreen`, `auto_wait_voice` — boolean; `text_speed` — number [0,200], `auto_delay` — number [0,30]. Изменение этой таблицы само профиль не меняет.
 
 persisted есть только у четырёх операций профиля. Это отсутствие неподтверждённых изменений **всего** профиля, а не «данный ключ существует» и не повтор success. После отказа диска success=false, но value/settings могут быть новыми в памяти. `value=nil` — отсутствие ключа; `value=""` — существующая пустая строка. У операций слотов/settings/проверки выпуска нет произвольных полей Data; у непрофильных операций persisted отсутствует.
 

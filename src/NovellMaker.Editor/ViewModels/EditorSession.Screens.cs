@@ -105,6 +105,12 @@ public sealed partial class EditorSession
         EditProject(Examples.ExamplePlayerSettingsModule.AddTo(project));
     }
 
+    public void AddReadingControls()
+    {
+        if (!CanEdit || project is null || ActiveScene is not { } scene) return;
+        EditProject(Examples.ReadingControlsModule.AddTo(project, scene.Id));
+    }
+
     public void AddReleaseCheckExample()
     {
         if (!CanEdit || project is null) return;

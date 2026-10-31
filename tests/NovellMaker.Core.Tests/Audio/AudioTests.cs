@@ -90,6 +90,22 @@ public sealed class AudioTests
         audio.Handle(new(AudioEventKind.Scene, project.Scenes[0].Id));
         Assert.AreEqual(1, audio.Diagnostics.Count); Assert.AreEqual(0, audio.ActiveSources);
     }
+    [TestMethod]
+    public void HistoryReplayOnlyPlaysRequestedVoiceAndKeepsScenarioSourcesPaused()
+    {
+        var backend = new FakeBackend(); using var audio = new AudioService(project, root, "ru", backend);
+        var scene = project.Scenes[0]; var line = scene.Lines[0];
+        audio.Handle(new(AudioEventKind.Scene, scene.Id)); audio.Handle(new(AudioEventKind.Line, scene.Id, line.Id));
+        var count = backend.Sources.Count; audio.Pause(true);
+        audio.ReplayVoice(line.Id, "ru"); Assert.AreEqual(count + 1, backend.Sources.Count);
+        Assert.IsTrue(backend.Sources.Take(count).All(s => s.Paused)); Assert.IsFalse(backend.Sources[^1].Paused);
+        audio.PauseReplayVoice(true); Assert.IsTrue(backend.Sources[^1].Paused);
+        audio.PauseReplayVoice(false); audio.ReplayVoice(line.Id, "ru"); Assert.IsTrue(backend.Sources[^2].Disposed);
+        audio.StopReplayVoice(); Assert.IsTrue(backend.Sources[^1].Disposed); Assert.AreEqual(count, audio.ActiveSources);
+        audio.ReplayVoice(line.Id, "en"); Assert.AreEqual(count + 2, backend.Sources.Count);
+        foreach (var source in backend.Sources) source.Finished = true;
+        audio.Pause(false); audio.Update(); Assert.IsFalse(audio.IsVoicePlaying);
+    }
     private sealed class CheckingBackend : IAudioBackend { public IAudioSource Open(string path, bool loop) { using var s = File.OpenRead(path); throw new InvalidOperationException(); } }
     private sealed class FakeBackend : IAudioBackend
     {

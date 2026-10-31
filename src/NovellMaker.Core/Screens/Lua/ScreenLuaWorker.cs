@@ -244,6 +244,9 @@ internal sealed class ScreenLuaVm
                     { values.Set(key + "_volume", DynValue.NewNumber(bus.Volume)); values.Set(key + "_muted", DynValue.NewBoolean(bus.Muted)); }
                     Audio("master", settings.Master); Audio("sound", settings.Sound); Audio("effect", settings.Effect); Audio("voice", settings.Voice);
                     values.Set("fullscreen", DynValue.NewBoolean(settings.Fullscreen));
+                    values.Set("text_speed", DynValue.NewNumber(settings.TextSpeed));
+                    values.Set("auto_delay", DynValue.NewNumber(settings.AutoDelay));
+                    values.Set("auto_wait_voice", DynValue.NewBoolean(settings.AutoWaitVoice));
                     argument.Set("settings", DynValue.NewTable(values));
                 }
                 var slots = new Table(script);

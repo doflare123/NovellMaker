@@ -81,6 +81,7 @@ internal sealed partial class RuntimeGame : Game
         this.arguments = arguments ?? throw new ArgumentNullException(nameof(arguments));
         this.session = session ?? throw new ArgumentNullException(nameof(session));
         this.settings = settings;
+        reading = new(settings);
         luaJournal = new(RuntimeStorage.LuaJournalPath(session.Player.Execution.Project.Id, arguments.Package is not null));
         slots = new(session, new GameSlotStore(player.Execution.Project,
             RuntimeStorage.SlotsDirectory(player.Execution.Project.Id, arguments.Package is not null), SavePath));
@@ -98,6 +99,7 @@ internal sealed partial class RuntimeGame : Game
         settingsServices.IsCurrentOrigin = services.IsCurrentOrigin;
         settingsServices.Completed += (origin, result) => serviceFeedbackDelivered = screens.DeliverServiceResult(origin, result);
         screens.Stack.Presentation = PresentComponents;
+        screens.HostActivation = ActivateReading;
         screens.Configure(player.Execution.Project, () => player.Execution.State.Variables, () => session.Generation, () => player.Execution);
         session.Resetting += ResetSessionResources;
         if (arguments.SmokePlanPath is { } plan) smokePlan = JsonSerializer.Deserialize<RuntimeSmokeStep[]>(File.ReadAllText(plan)) ?? throw new ArgumentException("Пустой smoke-план.");
@@ -145,6 +147,7 @@ internal sealed partial class RuntimeGame : Game
         initialLineId = player.Frame.LineId;
         initialVisibleCharacterCount = player.Frame.Characters.Length;
         initialFrameCaptured = !player.Execution.HasPendingLua;
+        reading.Synchronize(player);
         RefreshFrameResources();
         RefreshTextTextures();
         base.LoadContent();
@@ -181,6 +184,10 @@ internal sealed partial class RuntimeGame : Game
             RefreshInteractions();
         }
 
+        SynchronizeAudio();
+        var readingTime = UsesGameState ? TimeSpan.FromSeconds(Math.Max(0, player.Execution.State.Time - scenarioTime)) : gameTime.ElapsedGameTime;
+        UpdateReading(smokePlan is null ? readingTime : TimeSpan.Zero, hostActive && imageCache?.IsPending != true);
+
         if (arguments.SmokeOutputPath is not null)
         {
             if (!initialFrameCaptured && !player.Execution.HasPendingLua)
@@ -207,7 +214,7 @@ internal sealed partial class RuntimeGame : Game
                 else if (key == Keys.Tab) RouteScreen(new(keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift)
                     ? ScreenInputKind.FocusPrevious : ScreenInputKind.FocusNext));
                 else if (key is Keys.Enter or Keys.Space)
-                { if (!RouteScreen(new(ScreenInputKind.Activate)) && !consumed) ApplyAction(RuntimeAction.Next); }
+                { if (!RouteScreen(new(ScreenInputKind.Activate)) && !consumed) ApplyAction(RuntimeAction.Continue); }
                 else if (!consumed && !screens.HasOverlays && key == Keys.Right) ApplyAction(RuntimeAction.Next);
                 else if (!consumed && !screens.HasOverlays && key == Keys.Left) ApplyAction(RuntimeAction.Previous);
             }
@@ -284,8 +291,11 @@ internal sealed partial class RuntimeGame : Game
                 DrawCharacters(spriteBatch, player.Frame.Characters);
                 DrawComponents(spriteBatch);
                 DrawNavigationControls(spriteBatch);
-                foreach (var button in interactionButtons) spriteBatch.Draw(button.Texture.Texture, button.Bounds, Color.White);
-                if (actionHelp is not null) spriteBatch.Draw(actionHelp.Texture, new Vector2(16, 16), Color.White);
+                if (!screens.HasOverlays)
+                {
+                    foreach (var button in interactionButtons) spriteBatch.Draw(button.Texture.Texture, button.Bounds, Color.White);
+                    if (actionHelp is not null) spriteBatch.Draw(actionHelp.Texture, new Vector2(16, 16), Color.White);
+                }
                 DrawDiagnostics(spriteBatch);
                 hasPresentedFrame = true;
             }
@@ -406,10 +416,13 @@ internal sealed partial class RuntimeGame : Game
         switch (step.Kind)
         {
             case "tick":
+                var beforeReadingTick = player.Execution.State.Time;
                 screens.Tick(TimeSpan.FromSeconds(step.Seconds), true);
                 if (player.Execution.State.Minigame is null) player.Tick(TimeSpan.FromSeconds(step.Seconds));
+                SynchronizeAudio(); UpdateReading(TimeSpan.FromSeconds(Math.Max(0, player.Execution.State.Time - beforeReadingTick)), true);
                 break;
             case "next": success = ApplyAction(RuntimeAction.Next); break;
+            case "continue_text": success = ApplyAction(RuntimeAction.Continue); break;
             case "click_now":
             case "click":
                 var consumed = RouteScreen(new(ScreenInputKind.PointerDown, step.X, step.Y));
@@ -480,14 +493,17 @@ internal sealed partial class RuntimeGame : Game
             PendingSlots = slots.IsBusy, SlotMessage = slots.LastResult?.Message ?? "",
             Slots = slots.LastResult?.Slots.IsDefault == false ? slots.LastResult.Slots : [],
             PlayerSettings = settings.Current, Fullscreen = graphics.IsFullScreen,
+            ReadingMode = reading.Mode.ToString(), FullyRevealed = reading.FullyRevealed, ReadLineCount = settings.ReadLines.Length,
         };
     }
 
     private bool ApplyAction(RuntimeAction action)
     {
         if (session.Phase != GameSessionPhase.Playing) return false;
+        if (action is RuntimeAction.Next or RuntimeAction.Previous) reading.Stop();
         var changed = action switch
         {
+            RuntimeAction.Continue => reading.Advance(player),
             RuntimeAction.Next => player.Next(),
             RuntimeAction.Previous => player.Previous(),
             _ => false,
@@ -568,14 +584,16 @@ internal sealed partial class RuntimeGame : Game
         else if (state.Wait?.Mode == "interaction")
             buttons.AddRange(state.Hotspots.Where(h => h.Enabled && (state.Wait.Token is null || state.Wait.Token == h.ObjectId)).Select(h =>
                 (h.ObjectId, h.Label, new Rectangle((int)(h.X * LogicalWidth), (int)(h.Y * LogicalHeight), Math.Max(1, (int)(h.Width * LogicalWidth)), Math.Max(1, (int)(h.Height * LogicalHeight))))));
-        var key = System.Text.Json.JsonSerializer.Serialize(buttons.Select(b => new { b.Id, b.Label, b.Bounds.X, b.Bounds.Y, b.Bounds.Width, b.Bounds.Height })) + saveMessage + state.Completed;
+        var readingStatus = reading.Mode switch { ReadingMode.Auto => "Авточтение", ReadingMode.SkipRead => "Пропуск прочитанного", _ => "" };
+        var help = string.Join(" · ", new[] { saveMessage, readingStatus }.Where(s => s.Length > 0));
+        var key = System.Text.Json.JsonSerializer.Serialize(buttons.Select(b => new { b.Id, b.Label, b.Bounds.X, b.Bounds.Y, b.Bounds.Width, b.Bounds.Height })) + help + state.Completed;
         if (key == interactionKey) return;
         interactionKey = key;
         foreach (var button in interactionButtons) button.Texture.Dispose();
         interactionButtons.Clear();
         foreach (var b in buttons) interactionButtons.Add((b.Id, b.Bounds, DialogueTextureRenderer.RenderButton(GraphicsDevice, b.Label, b.Bounds.Width, b.Bounds.Height)));
         actionHelp?.Dispose();
-        actionHelp = string.IsNullOrEmpty(saveMessage) ? null : DialogueTextureRenderer.RenderButton(GraphicsDevice, saveMessage, 1040, 40);
+        actionHelp = string.IsNullOrEmpty(help) ? null : DialogueTextureRenderer.RenderButton(GraphicsDevice, help, 1040, 40);
     }
 
     private void RefreshTextTextures()
@@ -679,7 +697,7 @@ internal sealed partial class RuntimeGame : Game
 
     private void DrawNavigationControls(SpriteBatch batch)
     {
-        if (!showNavigationControls || navigationTexture is null)
+        if (!showNavigationControls || navigationTexture is null || screens.HasOverlays)
         {
             return;
         }
@@ -833,6 +851,9 @@ internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState S
     public string SlotMessage { get; init; } = "";
     public IReadOnlyList<GameSlotInfo> Slots { get; init; } = [];
     public PlayerSettings? PlayerSettings { get; init; }
+    public string ReadingMode { get; init; } = "";
+    public bool FullyRevealed { get; init; }
+    public int ReadLineCount { get; init; }
     public bool Fullscreen { get; init; }
     public int ScreenCount { get; init; }
     public IReadOnlyList<string> ScreenTexts { get; init; } = [];

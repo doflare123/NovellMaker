@@ -31,6 +31,9 @@
 ---@field voice_volume number
 ---@field voice_muted boolean
 ---@field fullscreen boolean
+---@field text_speed number 0–200 Unicode-знаков/с; 0 мгновенно
+---@field auto_delay number 0–30 секунд после полного текста
+---@field auto_wait_voice boolean
 ---@class NMSlot
 ---@field id string
 ---@field status string
@@ -237,7 +240,7 @@ function ui.check_game_release() end
 ---Exactly one own request ID. Completed request is a no-op; foreign ID rejects the batch.
 ---@param request_id string
 function ui.cancel_release_check(request_id) end
----@param key 'master_volume'|'master_muted'|'sound_volume'|'sound_muted'|'effect_volume'|'effect_muted'|'voice_volume'|'voice_muted'|'fullscreen'
+---@param key 'master_volume'|'master_muted'|'sound_volume'|'sound_muted'|'effect_volume'|'effect_muted'|'voice_volume'|'voice_muted'|'fullscreen'|'text_speed'|'auto_delay'|'auto_wait_voice'
 ---@param value number|boolean Volume 0..1, flags boolean.
 ---@return string request_id
 function ui.set_setting(key, value) end

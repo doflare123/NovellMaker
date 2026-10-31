@@ -1,3 +1,4 @@
+using NovellMaker.Core.Screens;
 ﻿using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using NovellMaker.Core.Audio;
@@ -56,6 +57,8 @@ internal sealed partial class RuntimeGame
     }
     private void ApplyProjectCommand(NovellMaker.Core.Screens.ScreenButtonBinding command)
     {
+        if (command.Action is ScreenButtonAction.History or ScreenButtonAction.AutoRead or ScreenButtonAction.SkipRead or ScreenButtonAction.ReadingSettings)
+        { ReadingAction(command.Action); RefreshInteractions(); return; }
         switch (command.Action)
         {
             case NovellMaker.Core.Screens.ScreenButtonAction.Volume:
@@ -67,7 +70,7 @@ internal sealed partial class RuntimeGame
                 audio.SetBus(command.Group, updated);
                 settings.Set(settings.Current.SetBus(command.Group, updated));
                 break;
-            case NovellMaker.Core.Screens.ScreenButtonAction.Continue: ApplyAction(RuntimeAction.Next); break;
+            case NovellMaker.Core.Screens.ScreenButtonAction.Continue: ApplyAction(RuntimeAction.Continue); break;
         }
     }
 }

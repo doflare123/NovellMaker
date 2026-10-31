@@ -53,6 +53,7 @@ internal static partial class ProjectJsonCodec
             18 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken, Version18SerializerOptions).ConfigureAwait(false), allowSlots: true),
             19 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false), allowSlots: true),
             20 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
+            21 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
             8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
             _ => throw new ProjectFormatException(
@@ -69,6 +70,9 @@ internal static partial class ProjectJsonCodec
                 return scene with { Canvas = scene.Canvas with { Nodes = DialogueCanvas.Add(scene.Canvas.Nodes, scene.Id, style, legacy: true, deterministic: true) } };
             })] };
         }
+        if (versionProbe.FormatVersion < 21 && (project.InputBindings.Any(b => (int)b.Action > 20) ||
+            project.Scenes.Any(s => s.Canvas.Buttons.Any(b => (int)b.Action > 20))))
+            throw new ProjectFormatException("Команды чтения требуют формат проекта v21.");
         return project;
     }
     internal static Task WriteAsync(Stream stream, NovelProject project, CancellationToken cancellationToken) =>

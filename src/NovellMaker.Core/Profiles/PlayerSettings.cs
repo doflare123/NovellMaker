@@ -12,6 +12,10 @@ public sealed record PlayerAudioSettings(float Volume, bool Muted)
 public sealed record PlayerSettings(PlayerAudioSettings Master, PlayerAudioSettings Sound,
     PlayerAudioSettings Effect, PlayerAudioSettings Voice, bool Fullscreen)
 {
+    public double TextSpeed { get; init; } = 40;
+    public double AutoDelay { get; init; } = 2;
+    public bool AutoWaitVoice { get; init; } = true;
+
     public static PlayerSettings Defaults(AudioProject audio) => new(
         DefaultBus(audio, AudioGroup.Master), DefaultBus(audio, AudioGroup.Sound), DefaultBus(audio, AudioGroup.Effect), DefaultBus(audio, AudioGroup.Voice), false);
     // An explicit factory keeps missing author mixer entries equivalent to AudioService defaults.
@@ -20,6 +24,8 @@ public sealed record PlayerSettings(PlayerAudioSettings Master, PlayerAudioSetti
 
     public void Validate()
     {
+        if (!double.IsFinite(TextSpeed) || TextSpeed is < 0 or > 200 || !double.IsFinite(AutoDelay) || AutoDelay is < 0 or > 30)
+            throw new ArgumentException("Скорость текста: 0–200 знаков/с; задержка авто: 0–30 секунд.");
         if (Master is not { IsValid: true } || Sound is not { IsValid: true } ||
             Effect is not { IsValid: true } || Voice is not { IsValid: true })
             throw new ArgumentException("Громкость профиля: конечное число от 0 до 1.");
@@ -47,6 +53,9 @@ public sealed record PlayerSettings(PlayerAudioSettings Master, PlayerAudioSetti
     {
         change.Validate();
         if (change.Key == "fullscreen") return this with { Fullscreen = change.Flag!.Value };
+        if (change.Key == "text_speed") return this with { TextSpeed = change.Number!.Value };
+        if (change.Key == "auto_delay") return this with { AutoDelay = change.Number!.Value };
+        if (change.Key == "auto_wait_voice") return this with { AutoWaitVoice = change.Flag!.Value };
         var group = change.Key.Split('_')[0] switch
         { "master" => AudioGroup.Master, "sound" => AudioGroup.Sound, "effect" => AudioGroup.Effect, _ => AudioGroup.Voice };
         var bus = Bus(group).ToBus();
@@ -59,7 +68,9 @@ public sealed record PlayerSettingChange(string Key, double? Number, bool? Flag)
     public void Validate()
     {
         var volume = Key is "master_volume" or "sound_volume" or "effect_volume" or "voice_volume";
-        var flag = Key is "master_muted" or "sound_muted" or "effect_muted" or "voice_muted" or "fullscreen";
+        var flag = Key is "master_muted" or "sound_muted" or "effect_muted" or "voice_muted" or "fullscreen" or "auto_wait_voice";
+        if (Flag is null && Number is { } value && double.IsFinite(value) &&
+            (Key == "text_speed" && value is >= 0 and <= 200 || Key == "auto_delay" && value is >= 0 and <= 30)) return;
         if (!(volume && Number is { } number && double.IsFinite(number) && number is >= 0 and <= 1 && Flag is null ||
               flag && Flag is not null && Number is null))
             throw new ArgumentException("Неизвестная настройка, неверный тип или значение.");

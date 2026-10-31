@@ -47,7 +47,7 @@ public sealed class ReleaseCheckProjectTests
             Assert.AreNotEqual(ScenarioProgram.Fingerprint(original), ScenarioProgram.Fingerprint(loaded));
             Assert.AreNotEqual(ScenarioProgram.Fingerprint(loaded), ScenarioProgram.Fingerprint(loaded with { ReleaseCheck = Settings with { CurrentVersion = "1.2.4" } }));
             var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
-            Assert.AreEqual(20, json["formatVersion"]!.GetValue<int>());
+            Assert.AreEqual(NovelProject.CurrentFormatVersion, json["formatVersion"]!.GetValue<int>());
             Assert.AreEqual(4, json["releaseCheck"]!.AsObject().Count);
             Assert.AreEqual("github_releases_v1", json["releaseCheck"]!["provider"]!.GetValue<string>());
         }
@@ -79,7 +79,7 @@ public sealed class ReleaseCheckProjectTests
             if (version == 1) { json.Remove("scenes"); json.Remove("defaultLanguage"); json.Remove("dialogueUi"); }
             await File.WriteAllTextAsync(path, json.ToJsonString()); var bytes = await File.ReadAllBytesAsync(path);
             var loaded = await store.LoadAsync(path);
-            Assert.IsNull(loaded.ReleaseCheck); Assert.AreEqual(20, loaded.FormatVersion);
+            Assert.IsNull(loaded.ReleaseCheck); Assert.AreEqual(NovelProject.CurrentFormatVersion, loaded.FormatVersion);
             CollectionAssert.AreEqual(bytes, await File.ReadAllBytesAsync(path));
             json["releaseCheck"] = JsonNode.Parse("""{"provider":"github_releases_v1","owner":"author","repository":"novel","currentVersion":"1.0.0"}""");
             await File.WriteAllTextAsync(path, json.ToJsonString());

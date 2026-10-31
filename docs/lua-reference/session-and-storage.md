@@ -12,13 +12,13 @@
 
 ID: 1..64 ASCII из `a-z0-9_-`; Windows-имена con/prn/aux/nul/com0..com9/lpt0..lpt9 запрещены. `quicksave` — быстрый слот, отдельный путь. Не AuthorKey: точки не разрешены, первый символ может быть цифрой. Название не становится путём. 128 файлов вместе с quickslot, до 16 МиБ каждый. Подменённые symlink/reparse пути отклоняются.
 
-Пути от LocalApplicationData/NovellMaker: в игре `Games/<project-id>/slots/<id>.json`, quick `Games/<project-id>/quicksave.json`; в F6 `Saves/<project-id>/slots/<id>.json`, quick `Saves/<project-id>.json`. Контейнер слота v2, вложенный GameSave v2; старый снимок v1 читается без перезаписи. Совместимость требует того же ProjectId и **точной редакции**, включая код/refs/интерфейс. Запись tmp/flush/atomic rename сохраняет прежний файл при отмене до публикации; отмена после публикации не откатывает файл.
+Пути от LocalApplicationData/NovellMaker: в игре `Games/<project-id>/slots/<id>.json`, quick `Games/<project-id>/quicksave.json`; в F6 `Saves/<project-id>/slots/<id>.json`, quick `Saves/<project-id>.json`. Контейнер слота v2, вложенный GameSave v3; старые снимки v1/v2 читаются без перезаписи. Совместимость требует того же ProjectId и **точной редакции**, включая код/refs/интерфейс. Запись tmp/flush/atomic rename сохраняет прежний файл при отмене до публикации; отмена после публикации не откатывает файл.
 
 Host принимает одну слотовую операцию одновременно; хранилище — одну активную и до 32 ожидающих, сериализация снимка — 2 активных +32 ожидающих на процесс. Слоты не содержат VM/замыкания/обычные экраны/профиль/аудиопозиции. Активная разрешённая мини-игра хранит Parameters/State/RNG и идентичность запуска; [барьеры сохранения](minigames.md).
 
 ### Профиль
 
-Текущий профиль v3 принадлежит ProjectId, переживает редакцию проекта, Load/NewGame/MainMenu и не входит в слот/экспорт. Настройки и Data пишутся общим снимком; пути: `Games/<project-id>/profile.json` либо `Saves/<project-id>/profile.json` для F6. До 128 КиБ, backup и атомарная запись. Старые v1/v2 читаются с миграцией в памяти; запись только при явном изменении. Прежние достижения v2 становятся Data[id]="true"; функций get_achievement/unlock_achievement нет.
+Текущий профиль v4 принадлежит ProjectId, переживает редакцию проекта, Load/NewGame/MainMenu и не входит в слот/экспорт. Настройки, Data и отметки прочитанного пишутся общим снимком; пути: `Games/<project-id>/profile.json` либо `Saves/<project-id>/profile.json` для F6. До 2 МиБ, backup и атомарная запись. Старые v1/v2/v3 читаются с миграцией в памяти; запись при изменении настроек/Data или отметке полного прочтения. Прежние достижения v2 становятся Data[id]="true"; функций get_achievement/unlock_achievement нет.
 
 `persisted` означает, что **весь текущий профиль**, включая настройки, подтверждён на диске. success чтения памяти может сочетаться с persisted=false; при неудачной записи value/settings могут уже отражать новое состояние памяти. Профиль не защищён от редактирования игроком; процессов общей координации нет. Менять постоянные данные циклически каждый update не следует.
 
@@ -253,7 +253,7 @@ local request = ui.get_settings()
 <a id="ui-set-setting"></a>
 ## ui.set_setting
 
-Изменить громкость, mute или полноэкранный режим игрока.
+Изменить звук, режим окна или параметры чтения игрока.
 
 ```lua
 ui.set_setting(key, value) -> request_id
@@ -261,7 +261,7 @@ ui.set_setting(key, value) -> request_id
 
 **Доступность:** ui on_load/on_event, модуль, мини-игра; в restore on_load запрещена. До возврата handlers сервисные команды запрещены.
 
-**Аргументы и ошибки:** key: master_volume/sound_volume/effect_volume/voice_volume с числом [0,1] либо master_muted/sound_muted/effect_muted/voice_muted/fullscreen с boolean. nil и неверная пара ключ/тип — ошибка.
+**Аргументы и ошибки:** key: master_volume/sound_volume/effect_volume/voice_volume с числом [0,1] либо master_muted/sound_muted/effect_muted/voice_muted/fullscreen/auto_wait_voice с boolean; text_speed — конечное число [0,200], 0 мгновенно, auto_delay — конечное число [0,30] секунд. nil и неверная пара ключ/тип — ошибка.
 
 **Возврат:** Сразу request_id: строка GUID N. Позднее service_result с operation="SetSetting" и этим request_id; исключения доставки описаны ниже.
 
@@ -272,6 +272,8 @@ ui.set_setting(key, value) -> request_id
 ```lua
 local request = ui.set_setting("sound_volume", 0.5)
 ```
+
+Параметры чтения, правила авто/пропуска, история и поведение после Load: [чтение новеллы](engine-guide.md#чтение-новеллы).
 
 **Связи:** [ui.get_settings](session-and-storage.md#ui-get-settings), [ui.set_audio_volume](audio.md#ui-set-audio-volume). [Регистрация и аргументы](../../src/NovellMaker.Core/Screens/Lua/ScreenLuaWorker.cs), [тесты](../../tests/NovellMaker.Core.Tests/Profiles/PlayerProfileTests.cs).
 

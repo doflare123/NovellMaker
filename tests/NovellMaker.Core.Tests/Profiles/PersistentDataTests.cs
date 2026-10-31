@@ -25,7 +25,7 @@ public sealed class PersistentDataTests
     {
         using var folder=new Folder(); var store=new PlayerProfileStore(Guid.NewGuid(),folder.File);
         var settings=Defaults with {Master=new(.25f,true),Fullscreen=true}; await store.SaveAsync(settings);
-        var json=JsonNode.Parse(File.ReadAllText(folder.File))!; json["Version"]=version; json.AsObject().Remove("Data");
+        var json=JsonNode.Parse(File.ReadAllText(folder.File))!; json["Version"]=version; json.AsObject().Remove("Data"); json.AsObject().Remove("ReadLines");
         if(version==2) json["Achievements"]=new JsonArray("first_steps",new string('z',64));
         var text=json.ToJsonString(); File.WriteAllText(folder.File,text);
         if(backup) { File.Move(folder.File,folder.File+".bak"); File.WriteAllText(folder.File,"broken"); }
@@ -36,7 +36,7 @@ public sealed class PersistentDataTests
         var session=new PlayerSettingsSession(store,read); session.SetPersistent(new("custom_note","anything")); await session.FlushAsync();
         var loaded=await store.ReadAsync(Defaults); Assert.AreEqual(settings,loaded.Settings); Assert.AreEqual("anything",loaded.Data["custom_note"]);
         Assert.AreEqual(version==2?"true":null,loaded.Data.GetValueOrDefault("first_steps"));
-        Assert.AreEqual(3,JsonNode.Parse(File.ReadAllText(folder.File))!["Version"]!.GetValue<int>());
+        Assert.AreEqual(PlayerProfileStore.CurrentVersion,JsonNode.Parse(File.ReadAllText(folder.File))!["Version"]!.GetValue<int>());
     }
     [TestMethod]
     [DataRow("missing")] [DataRow("null")] [DataRow("duplicate")] [DataRow("invalidKey")] [DataRow("nullValue")]
@@ -77,7 +77,7 @@ public sealed class PersistentDataTests
     {
         using var folder=new Folder(); var store=new PlayerProfileStore(Guid.NewGuid(),folder.File); await store.SaveAsync(Defaults); await store.SaveAsync(Defaults);
         var file=backup?folder.File+".bak":folder.File;
-        var text=JsonNode.Parse(File.ReadAllText(file))!.ToJsonString().Replace("\"Version\":3",futureFirst?"\"Version\":4,\"Version\":3":"\"Version\":3,\"Version\":4",StringComparison.Ordinal);
+        var text=JsonNode.Parse(File.ReadAllText(file))!.ToJsonString().Replace("\"Version\":4",futureFirst?"\"Version\":5,\"Version\":4":"\"Version\":4,\"Version\":5",StringComparison.Ordinal);
         File.WriteAllText(file,text); var primary=File.ReadAllBytes(folder.File); var old=File.ReadAllBytes(folder.File+".bak");
         if(!backup) Assert.AreEqual(PlayerProfileStatus.UnsupportedVersion,(await store.ReadAsync(Defaults)).Status);
         await Assert.ThrowsAsync<IOException>(()=>store.SaveAsync(new PlayerProfileData(Defaults,Data("custom"))));
@@ -90,7 +90,7 @@ public sealed class PersistentDataTests
         using var folder = new Folder(); var store = new PlayerProfileStore(Guid.NewGuid(), folder.File);
         await store.SaveAsync(new PlayerProfileData(Defaults, Data("note")));
         var document = JsonNode.Parse(File.ReadAllText(folder.File))!;
-        if (issue == "future") document["Version"] = 4;
+        if (issue == "future") document["Version"] = 5;
         if (issue == "foreign") document["ProjectId"] = Guid.NewGuid();
         var text = issue == "corrupt" ? "broken" : document.ToJsonString(); File.WriteAllText(folder.File, text);
         var session = new PlayerSettingsSession(store, await store.ReadAsync(Defaults));

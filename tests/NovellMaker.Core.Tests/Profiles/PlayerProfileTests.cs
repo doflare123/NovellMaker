@@ -84,7 +84,7 @@ public sealed class PlayerProfileTests
         }
         var text = issue switch
         {
-            "duplicate" => node.ToJsonString().Replace("\"Version\":3", "\"Version\":3,\"Version\":3", StringComparison.Ordinal),
+            "duplicate" => node.ToJsonString().Replace("\"Version\":4", "\"Version\":4,\"Version\":4", StringComparison.Ordinal),
             "tooBig" => new string(' ', PlayerProfileStore.MaxFileBytes + 1),
             "invalidRoot" => "[]", _ => node.ToJsonString(),
         };
@@ -94,7 +94,7 @@ public sealed class PlayerProfileTests
     }
 
     [TestMethod]
-    [DataRow(0)] [DataRow(4)]
+    [DataRow(0)] [DataRow(5)]
     public async Task UnsupportedVersionIsNotMigratedOrOverwritten(int version)
     {
         using var folder = new Folder(); var store = new PlayerProfileStore(Guid.NewGuid(), folder.File); await store.SaveAsync(Defaults);
@@ -147,9 +147,9 @@ public sealed class PlayerProfileTests
     }
 
     [TestMethod]
-    [DataRow("missing", 0)] [DataRow("missing", 4)]
-    [DataRow("loaded", 0)] [DataRow("loaded", 4)]
-    [DataRow("corrupt", 0)] [DataRow("corrupt", 4)]
+    [DataRow("missing", 0)] [DataRow("missing", 5)]
+    [DataRow("loaded", 0)] [DataRow("loaded", 5)]
+    [DataRow("corrupt", 0)] [DataRow("corrupt", 5)]
     public async Task UnsupportedBackupVersionBlocksEveryWriteBeforeChangingEitherFile(string primaryState, int version)
     {
         using var folder = new Folder(); var store = new PlayerProfileStore(Guid.NewGuid(), folder.File);

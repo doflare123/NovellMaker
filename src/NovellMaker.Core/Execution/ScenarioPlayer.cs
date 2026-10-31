@@ -15,6 +15,8 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
     private int variableCharacters;
     public GameState State { get; private set; }
     public NovelProject Project => project;
+    public string Language => language;
+    public long RestoreGeneration { get; private set; }
     private readonly Queue<AudioEvent> audioEvents = new();
     private void Audio(AudioEventKind kind, Guid? line = null) => audioEvents.Enqueue(new(kind, State.SceneId, line));
     public AudioEvent[] DrainAudioEvents() { var result = audioEvents.ToArray(); audioEvents.Clear(); return result; }
@@ -64,7 +66,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         State = new GameState
         {
             ProjectId = project.Id, Revision = State.Revision, SceneId = sceneId,
-            NextActionId = actions.FirstOrDefault()?.Id, Variables = State.Variables, Time = State.Time
+            NextActionId = actions.FirstOrDefault()?.Id, Variables = State.Variables, Time = State.Time, History = State.History
         };
         Audio(AudioEventKind.Scene);
         Pump();
@@ -207,7 +209,8 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
             case BranchMinigameAction a: if (MatchesMinigame(a)) Jump(a.SceneId, a.ActionId); break;
             case TextAction a:
                 if (!project.Scenes.First(s => s.Id == State.SceneId).Lines.Any(l => l.Id == a.LineId)) throw new InvalidOperationException($"Реплика {a.LineId} отсутствует.");
-                State = State with { LineId = a.LineId, TextStartedAt = State.Time }; Audio(AudioEventKind.Line, a.LineId); break;
+                State = State with { LineId = a.LineId, TextStartedAt = State.Time,
+                    History = DialogueHistory.Append(State.History, State.SceneId, a.LineId, language) }; Audio(AudioEventKind.Line, a.LineId); break;
             case ShowAction a: Show(a.ObjectId); break;
             case HideAction a:
                 if (!project.Characters.Any(c => c.Id == a.ObjectId)) Diagnostic($"Скрываемый персонаж {a.ObjectId} отсутствует.");
@@ -302,6 +305,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         CancelPendingLua();
         ResetPass();
         State = state;
+        RestoreGeneration++;
         MinigameRestored = state.Minigame is not null;
         variableCharacters = state.Variables.Sum(v => v.Key.Length + v.Value.Length);
         audioEvents.Clear();

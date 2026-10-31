@@ -11,11 +11,12 @@ internal sealed partial class RuntimeGame
     private BasicEffect? componentEffect;
     private string lastMenuDiagnostics = "";
     private readonly Dictionary<Guid, string> dialogueDiagnostics = [];
-    private readonly Dictionary<Guid, (ScreenDefinition Source, NovellMaker.Core.Execution.SceneFrame Frame, TimeSpan Elapsed, ScreenDefinition Presented)> dialoguePresentations = [];
+    private readonly Dictionary<Guid, (ScreenDefinition Source, NovellMaker.Core.Execution.SceneFrame Frame, TimeSpan Elapsed, string Text, ScreenDefinition Presented)> dialoguePresentations = [];
     internal ValueTask DisposeScreenLuaAsync() => screens.DisposeAsync();
 
     private void ResetSessionResources()
     {
+        CloseReadingPanel(); reading.Stop();
         screens.Reset(); audio?.Stop();
         imageHintsKey = null;
         lineElapsed = TimeSpan.Zero; saveMessage = "";
@@ -29,6 +30,7 @@ internal sealed partial class RuntimeGame
     {
         var result = screens.Route(input, player.Execution.State.SceneId);
         ApplySceneNavigation();
+        SynchronizeReadingPanel();
         return result.Consumed;
     }
 
@@ -37,6 +39,7 @@ internal sealed partial class RuntimeGame
         screens.SyncScene(player.Execution.State.SceneId);
         var consumed = screens.RouteKey(key);
         ApplySceneNavigation();
+        SynchronizeReadingPanel();
         return consumed;
     }
 
@@ -54,29 +57,31 @@ internal sealed partial class RuntimeGame
 
     private ScreenDefinition PresentComponents(ScreenInstance instance, ScreenDefinition source)
     {
+        reading.Synchronize(player);
         var frame = player.Frame;
+        var shownText = reading.VisibleText;
         var elapsed = UsesGameState ? TimeSpan.FromSeconds(player.Execution.State.Time - player.Execution.State.TextStartedAt) : lineElapsed;
         if (!source.Nodes.Any(n => n.Dialogue != DialogueBinding.None)) return source;
         var time = frame.Style.HasAnimation ? elapsed : TimeSpan.Zero;
         if (dialoguePresentations.TryGetValue(instance.Id, out var cached) && ReferenceEquals(cached.Source, source) &&
-            cached.Frame.LineId == frame.LineId && cached.Frame.Text == frame.Text && cached.Frame.SpeakerName == frame.SpeakerName && cached.Frame.Style == frame.Style && cached.Elapsed == time) return cached.Presented;
+            cached.Frame.LineId == frame.LineId && cached.Frame.Text == frame.Text && cached.Frame.SpeakerName == frame.SpeakerName && cached.Frame.Style == frame.Style && cached.Elapsed == time && cached.Text == shownText) return cached.Presented;
         var metrics = NovellMaker.Rendering.DialogueRasterizer.Measure(frame.Style, frame.SpeakerName, frame.Text);
         ScreenDefinition presented;
         try
         {
-            presented = NovellMaker.Core.Scenes.DialogueCanvas.Present(source, frame.Style, frame.SpeakerName, frame.Text,
+            presented = NovellMaker.Core.Scenes.DialogueCanvas.Present(source, frame.Style, frame.SpeakerName, shownText,
                 screens.IsSceneInstance(instance) && frame.LineId is not null, metrics.Height, metrics.SpeakerHeight, time, animate: true);
             dialogueDiagnostics.Remove(instance.Id);
         }
         catch (ArgumentException error)
         {
             dialogueDiagnostics[instance.Id] = "Геометрия диалога: " + error.Message;
-            try { presented = NovellMaker.Core.Scenes.DialogueCanvas.Present(source, frame.Style, frame.SpeakerName, frame.Text,
+            try { presented = NovellMaker.Core.Scenes.DialogueCanvas.Present(source, frame.Style, frame.SpeakerName, shownText,
                 screens.IsSceneInstance(instance) && frame.LineId is not null, metrics.Height, metrics.SpeakerHeight); }
             catch (ArgumentException)
             { presented = new(source.Id, [.. source.Nodes.Select(n => n.Dialogue == DialogueBinding.None ? n : n with { Visible = false })]); }
         }
-        dialoguePresentations[instance.Id] = (source, frame, time, presented); return presented;
+        dialoguePresentations[instance.Id] = (source, frame, time, shownText, presented); return presented;
     }
 
     private void DrawComponents(SpriteBatch batch)

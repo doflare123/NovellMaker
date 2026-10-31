@@ -131,6 +131,9 @@ public sealed class GameServiceLuaTests
     [DataRow("ui.get_settings()", GameServiceAction.GetSettings)]
     [DataRow("ui.set_setting('master_volume',0.5)", GameServiceAction.SetSetting)]
     [DataRow("ui.set_setting('fullscreen',true)", GameServiceAction.SetSetting)]
+    [DataRow("ui.set_setting('text_speed',0)", GameServiceAction.SetSetting)]
+    [DataRow("ui.set_setting('auto_delay',1.5)", GameServiceAction.SetSetting)]
+    [DataRow("ui.set_setting('auto_wait_voice',false)", GameServiceAction.SetSetting)]
     public void LuaReturnsQueuedCommandAndRequestIdWithoutExecutingHost(string expression, GameServiceAction action)
     {
         var definition = ScreenLuaProtocolTests.Definition();
@@ -150,6 +153,8 @@ public sealed class GameServiceLuaTests
     [DataRow("ui.set_setting('unknown',true)")] [DataRow("ui.set_setting('master_volume',2)")]
     [DataRow("ui.set_setting('master_volume','0.5')")] [DataRow("ui.set_setting('fullscreen',1)")]
     [DataRow("ui.set_setting('sound_volume',0/0)")] [DataRow("ui.set_setting('voice_volume',true)")]
+    [DataRow("ui.set_setting('text_speed',201)")] [DataRow("ui.set_setting('auto_delay',-1)")]
+    [DataRow("ui.set_setting('auto_wait_voice',0)")]
     public void InvalidLuaArgumentsAreRejectedBeforeCommandCanReachHost(string expression)
     {
         var vm = new ScreenLuaVm(ScreenLuaProtocolTests.Definition(), Guid.NewGuid(),
@@ -166,18 +171,18 @@ public sealed class GameServiceLuaTests
         session.Attach(instance, """
             return {on_load=function() ui.get_settings() end,on_event=function(e)
               if e.kind=='service_result' then
-                ui.set_text(refs.label,e.settings.voice_muted and 'muted' or 'audible')
+                ui.set_text(refs.label,(e.settings.voice_muted and 'muted' or 'audible')..':'..(e.settings.text_speed==12.5 and e.settings.auto_delay==0.75 and e.settings.auto_wait_voice==false and 'reading-ok' or 'bad'))
                 ui.set_setting('sound_volume',e.settings.master_volume)
               end
             end}
             """, references);
         await ScreenLuaSessionTests.Drain(session); var request = session.DrainServices().Single().Command;
         Assert.AreEqual(GameServiceAction.GetSettings, request.Action);
-        var value = PlayerSettings.Defaults(new()) with { Master = new(.25f, false), Voice = new(1, true) };
+        var value = PlayerSettings.Defaults(new()) with { Master = new(.25f, false), Voice = new(1, true), TextSpeed = 12.5, AutoDelay = .75, AutoWaitVoice = false };
         var result = new GameServiceResult(request.RequestId, request.Action, true, "", null, []) { Settings = value, ProfileSaved = true };
         Assert.AreEqual(ScreenEventAdmission.Accepted, session.Enqueue(instance, new("service_result") { Result = result }, ImmutableDictionary<string, string>.Empty));
         await ScreenLuaSessionTests.Drain(session); Assert.IsEmpty(session.Diagnostics);
-        Assert.AreEqual("muted", instance.Definition.Nodes[2].Text);
+        Assert.AreEqual("muted:reading-ok", instance.Definition.Nodes[2].Text);
         var command = session.DrainServices().Single().Command;
         Assert.AreEqual(new("sound_volume", .25, null), command.Setting);
         Assert.Throws<ArgumentException>(() => (command with { Setting = null }).Validate());

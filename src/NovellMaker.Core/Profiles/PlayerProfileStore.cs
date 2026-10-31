@@ -7,6 +7,7 @@ namespace NovellMaker.Core.Profiles;
 public enum PlayerProfileStatus { Missing, Loaded, Recovered, Corrupt, UnsupportedVersion, ForeignProject, Unavailable }
 public sealed record PlayerProfileRead(PlayerSettings Settings, PlayerProfileStatus Status, string Diagnostic)
 {
+    public ImmutableArray<string> ReadLines { get; init; } = [];
     public ImmutableDictionary<string, string> Data { get; init; } = ImmutableDictionary<string, string>.Empty;
 }
 public interface IPlayerProfileStore
@@ -18,12 +19,13 @@ public interface IPlayerProfileStore
 /// <summary>Small versioned preferences file; no project data, gameplay state or script execution.</summary>
 public sealed class PlayerProfileStore : IPlayerProfileStore
 {
-    public const int CurrentVersion = 3;
-    public const int MaxFileBytes = 128 * 1024;
+    public const int CurrentVersion = 4;
+    public const int MaxFileBytes = 2 * 1024 * 1024;
     private const int LegacyMaxFileBytes = 16384;
     private sealed record LegacyDocument(int Version, Guid ProjectId, PlayerSettings Settings);
     private sealed record LegacyV2Document(int Version, Guid ProjectId, PlayerSettings Settings, ImmutableArray<string> Achievements);
-    private sealed record Document(int Version, Guid ProjectId, PlayerSettings Settings, ImmutableDictionary<string, string> Data);
+    private sealed record Document(int Version, Guid ProjectId, PlayerSettings Settings, ImmutableDictionary<string, string> Data)
+    { public ImmutableArray<string> ReadLines { get; init; } = []; }
     private static readonly JsonSerializerOptions Json = new()
     {
         WriteIndented = true, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
@@ -49,7 +51,7 @@ public sealed class PlayerProfileStore : IPlayerProfileStore
             var backup = Read(path + ".bak", defaults);
             if (backup.Status == PlayerProfileStatus.Loaded)
                 return new PlayerProfileRead(backup.Settings, PlayerProfileStatus.Recovered,
-                    "Профиль восстановлен из резервной копии. Последние изменения могли не сохраниться.") { Data = backup.Data };
+                    "Профиль восстановлен из резервной копии. Последние изменения могли не сохраниться.") { Data = backup.Data, ReadLines = backup.ReadLines };
             if (result.Status == PlayerProfileStatus.Missing && backup.Status != PlayerProfileStatus.Missing)
                 return backup with { Diagnostic = "Основной профиль отсутствует. Резервная копия не прочитана; используются настройки проекта." };
         }
@@ -59,13 +61,13 @@ public sealed class PlayerProfileStore : IPlayerProfileStore
     public Task SaveAsync(PlayerProfileData profile, CancellationToken token = default)
     {
         profile.Validate();
-        return Save(profile.Settings, profile.Data, token);
+        return Save(profile.Settings, profile.Data, profile.ReadLines, token);
     }
 
     /// <summary>Settings-only callers preserve the latest validated author data.</summary>
-    public Task SaveAsync(PlayerSettings settings, CancellationToken token = default) => Save(settings, null, token);
+    public Task SaveAsync(PlayerSettings settings, CancellationToken token = default) => Save(settings, null, null, token);
 
-    private Task Save(PlayerSettings settings, ImmutableDictionary<string, string>? data, CancellationToken token) => Run<object?>(() =>
+    private Task Save(PlayerSettings settings, ImmutableDictionary<string, string>? data, ImmutableArray<string>? readLines, CancellationToken token) => Run<object?>(() =>
     {
         settings.Validate(); token.ThrowIfCancellationRequested(); CheckPath(path);
         var existing = Read(path, settings);
@@ -75,19 +77,20 @@ public sealed class PlayerProfileStore : IPlayerProfileStore
         var backup = Read(path + ".bak", settings);
         EnsureWritable(backup);
         var values = data ?? (existing.Status == PlayerProfileStatus.Loaded ? existing.Data : backup.Data);
-        new PlayerProfileData(settings, values).Validate();
+        var read = readLines ?? (existing.Status == PlayerProfileStatus.Loaded ? existing.ReadLines : backup.ReadLines);
+        new PlayerProfileData(settings, values) { ReadLines = read }.Validate();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!); CheckPath(path);
-        var bytes = Serialize(settings, values);
+        var bytes = Serialize(settings, values, read);
         if (bytes.Length > MaxFileBytes) throw new ArgumentException("Профиль превышает допустимый размер.");
         // Back up only a fully validated document; never replace a good backup with a corrupt primary.
         if (existing.Status == PlayerProfileStatus.Loaded)
-            AtomicWrite(path + ".bak", Serialize(existing.Settings, existing.Data), token);
+            AtomicWrite(path + ".bak", Serialize(existing.Settings, existing.Data, existing.ReadLines), token);
         AtomicWrite(path, bytes, token);
         return null;
     }, token);
 
-    private byte[] Serialize(PlayerSettings settings, ImmutableDictionary<string, string> data) => JsonSerializer.SerializeToUtf8Bytes(
-        new { Version = CurrentVersion, ProjectId = projectId, Settings = settings, Data = data.OrderBy(p => p.Key, StringComparer.Ordinal).ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal) }, Json);
+    private byte[] Serialize(PlayerSettings settings, ImmutableDictionary<string, string> data, ImmutableArray<string> readLines) => JsonSerializer.SerializeToUtf8Bytes(
+        new { Version = CurrentVersion, ProjectId = projectId, Settings = settings, ReadLines = readLines, Data = data.OrderBy(p => p.Key, StringComparer.Ordinal).ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal) }, Json);
 
     private static void EnsureWritable(PlayerProfileRead existing)
     {
@@ -117,16 +120,23 @@ public sealed class PlayerProfileStore : IPlayerProfileStore
                     return new(defaults, PlayerProfileStatus.ForeignProject, "Профиль относится к другой новелле; используются настройки проекта.");
             // A supported duplicate must not mask a readable future version either.
             if (json.RootElement.EnumerateObject().Any(p => p.NameEquals("Version") &&
-                p.Value.ValueKind == JsonValueKind.Number && p.Value.TryGetInt32(out var declared) && declared is not (1 or 2 or CurrentVersion)))
+                p.Value.ValueKind == JsonValueKind.Number && p.Value.TryGetInt32(out var declared) && declared is not (1 or 2 or 3 or CurrentVersion)))
                 return new(defaults, PlayerProfileStatus.UnsupportedVersion, "Версия профиля не поддерживается; используются настройки проекта.");
             var version = json.RootElement.GetProperty("Version").GetInt32();
-            if (version < CurrentVersion && count > LegacyMaxFileBytes)
+            if (version == CurrentVersion)
+            {
+                var settings = json.RootElement.GetProperty("Settings");
+                if (!json.RootElement.TryGetProperty("ReadLines", out _) || !settings.TryGetProperty("TextSpeed", out _) ||
+                    !settings.TryGetProperty("AutoDelay", out _) || !settings.TryGetProperty("AutoWaitVoice", out _))
+                    throw new ArgumentException("Нет данных чтения профиля v4.");
+            }
+            if (version < 3 && count > LegacyMaxFileBytes)
                 return new(defaults, PlayerProfileStatus.Corrupt, "Профиль прежней версии превышает допустимый размер.");
             if (version == 1)
             {
                 var legacy = JsonSerializer.Deserialize<LegacyDocument>(bytes.AsSpan(0, count), Json)!;
                 legacy.Settings.Validate();
-                return new(legacy.Settings, PlayerProfileStatus.Loaded, "Профиль v1 прочитан; v3 будет записан при следующем изменении.");
+                return new(legacy.Settings, PlayerProfileStatus.Loaded, "Профиль v1 прочитан; v4 будет записан при следующем изменении.");
             }
             if (version == 2)
             {
@@ -137,11 +147,11 @@ public sealed class PlayerProfileStore : IPlayerProfileStore
                     throw new ArgumentException("Некорректный профиль v2.");
                 var data = legacy.Achievements.ToImmutableDictionary(id => id, _ => "true", StringComparer.Ordinal);
                 new PlayerProfileData(legacy.Settings, data).Validate();
-                return new(legacy.Settings, PlayerProfileStatus.Loaded, "Профиль v2 прочитан; v3 будет записан при следующем изменении.") { Data = data };
+                return new(legacy.Settings, PlayerProfileStatus.Loaded, "Профиль v2 прочитан; v4 будет записан при следующем изменении.") { Data = data };
             }
             var document = JsonSerializer.Deserialize<Document>(bytes.AsSpan(0, count), Json)!;
-            new PlayerProfileData(document.Settings, document.Data).Validate();
-            return new(document.Settings, PlayerProfileStatus.Loaded, "") { Data = document.Data };
+            new PlayerProfileData(document.Settings, document.Data) { ReadLines = document.ReadLines }.Validate();
+            return new(document.Settings, PlayerProfileStatus.Loaded, "") { Data = document.Data, ReadLines = document.ReadLines };
         }
         catch (FileNotFoundException) { return new(defaults, PlayerProfileStatus.Missing, ""); }
         catch (DirectoryNotFoundException) { return new(defaults, PlayerProfileStatus.Missing, ""); }

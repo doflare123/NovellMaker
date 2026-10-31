@@ -6,6 +6,7 @@ internal enum RuntimeAction
 {
     Next,
     Previous,
+    Continue,
 }
 
 internal static class RuntimeInputMapper

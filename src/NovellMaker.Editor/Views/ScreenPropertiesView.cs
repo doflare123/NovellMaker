@@ -36,7 +36,7 @@ public sealed class ScreenPropertiesView : UserControl
     private readonly CheckBox clipping = new() { Name = "ScreenNodeClip", Content = "Обрезать потомков" };
     private readonly ComboBox sprite = new() { Name = "ScreenNodeSprite", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ProjectImageView spritePreview = new() { Name = "ScreenSpritePreview", Height = 80, MaximumWidth = 400, TransparentBackground = true };
-    private readonly ComboBox action = new() { Name = "ScreenButtonAction", HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = new[] { "Lua-обработчик", "Закрыть", "Открыть поверх", "Заменить слой", "Назад", "Не назначено", "Перейти к сцене", "Громкость группы", "Mute группы", "Продолжить реплику", "Быстро сохранить", "Быстро загрузить", "Переключить слой", "Новая игра", "В главное меню", "Завершить сеанс", "Продолжить игру · последний слот", "Запросить список слотов", "Сохранить в слот", "Загрузить слот", "Удалить слот" } };
+    private readonly ComboBox action = new() { Name = "ScreenButtonAction", HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = new[] { "Lua-обработчик", "Закрыть", "Открыть поверх", "Заменить слой", "Назад", "Не назначено", "Перейти к сцене", "Громкость группы", "Mute группы", "Продолжить реплику", "Быстро сохранить", "Быстро загрузить", "Переключить слой", "Новая игра", "В главное меню", "Завершить сеанс", "Продолжить игру · последний слот", "Запросить список слотов", "Сохранить в слот", "Загрузить слот", "Удалить слот", "История реплик", "Автоматическое чтение", "Пропуск прочитанного", "Настройки чтения" } };
     private readonly TextBox slotId = new() { Name = "ScreenSlotId", IsUndoEnabled = false, PlaceholderText = "Например: chapter-1" };
     private readonly TextBox slotTitle = new() { Name = "ScreenSlotTitle", IsUndoEnabled = false, MaxLength = 128 };
     private readonly StackPanel slotFields = new() { Spacing = 6 };
@@ -45,8 +45,8 @@ public sealed class ScreenPropertiesView : UserControl
     private readonly TextBox screenName = new() { Name = "ScreenName", IsUndoEnabled = false };
     private readonly ComboBox handler = new() { Name = "ScreenHandler", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly TextBox shortcut = new() { Name = "ProjectKey", PlaceholderText = "Например: P или F9" };
-    private readonly ComboBox shortcutAction = new() { Name = "ProjectKeyAction", ItemsSource = new[] { "Переключить слой", "Открыть слой", "Перейти к сцене", "Назад", "Продолжить реплику", "Быстро сохранить", "Быстро загрузить", "Новая игра", "В главное меню", "Завершить сеанс", "Продолжить игру · последний слот", "Запросить список слотов" }, SelectedIndex = 0 };
-    private static readonly ScreenButtonAction[] shortcutActions = [ScreenButtonAction.Toggle, ScreenButtonAction.Open, ScreenButtonAction.Scene, ScreenButtonAction.Back, ScreenButtonAction.Continue, ScreenButtonAction.Save, ScreenButtonAction.Load, ScreenButtonAction.NewGame, ScreenButtonAction.MainMenu, ScreenButtonAction.EndSession, ScreenButtonAction.ContinueGame, ScreenButtonAction.ListSlots];
+    private readonly ComboBox shortcutAction = new() { Name = "ProjectKeyAction", ItemsSource = new[] { "Переключить слой", "Открыть слой", "Перейти к сцене", "Назад", "Продолжить реплику", "Быстро сохранить", "Быстро загрузить", "Новая игра", "В главное меню", "Завершить сеанс", "Продолжить игру · последний слот", "Запросить список слотов", "История реплик", "Автоматическое чтение", "Пропуск прочитанного", "Настройки чтения" }, SelectedIndex = 0 };
+    private static readonly ScreenButtonAction[] shortcutActions = [ScreenButtonAction.Toggle, ScreenButtonAction.Open, ScreenButtonAction.Scene, ScreenButtonAction.Back, ScreenButtonAction.Continue, ScreenButtonAction.Save, ScreenButtonAction.Load, ScreenButtonAction.NewGame, ScreenButtonAction.MainMenu, ScreenButtonAction.EndSession, ScreenButtonAction.ContinueGame, ScreenButtonAction.ListSlots, ScreenButtonAction.History, ScreenButtonAction.AutoRead, ScreenButtonAction.SkipRead, ScreenButtonAction.ReadingSettings];
     private readonly TextBlock shortcuts = new() { Name = "ProjectKeyBindings", TextWrapping = TextWrapping.Wrap };
     private readonly ComboBox audioGroup = new() { Name = "ScreenAudioGroup", ItemsSource = Enum.GetValues<NovellMaker.Core.Audio.AudioGroup>(), SelectedIndex = 0 };
     private readonly NumericUpDown audioAmount = Number("ScreenAudioAmount", -100, 100);
@@ -109,6 +109,7 @@ public sealed class ScreenPropertiesView : UserControl
         Button(settings, "AddGameMenusExample", "Добавить пример главного меню и слотов", () => session?.AddGameMenusExample());
         Button(settings, "AddReleaseCheckExample", "Добавить пример проверки выпуска (F5)", () => session?.AddReleaseCheckExample());
         Button(settings, "AddPlayerSettingsExample", "Добавить пример настроек игрока (F9)", () => session?.AddPlayerSettingsExample());
+        Button(settings, "AddReadingControls", "Добавить кнопки чтения к сцене", () => session?.AddReadingControls());
         Button(settings, "AddTriggersExample", "Добавить пример триггеров и данных (F8)", () => session?.AddTriggersExample());
         Button(settings, "AddComponentStateExample", "Добавить пример состояния компонентов (F7)", () => session?.AddComponentStateExample());
         Button(settings, "AddLuaModulesExample", "Добавить пример модулей Lua (F4)", () => session?.AddLuaModulesExample());

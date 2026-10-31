@@ -33,6 +33,21 @@ public sealed class AudioService(NovelProject project, string root, string langu
     private readonly List<string> diagnostics = [];
     private bool paused;
     private bool disposed;
+    private readonly AudioOwner historyOwner = new(Guid.NewGuid(), 0, Guid.NewGuid(), Guid.NewGuid());
+    public bool IsVoicePlaying => sources.Any(s => s.Owner is null && s.Group == AudioGroup.Voice);
+    public bool CanReplayVoice(Guid line, string voiceLanguage) => project.Audio.Voices.TryGetValue(line, out var voices) && voices.ContainsKey(voiceLanguage);
+    /// <summary>Independent history channel: no line effects, scenario commands or scene music restart.</summary>
+    public void ReplayVoice(Guid line, string voiceLanguage)
+    {
+        StopReplayVoice();
+        if (project.Audio.Voices.TryGetValue(line, out var voices) && voices.TryGetValue(voiceLanguage, out var asset))
+        {
+            Play(asset, AudioGroup.Voice, false, historyOwner, Guid.NewGuid());
+            PauseOwner(historyOwner, false);
+        }
+    }
+    public void PauseReplayVoice(bool value) => PauseOwner(historyOwner, value);
+    public void StopReplayVoice() => StopOwner(historyOwner);
     public event Action<AudioOwner, ScriptAudioResult>? PlaybackEnded;
     public IReadOnlyList<string> Diagnostics => diagnostics;
     public int ActiveSources => sources.Count;

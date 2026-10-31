@@ -5,7 +5,7 @@ using NovellMaker.Core.Projects;
 
 namespace NovellMaker.Core.Screens;
 
-public enum ScreenButtonAction { Lua, Close, Open, Replace, Back, None, Scene, Volume, Mute, Continue, Save, Load, Toggle, NewGame, MainMenu, EndSession, ContinueGame, ListSlots, SaveSlot, LoadSlot, DeleteSlot }
+public enum ScreenButtonAction { Lua, Close, Open, Replace, Back, None, Scene, Volume, Mute, Continue, Save, Load, Toggle, NewGame, MainMenu, EndSession, ContinueGame, ListSlots, SaveSlot, LoadSlot, DeleteSlot, History, AutoRead, SkipRead, ReadingSettings }
 
 public sealed record ScreenButtonBinding(Guid NodeId, ScreenButtonAction Action, Guid? TargetScreenId)
 {

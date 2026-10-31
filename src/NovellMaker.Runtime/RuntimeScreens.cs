@@ -39,6 +39,7 @@ internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
         };
     }
     public ScreenStack Stack { get; } = new(Guid.NewGuid());
+    public Func<ScreenActivation, bool>? HostActivation { get; set; }
     public ScreenLuaSession? Scripts { get; }
     public Guid? NavigationRequested { get; private set; }
     public bool HasOverlays => Stack.Instances.Any(i => !ReferenceEquals(i, sceneInstance));
@@ -131,6 +132,7 @@ internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
         if (input.Kind == ScreenInputKind.Activate && !HasOverlays && Stack.Focus is null) return new(false);
         var result = Stack.Route(input);
         if (result.Activation is not { } activation) return result;
+        if (HostActivation?.Invoke(activation) == true) return result;
         var instance = Stack.Instances.Single(i => i.Id == activation.InstanceId);
         var asset = project?.Scenes.FirstOrDefault(s => s.Id == instance.Definition.Id)?.AsScreen();
         if (asset is null) return result;

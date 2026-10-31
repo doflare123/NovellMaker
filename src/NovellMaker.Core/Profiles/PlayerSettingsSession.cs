@@ -11,6 +11,18 @@ public sealed class PlayerSettingsSession(IPlayerProfileStore store, PlayerProfi
     private long revision;
     private long writing;
     private long persistedRevision = initial.Status is PlayerProfileStatus.Loaded or PlayerProfileStatus.Recovered or PlayerProfileStatus.Missing ? 0 : -1;
+    public ImmutableArray<string> ReadLines { get; private set; } = initial.ReadLines;
+    private readonly HashSet<string> readLines = initial.ReadLines.ToHashSet(StringComparer.Ordinal);
+    public bool HasRead(string key) => readLines.Contains(key);
+    public void MarkRead(string key)
+    {
+        if (readLines.Contains(key)) return;
+        if (key.Length != 64 || !key.All(char.IsAsciiHexDigit)) throw new ArgumentException("Некорректная отметка чтения.");
+        if (ReadLines.Length == PlayerProfileData.MaximumReadLines)
+        { readLines.Remove(ReadLines[0]); ReadLines = ReadLines.RemoveAt(0); }
+        readLines.Add(key); ReadLines = ReadLines.Add(key); Changed();
+    }
+
     public PlayerSettings Current { get; private set; } = initial.Settings;
     public ImmutableDictionary<string, string> Data { get; private set; } = initial.Data;
     public string Diagnostic { get; private set; } = initial.Diagnostic;
@@ -63,7 +75,7 @@ public sealed class PlayerSettingsSession(IPlayerProfileStore store, PlayerProfi
     {
         writing = revision;
         // Invoke off-thread even for a custom store which may throw before returning a Task.
-        var snapshot = new PlayerProfileData(Current, Data);
+        var snapshot = new PlayerProfileData(Current, Data) { ReadLines = ReadLines };
         pending = Task.Run(() => store.SaveAsync(snapshot));
     }
 

@@ -10,7 +10,7 @@ public sealed record GameSaveSnapshot(GameState State, NovelProject Project);
 
 public static class GameSave
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
     private static readonly SemaphoreSlim PreparationGate = new(2, 2);
     private static int admittedPreparations;
     private sealed record Document([property: JsonRequired] int Version, [property: JsonRequired] GameState State);
@@ -74,7 +74,13 @@ public static class GameSave
         try
         {
             var document = JsonSerializer.Deserialize<Document>(json, Options) ?? throw new ArgumentException("Пустое сохранение.");
-            if (document.Version is not (1 or CurrentVersion)) throw new ArgumentException($"Версия сохранения {document.Version} не поддерживается.");
+            if (document.Version is not (1 or 2 or CurrentVersion)) throw new ArgumentException($"Версия сохранения {document.Version} не поддерживается.");
+            if (document.Version == CurrentVersion)
+            {
+                using var current = JsonDocument.Parse(json);
+                if (!current.RootElement.GetProperty("State").TryGetProperty("History", out _))
+                    throw new ArgumentException("Нет истории сохранения v3.");
+            }
             if (document.Version == 1)
             {
                 using var legacy = JsonDocument.Parse(json);
@@ -110,6 +116,11 @@ public static class GameSave
             throw new ArgumentException("Сохранение относится к другому проекту или другой редакции сценария.");
         var scene = project.Scenes.FirstOrDefault(s => s.Id == state.SceneId) ?? throw new ArgumentException("Сцена сохранения отсутствует.");
         var program = ScenarioProgram.Compile(scene);
+        if (state.History.IsDefault || state.History.Length > DialogueHistory.MaximumEntries ||
+            state.History.Any(h => h is null || h.VisitId == Guid.Empty || string.IsNullOrWhiteSpace(h.Language) || h.Language.Length > 64 ||
+                !project.Scenes.Any(s => s.Id == h.SceneId && s.Lines.Any(l => l.Id == h.LineId))) ||
+            state.History.Select(h => h.VisitId).Distinct().Count() != state.History.Length)
+            throw new ArgumentException("Некорректная история реплик.");
         bool KnownObject(Guid id) => project.Characters.Any(c => c.Id == id);
         if (state.NextActionId is { } next && !program.Any(a => a.Id == next) ||
             state.LineId is { } line && !scene.Lines.Any(l => l.Id == line) ||

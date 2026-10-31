@@ -6,6 +6,7 @@ using NovellMaker.Core.Assets;
 using NovellMaker.Core.Characters;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Projects;
+using NovellMaker.Core.Profiles;
 using NovellMaker.Core.Scenes;
 using SkiaSharp;
 
@@ -441,6 +442,9 @@ public sealed class NativeRuntimeSmokeTests
         } };
         var projectPath = Path.Combine(fixtureDirectory, "runtime-smoke.novell");
         await new JsonProjectStore().SaveAsync(projectPath, project);
+        // This fixture checks complete dialogue rasterization/navigation; progressive text has its own native tests.
+        await new PlayerProfileStore(project.Id, RuntimeStorage.ProfilePath(project.Id, false))
+            .SaveAsync(PlayerSettings.Defaults(project.Audio) with { TextSpeed = 0 });
         return new RuntimeFixture(projectPath, scene.Id, third.Id, fourth.Id);
     }
 

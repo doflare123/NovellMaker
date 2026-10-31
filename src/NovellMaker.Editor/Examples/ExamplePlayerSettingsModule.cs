@@ -33,11 +33,12 @@ public static class ExamplePlayerSettingsModule
             Node(name + "_mute", ScreenNodeKind.Button, new(850, y, 280, 52), "Отключить");
         }
         Node("fullscreen", ScreenNodeKind.Button, new(150, 495, 640, 56), "Полноэкранный режим");
+        var reading = Node("reading", ScreenNodeKind.Button, new(810, 495, 320, 56), "Настройки чтения");
         Node("refresh", ScreenNodeKind.Button, new(150, 585, 340, 56), "Обновить");
         var close = Node("close", ScreenNodeKind.Button, new(790, 585, 340, 56), "Закрыть");
         var script = new LuaScriptAsset(Guid.NewGuid(), "example-player-settings.lua", Source);
         scene = scene with { Canvas = scene.Canvas with { HandlerScriptId = script.Id, Nodes = nodes.ToImmutable(),
-            References = refs.ToImmutable(), Buttons = [new(close, ScreenButtonAction.Close, null)] } };
+            References = refs.ToImmutable(), Buttons = [new(close, ScreenButtonAction.Close, null), new(reading, ScreenButtonAction.ReadingSettings, null)] } };
         var result = project with { Scenes = project.Scenes.Add(scene), Scripts = project.Scripts.Add(script),
             InputBindings = project.InputBindings.Where(b => b.Key != "F9").Append(new("F9", ScreenButtonAction.Toggle, scene.Id)).ToImmutableArray() };
         ScreenAsset.ValidateProject(result); return result;
