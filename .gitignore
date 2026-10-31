@@ -13,3 +13,4 @@ artifacts/
 !/examples/author-interface/
 /docs/*
 !/docs/lua-reference/
+AGENTS.md

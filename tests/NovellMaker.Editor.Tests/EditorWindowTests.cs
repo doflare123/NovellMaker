@@ -1523,6 +1523,8 @@ public sealed class EditorWindowTests
         foreach (var side in new[] { Dock.Left, Dock.Top, Dock.Bottom, Dock.Right, Dock.Left })
         {
             layout.Move("scene", "documents", side); Dispatcher.UIThread.RunJobs();
+            // Hit testing uses the rendered scene graph; drain the frame after reparenting.
+            window.UpdateLayout(); AvaloniaHeadlessPlatform.ForceRenderTimerTick(2); Dispatcher.UIThread.RunJobs();
             var a = new Rect(scene.TranslatePoint(default, window)!.Value, scene.Bounds.Size);
             var b = new Rect(docs.TranslatePoint(default, window)!.Value, docs.Bounds.Size);
             Assert.IsFalse(a.Intersects(b), $"Panels must not overlap after docking {side}.");

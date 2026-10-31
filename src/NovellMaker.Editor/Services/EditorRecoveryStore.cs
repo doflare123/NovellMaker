@@ -24,6 +24,7 @@ public sealed class EditorRecoveryStore(string? directory)
     public static string ProfileDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovellMaker", "Recovery");
     internal bool Enabled => directory is not null;
     private static readonly JsonSerializerOptions Options = CreateOptions();
+    internal Action<string, string> CommitSnapshot { get; set; } = (source, target) => File.Move(source, target, overwrite: true);
     private sealed record Envelope(int Version, string Payload, string Sha256);
 
     private static JsonSerializerOptions CreateOptions()
@@ -71,11 +72,12 @@ public sealed class EditorRecoveryStore(string? directory)
 
     internal Lease? Claim(string path)
     {
-        try { return new(path, new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)); }
+        try { return new(path, new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None),
+            (source, target) => CommitSnapshot(source, target)); }
         catch (IOException) { return null; } // Another live editor owns this draft.
     }
 
-    internal sealed class Lease(string path, FileStream ownership) : IDisposable
+    internal sealed class Lease(string path, FileStream ownership, Action<string, string> commit) : IDisposable
     {
         internal async Task<EditorRecoverySnapshot> ReadAsync()
         {
@@ -102,7 +104,7 @@ public sealed class EditorRecoveryStore(string? directory)
                     await JsonSerializer.SerializeAsync(stream, new Envelope(1, payload, Hash(payload)), Options);
                     await stream.FlushAsync();
                 }
-                File.Move(temporary, path, overwrite: true);
+                commit(temporary, path);
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
         });

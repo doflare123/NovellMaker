@@ -33,6 +33,7 @@ public sealed class EditorRecoveryTests
                 new System.Xml.Linq.XAttribute("value", fixture.Root))))).Save(settingsPath);
         start.ArgumentList.Add("/Settings:" + settingsPath);
         using var process = Process.Start(start)!;
+        Process? writer = null;
         var output = process.StandardOutput.ReadToEndAsync();
         var errors = process.StandardError.ReadToEndAsync();
         try
@@ -40,12 +41,16 @@ public sealed class EditorRecoveryTests
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
             while (!File.Exists(ready) && !process.HasExited) await Task.Delay(100, deadline.Token);
             Assert.IsTrue(File.Exists(ready), process.HasExited ? await output + await errors : "Автоматический снимок не появился.");
+            writer = Process.GetProcessById(int.Parse(await File.ReadAllTextAsync(ready), System.Globalization.CultureInfo.InvariantCulture));
             var main = await File.ReadAllBytesAsync(fixture.Dialogs.SavePath!);
             process.Kill(entireProcessTree: true); // No Closing event, save prompt or Dispose.
             await process.WaitForExitAsync(deadline.Token);
+            // Kill/WaitForExit on vstest only waits for that process, not its testhost descendants.
+            await writer.WaitForExitAsync(deadline.Token);
             using var recovered = fixture.Session();
             await recovered.RecoverOnStartupAsync();
-            Assert.AreEqual("Правки перед принудительным завершением", recovered.ProjectName);
+            Assert.AreEqual("Правки перед принудительным завершением", recovered.ProjectName,
+                string.Join(Environment.NewLine, recovered.Diagnostics));
             Assert.AreEqual("Реплика из аварийного процесса", recovered.ActiveScene!.LineText);
             Assert.IsTrue(recovered.IsDirty);
             CollectionAssert.AreEqual(main, await File.ReadAllBytesAsync(fixture.Dialogs.SavePath!));
@@ -53,7 +58,16 @@ public sealed class EditorRecoveryTests
             Assert.IsFalse(recovered.IsDirty);
             Assert.IsEmpty(fixture.Recovery.Candidates());
         }
-        finally { if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); } }
+        finally
+        {
+            if (writer is not null)
+            {
+                if (!writer.HasExited) writer.Kill(entireProcessTree: true);
+                await writer.WaitForExitAsync();
+                writer.Dispose();
+            }
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+        }
     }
 
     // Invoked in an isolated testhost so the parent can kill an actual live Avalonia editor.
@@ -82,7 +96,9 @@ public sealed class EditorRecoveryTests
             while (!session.RecoveryStatus.StartsWith("Снимок восстановления", StringComparison.Ordinal)) await Task.Delay(50);
             Assert.AreEqual("Правки перед принудительным завершением", expected!.Name);
             Assert.AreEqual("Реплика из аварийного процесса", expected.Scenes[0].Lines[0].Texts["ru"]);
-            await File.WriteAllTextAsync(Path.Combine(root, "ready"), session.RecoveryStatus);
+            var ready = Path.Combine(root, "ready");
+            await File.WriteAllTextAsync(ready + ".tmp", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            File.Move(ready + ".tmp", ready);
             await Task.Delay(Timeout.InfiniteTimeSpan);
             return true;
         }, CancellationToken.None);
@@ -246,12 +262,13 @@ public sealed class EditorRecoveryTests
             await crashed.NewProjectAsync(); crashed.ProjectName = "Последний целый снимок";
             await crashed.AutosaveAsync();
             var path = fixture.Recovery.Candidates().Single();
-            using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
-            {
-                crashed.ProjectName = "Новый черновик";
-                await crashed.AutosaveAsync();
-                StringAssert.Contains(crashed.RecoveryStatus, "Ошибка автосохранения");
-            }
+            var original = await File.ReadAllBytesAsync(path);
+            // Unix permits replacing an open file. Inject a commit I/O failure on every OS instead.
+            fixture.Recovery.CommitSnapshot = (_, _) => throw new IOException("Диск недоступен");
+            crashed.ProjectName = "Новый черновик";
+            await crashed.AutosaveAsync();
+            StringAssert.Contains(crashed.RecoveryStatus, "Ошибка автосохранения");
+            CollectionAssert.AreEqual(original, await File.ReadAllBytesAsync(path));
             Assert.IsEmpty(Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp"));
         }
         using var session = fixture.Session(); await session.RecoverOnStartupAsync();
