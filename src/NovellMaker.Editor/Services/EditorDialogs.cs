@@ -8,6 +8,49 @@ namespace NovellMaker.Editor.Services;
 
 public sealed class EditorDialogs(Window owner) : IEditorDialogs
 {
+    public async Task<RecoveryDecision> ConfirmRecoveryAsync(RecoveryOffer offer)
+    {
+        var dialog = CreateDialog("Восстановление работы редактора");
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        foreach (var (label, decision, name) in new[] {
+            ("Позже", RecoveryDecision.Later, "RecoveryLater"),
+            ("Удалить снимок", RecoveryDecision.Discard, "RecoveryDiscard"),
+            ("Восстановить", RecoveryDecision.Restore, "RecoveryRestore") })
+        {
+            var button = new Button { Content = label, Name = name };
+            button.Click += (_, _) => dialog.Close((RecoveryDecision?)decision);
+            buttons.Children.Add(button);
+        }
+        dialog.Content = DialogContent($"Найдены несохранённые изменения проекта «{offer.Name}».\n" +
+            $"Снимок: {offer.CreatedAt.ToLocalTime():g}\n{offer.ProjectPath ?? "Проект ещё не сохранён"}\n\n" +
+            (offer.FileChanged ? "Основной файл изменён или недоступен. Восстановленная версия будет открыта отдельно в памяти; для записи используйте «Сохранить как…».\n\n" : "") +
+            "Восстановление не изменяет основной файл проекта. Снимок хранит данные редактора, но не копии изображений и звука.", buttons);
+        dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(); };
+        return await dialog.ShowDialog<RecoveryDecision?>(owner) ?? RecoveryDecision.Later;
+    }
+
+    public async Task<ExternalProjectDecision> ConfirmExternalProjectChangeAsync(string path, bool hasUnsavedChanges, bool canReload)
+    {
+        var dialog = CreateDialog("Файл проекта изменён вне редактора");
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        foreach (var (label, decision) in new[] {
+            ("Оставить мою версию", ExternalProjectDecision.Keep),
+            ("Сохранить как…", ExternalProjectDecision.SaveAs),
+            ("Загрузить с диска", ExternalProjectDecision.Reload) })
+        {
+            var button = new Button { Content = label, IsEnabled = decision != ExternalProjectDecision.Reload || canReload };
+            button.Click += (_, _) => dialog.Close((ExternalProjectDecision?)decision);
+            buttons.Children.Add(button);
+        }
+        dialog.Width = 680;
+        dialog.Content = DialogContent(path + "\n\n" +
+            (canReload ? "На диске находится другая версия проекта." : "Файл удалён, недоступен или содержит некорректные данные.") +
+            (hasUnsavedChanges ? " Загрузка с диска удалит текущие несохранённые изменения." : "") +
+            " Ваша версия остаётся в редакторе до выбора действия. Перезапись внешней версии обычным сохранением заблокирована.", buttons);
+        dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(); };
+        return await dialog.ShowDialog<ExternalProjectDecision?>(owner) ?? ExternalProjectDecision.Keep;
+    }
+
     public async Task<Guid?> PickScriptAsync(IReadOnlyList<NovellMaker.Core.Execution.LuaScriptAsset> scripts)
     {
         var dialog = CreateDialog("Прикрепить Lua-скрипт");

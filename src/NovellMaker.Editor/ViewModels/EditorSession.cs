@@ -26,7 +26,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
     private string status = "Создайте или откройте проект.";
     private string gitSummary = "Git: —";
 
-    public EditorSession(IProjectStore store, IEditorDialogs dialogs, IGitStatusService git, IImageAssetService? imageAssets = null, IPreviewService? previewService = null, IExternalCodeEditor? codeEditor = null, RecentProjectsStore? recentProjects = null)
+    public EditorSession(IProjectStore store, IEditorDialogs dialogs, IGitStatusService git, IImageAssetService? imageAssets = null, IPreviewService? previewService = null, IExternalCodeEditor? codeEditor = null, RecentProjectsStore? recentProjects = null, EditorRecoveryStore? recovery = null)
     {
         this.store = store;
         this.dialogs = dialogs;
@@ -34,6 +34,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         this.imageAssets = imageAssets ?? new ImageAssetService();
         this.previewService = previewService ?? new PreviewService();
         this.codeEditor = codeEditor ?? new ExternalCodeEditor();
+        recoveryStore = recovery ?? new EditorRecoveryStore(dialogs is EditorDialogs ? EditorRecoveryStore.ProfileDirectory : null);
         recentProjectsStore = recentProjects ?? new RecentProjectsStore(dialogs is EditorDialogs ? RecentProjectsStore.ProfilePath : null);
         foreach (var recent in recentProjectsStore.Read()) RecentProjects.Add(recent);
         NewCommand = new(NewProjectAsync, () => !IsBusy);
@@ -112,8 +113,9 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         await store.LoadAsync(path);
         if (!await MayLeaveProjectAsync()) return;
         // Saving from the confirmation may have changed this very file.
-        var loaded = await store.LoadAsync(path);
-        SetProject(loaded, Path.GetFullPath(path), saved: true);
+        var loaded = await LoadTrackedProjectAsync(path);
+        SetProject(loaded.Project, Path.GetFullPath(path), saved: true);
+        fileRevision = loaded.Revision;
         InitializeScriptFiles();
         await AwaitScriptValidationAsync();
         RememberProject();
@@ -161,17 +163,20 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         RefreshAssetFiles();
         await AwaitScriptValidationAsync();
         await UpdateGitAsync();
+        await CheckExternalProjectCoreAsync();
     });
 
     private async Task<bool> MayLeaveProjectAsync()
     {
-        if (!IsDirty) return true;
-        return (await dialogs.ConfirmUnsavedChangesAsync(ProjectName)) switch
+        if (!IsDirty) { await DeleteRecoveryAsync(); return true; }
+        var allowed = (await dialogs.ConfirmUnsavedChangesAsync(ProjectName)) switch
         {
             UnsavedChangesDecision.Discard => true,
             UnsavedChangesDecision.Save => await SaveCoreAsync(false) && !IsDirty,
             _ => false
         };
+        if (allowed) await DeleteRecoveryAsync();
+        return allowed;
     }
 
     private async Task<bool> SaveCoreAsync(bool saveAs)
@@ -186,12 +191,16 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         path ??= await dialogs.PickSaveProjectAsync("project.novell");
         if (path is null) return false;
         path = Path.GetFullPath(path);
+        if (requiresSaveAs && string.Equals(path, projectPath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new IOException("Для восстановленного проекта без исходной сохранённой версии выберите другой файл через «Сохранить как…».");
         RefreshExternalScriptsCore();
         await AwaitScriptValidationAsync();
         var snapshot = project!;
         if (savedProject is not null && projectPath is not null && string.Equals(path, projectPath,
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
         {
+            if (fileRevision is not null && !await RevisionMatchesAsync(path, fileRevision))
+                throw new IOException("Файл проекта изменён вне редактора. Откройте его заново или используйте «Сохранить как…» для сохранения своей версии отдельно.");
             // Catch edits by another editor instance before replacing an existing project.
             var onDisk = await store.LoadAsync(path);
             if (!onDisk.ContentEquals(savedProject))
@@ -205,9 +214,17 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
             await Services.Assets.AudioAssetService.CopyAsync(audioRoot, Path.GetDirectoryName(path)!, snapshot.Audio.Assets);
         var targetRoot = Path.GetDirectoryName(path)!;
         var copyingScripts = ProjectDirectory is null || !string.Equals(ProjectDirectory, targetRoot, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        if (preserveRecoveredScripts && !copyingScripts)
+            foreach (var script in snapshot.Scripts)
+                if (!File.Exists(ScriptFiles.Resolve(targetRoot, script.Id)) || ScriptFiles.Read(ScriptFiles.Resolve(targetRoot, script.Id)) != script.Source)
+                    throw new IOException("Восстановленный текст Lua отличается от рабочих файлов. Используйте «Сохранить как…» в другой каталог, чтобы сохранить восстановленную версию и ресурсы.");
         if (copyingScripts)
             foreach (var script in snapshot.Scripts) ScriptFiles.Ensure(targetRoot, script, requireSame: true);
-        await store.SaveAsync(path, snapshot);
+        var samePath = string.Equals(path, projectPath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        string? writtenRevision = null;
+        if (store is JsonProjectStore jsonStore)
+            writtenRevision = await jsonStore.SaveIfUnchangedAsync(path, snapshot, samePath ? fileRevision : null);
+        else await store.SaveAsync(path, snapshot);
         if ((deletedFiles.Length > 0 || undo.Any(s => s.DeletedFiles.Length > 0) || redo.Any(s => s.DeletedFiles.Length > 0)) && projectPath is not null && !string.Equals(Path.GetDirectoryName(path), ProjectDirectory,
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
         {
@@ -216,9 +233,14 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         }
         savedProject = snapshot;
         projectPath = path;
+        fileRevision = writtenRevision;
+        observedExternalRevision = null;
+        requiresSaveAs = false;
+        preserveRecoveredScripts = false;
         StartScriptWatcher();
         EndEditGroup();
         NotifyProjectChanged();
+        await AutosaveAsync();
         Log("Проект сохранён.");
         RememberProject();
         await UpdateGitAsync();
@@ -231,6 +253,10 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         draftName = value?.Name ?? "";
         savedProject = saved ? value : null;
         projectPath = path;
+        fileRevision = null;
+        observedExternalRevision = null;
+        requiresSaveAs = false;
+        preserveRecoveredScripts = false;
         ResetAuthoring();
         ResetAssets();
         ResetCharacters();

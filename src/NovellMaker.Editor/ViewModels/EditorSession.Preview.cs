@@ -19,8 +19,12 @@ public sealed partial class EditorSession
         var directory = Path.Combine(Path.GetTempPath(), "NovellMaker", "Examples", Guid.NewGuid().ToString("N"));
         var example = Services.BuiltInExample.Create(directory);
         var path = Path.Combine(directory, "example.novell");
-        await store.SaveAsync(path, example);
+        string? exampleRevision = null;
+        if (store is NovellMaker.Core.Projects.JsonProjectStore jsonStore)
+            exampleRevision = await jsonStore.SaveIfUnchangedAsync(path, example, null);
+        else await store.SaveAsync(path, example);
         SetProject(example, path, saved: true);
+        fileRevision = exampleRevision;
         InitializeScriptFiles();
         await AwaitScriptValidationAsync();
         OpenScene(example.Scenes[0].Id);
@@ -45,5 +49,5 @@ public sealed partial class EditorSession
         Log("Запущен игровой предпросмотр снимка сцены. Повторный запуск применит текущие изменения.");
     });
 
-    public void Dispose() { sessionDisposed = true; StopScriptWatcher(); previewService.Dispose(); }
+    public void Dispose() { sessionDisposed = true; DisposeRecovery(); StopScriptWatcher(); previewService.Dispose(); }
 }

@@ -62,6 +62,11 @@ public sealed partial class MainWindow : Window
                 explorer.SelectedItem = entry;
         }, RoutingStrategies.Tunnel);
         Closing += OnClosing;
+        Opened += async (_, _) =>
+        {
+            await Session.RecoverOnStartupAsync();
+            Session.StartRecoveryMaintenance();
+        };
         Closed += (_, _) =>
         {
             Session.PropertyChanged -= ShowInspectedProperties;
@@ -130,7 +135,7 @@ public sealed partial class MainWindow : Window
     private async void OnClosing(object? sender, WindowClosingEventArgs args)
     {
         if (allowClose) return;
-        if (!Session.IsBusy && !Session.IsDirty) return;
+        if (!Session.IsBusy && !Session.HasProject) return;
         args.Cancel = true;
         if (closePending) return;
         closePending = true;

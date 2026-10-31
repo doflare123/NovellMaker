@@ -11,6 +11,54 @@ namespace NovellMaker.Core.Tests.Projects;
 public sealed class JsonProjectStoreTests
 {
     [TestMethod]
+    public async Task ConcurrentGuardedSavesCannotBothReplaceTheSameRevision()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var path = Path.Combine(directory.Path, "concurrent.novell");
+        var store = new JsonProjectStore(); var project = NovelProject.Create("Базовая версия");
+        var revision = await store.SaveIfUnchangedAsync(path, project, null);
+        var results = await Task.WhenAll(Enumerable.Range(1, 4).Select(async number =>
+        {
+            try { await store.SaveIfUnchangedAsync(path, project with { Name = "Версия " + number }, revision); return true; }
+            catch (IOException) { return false; }
+        }));
+        Assert.AreEqual(1, results.Count(success => success));
+        StringAssert.StartsWith((await store.LoadAsync(path)).Name, "Версия ");
+        Assert.IsEmpty(Directory.GetFiles(directory.Path, "*.tmp"));
+    }
+
+    [TestMethod]
+    public async Task GuardedSaveReturnsWrittenRevisionAndRejectsExternalByteChanges()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var path = Path.Combine(directory.Path, "guarded.novell");
+        var store = new JsonProjectStore(); var project = NovelProject.Create("Исходная версия");
+        var revision = await store.SaveIfUnchangedAsync(path, project, null);
+        Assert.AreEqual(revision, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(path))));
+        var next = project with { Name = "Следующая версия" };
+        revision = await store.SaveIfUnchangedAsync(path, next, revision);
+        Assert.IsTrue(next.ContentEquals(await store.LoadAsync(path)));
+        await File.AppendAllTextAsync(path, "\n"); // Same project data, different external revision.
+        var externalBytes = await File.ReadAllBytesAsync(path);
+        await Assert.ThrowsExactlyAsync<IOException>(() => store.SaveIfUnchangedAsync(path, project, revision));
+        CollectionAssert.AreEqual(externalBytes, await File.ReadAllBytesAsync(path));
+        Assert.IsEmpty(Directory.GetFiles(directory.Path, "*.tmp"));
+    }
+
+    [TestMethod]
+    public async Task GuardedSaveDoesNotRecreateExternallyDeletedFile()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var path = Path.Combine(directory.Path, "deleted.novell");
+        var store = new JsonProjectStore(); var project = NovelProject.Create("Проект");
+        var revision = await store.SaveIfUnchangedAsync(path, project, null);
+        File.Delete(path);
+        await Assert.ThrowsExactlyAsync<FileNotFoundException>(() => store.SaveIfUnchangedAsync(path, project, revision));
+        Assert.IsFalse(File.Exists(path));
+        Assert.IsEmpty(Directory.GetFiles(directory.Path, "*.tmp"));
+    }
+
+    [TestMethod]
     public async Task Version6_RoundTripsExplorerModeAndStrictlyMigratesVersion5InMemory()
     {
         using var directory = TemporaryDirectory.Create();

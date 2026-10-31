@@ -119,7 +119,7 @@ public sealed partial class EditorSession
 
     private void RefreshExternalScriptsCore()
     {
-        if (sessionDisposed || project is null || ProjectDirectory is not { } root) return;
+        if (sessionDisposed || preserveRecoveredScripts || project is null || ProjectDirectory is not { } root) return;
         CancelSyntaxValidation();
         var cancellation = syntaxCancellation = new();
         var generation = syntaxGeneration;
@@ -201,7 +201,7 @@ public sealed partial class EditorSession
         if (project is null) return;
         foreach (var script in project.Scripts)
         {
-            if (ProjectDirectory is not null)
+            if (ProjectDirectory is not null && !preserveRecoveredScripts)
             {
                 if (scriptDiagnostics.GetValueOrDefault(script.Id) != "Синтаксис корректен")
                     throw new InvalidOperationException(script.Name + ": " + scriptDiagnostics.GetValueOrDefault(script.Id, "Скрипт ещё не проверен."));
