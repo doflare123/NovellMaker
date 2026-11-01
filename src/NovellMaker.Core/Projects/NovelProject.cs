@@ -1,4 +1,4 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using NovellMaker.Core.Assets;
 using NovellMaker.Core.Characters;
 using NovellMaker.Core.Scenes;
@@ -10,7 +10,7 @@ namespace NovellMaker.Core.Projects;
 /// </summary>
 public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
 {
-    public const int CurrentFormatVersion = 21;
+    public const int CurrentFormatVersion = 22;
 
     public int FormatVersion { get; init; } = ValidateFormatVersion(FormatVersion);
 
@@ -261,6 +261,9 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
 
             foreach (var state in character.States)
             {
+                if (state.Visual is { } visual)
+                    foreach (var visualId in visual.Parts.Select(p => p.Id).Concat(visual.Clips.Select(c => c.Id)))
+                        if (!ids.Add(visualId)) throw new ArgumentException($"Повторяющийся ID персонажа: {visualId}.");
                 if (!ids.Add(state.Id))
                 {
                     throw new ArgumentException($"Идентификатор {state.Id} используется более одного раза.", nameof(project));

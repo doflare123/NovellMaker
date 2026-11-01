@@ -53,6 +53,7 @@ internal static partial class ProjectJsonCodec
             18 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken, Version18SerializerOptions).ConfigureAwait(false), allowSlots: true),
             19 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false), allowSlots: true),
             20 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
+            22 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             21 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
             8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
@@ -73,6 +74,10 @@ internal static partial class ProjectJsonCodec
         if (versionProbe.FormatVersion < 21 && (project.InputBindings.Any(b => (int)b.Action > 20) ||
             project.Scenes.Any(s => s.Canvas.Buttons.Any(b => (int)b.Action > 20))))
             throw new ProjectFormatException("Команды чтения требуют формат проекта v21.");
+        if (versionProbe.FormatVersion < 22 && project.Characters.Any(c => c.States.Any(s => s.Visual is not null)))
+            throw new ProjectFormatException("Слоистые персонажи требуют формат проекта v22.");
+        if (versionProbe.FormatVersion < 22 && project.Scenes.Any(s => s.Actions.Concat(s.ScriptBlocks.Select(b => b.Action)).Any(a => a is NovellMaker.Core.Execution.PlayCharacterClipAction)))
+            throw new ProjectFormatException("Клипы персонажей требуют формат проекта v22.");
         return project;
     }
     internal static Task WriteAsync(Stream stream, NovelProject project, CancellationToken cancellationToken) =>

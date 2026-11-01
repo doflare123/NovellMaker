@@ -33,9 +33,9 @@ public sealed partial class SceneDocumentViewModel
             var autoScale = 1d;
             if (index >= 0)
             {
-                var image = sprites[index].Image;
-                var automatic = CharacterLayout.Calculate(image.PixelWidth, image.PixelHeight, sprites[index].AutomaticSlot, sprites.Length, null);
-                var manual = CharacterLayout.Calculate(image.PixelWidth, image.PixelHeight, sprites[index].AutomaticSlot, sprites.Length, new(0.5, 1, 1, 0));
+                var image = sprites[index];
+                var automatic = CharacterLayout.Calculate(image.Width, image.Height, sprites[index].AutomaticSlot, sprites.Length, null);
+                var manual = CharacterLayout.Calculate(image.Width, image.Height, sprites[index].AutomaticSlot, sprites.Length, new(0.5, 1, 1, 0));
                 autoScale = Math.Clamp(automatic.Width / manual.Width, 0.05, 5);
             }
             return new(x, 1, autoScale, 0);

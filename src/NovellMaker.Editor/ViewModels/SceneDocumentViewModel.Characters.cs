@@ -105,7 +105,7 @@ public sealed partial class SceneDocumentViewModel
             if (!scene.HasLegacyActionScript && !scene.ScriptBlocks.IsEmpty)
             {
                 // Static composition of the selected phrase. Dynamic Lua/control flow runs through F6.
-                var composition = scene with { ScriptBlocks = scene.ScriptBlocks.Where(b => b.Action is ShowAction or HideAction or StateAction or PlaceAction).ToImmutableArray() };
+                var composition = scene with { ScriptBlocks = scene.ScriptBlocks.Where(b => b.Action is ShowAction or HideAction or StateAction or PlaceAction or PlayCharacterClipAction).ToImmutableArray() };
                 var player = new ScenarioPlayer(project with { Scenes = project.Scenes.Replace(scene, composition) }, Id, editingLanguage);
                 for (var i = 0; i < scene.Lines.Length && player.State.LineId != SelectedLine?.Id; i++)
                     if (!player.Advance()) break;

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using NovellMaker.Core.Assets;
+using NovellMaker.Core.Characters;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Scenes;
 using NovellMaker.Core.Styling;
@@ -114,4 +115,12 @@ public sealed record SceneFrame(Guid? LineId, int LineIndex, string Text, string
     public ImmutableDictionary<Guid, CharacterPlacement> Placements { get; init; } = ImmutableDictionary<Guid, CharacterPlacement>.Empty;
 }
 
-public sealed record VisibleCharacter(Guid CharacterId, string Name, Guid StateId, ImageAsset Image, CharacterPlacement? Placement = null, int AutomaticSlot = 0);
+public sealed record VisibleCharacter(Guid CharacterId, string Name, Guid StateId, ImageAsset Image, CharacterPlacement? Placement = null, int AutomaticSlot = 0)
+{
+    public ImmutableArray<ImageAsset> Assets { get; init; } = [];
+    public CharacterVisual? Visual { get; init; }
+    public double AnimationTime { get; init; }
+    public int Width => Visual?.Width ?? Image.PixelWidth;
+    public int Height => Visual?.Height ?? Image.PixelHeight;
+    public ImmutableArray<CharacterSprite> Sprites => Visual?.Sample(AnimationTime) ?? [new(Image.Id, System.Numerics.Matrix3x2.Identity, 1, 0)];
+}

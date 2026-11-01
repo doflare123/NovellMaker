@@ -385,6 +385,8 @@ internal static partial class ProjectJsonCodec
 
     private sealed class CharacterStateDocument
     {
+        public NovellMaker.Core.Characters.CharacterVisual? Visual { get; init; }
+
         [JsonRequired]
         public Guid Id { get; init; }
 

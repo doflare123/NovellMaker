@@ -82,6 +82,7 @@ public static class ScenarioProgram
         }
         ids.UnionWith(project.Characters.Select(c => c.Id));
         ids.UnionWith(project.Characters.SelectMany(c => c.States).Select(s => s.Id));
+        ids.UnionWith(project.Characters.SelectMany(c => c.States).Where(s => s.Visual is not null).SelectMany(s => s.Visual!.Parts.Select(p => p.Id).Concat(s.Visual.Clips.Select(c => c.Id))));
         ids.UnionWith(project.Scenes.Select(s => s.Id));
         ids.UnionWith(project.Scenes.SelectMany(s => s.Lines).Select(l => l.Id));
         foreach (var scene in project.Scenes)
@@ -107,6 +108,8 @@ public static class ScenarioProgram
 
     internal static bool IsValidAction(NovelProject project, NovelScene scene, ScenarioAction action)
     {
+        if (action is PlayCharacterClipAction clip)
+            return project.Characters.Any(c => c.Id == clip.ObjectId && c.States.Any(s => s.Id == clip.StateId && s.Visual?.Clips.Any(v => v.Id == clip.ClipId) == true));
         if (action is StartMinigameAction start)
         {
             var definition = project.Scenes.FirstOrDefault(s => s.Id == start.SceneId)?.Canvas.Minigame;

@@ -13,6 +13,12 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
     {
         _ = project.ReleaseCheck?.ToConfiguration();
         DialogueDisplayValidation.Validate(project);
+        foreach (var state in project.Characters.SelectMany(c => c.States))
+        {
+            state.Visual?.Validate();
+            if ((state.Visual?.ImageIds() ?? []).Append(state.ImageId).Any(id => !project.Images.Any(i => i.Id == id)))
+                throw new ArgumentException($"Состояние «{state.Name}»: отсутствует изображение части или кадра.");
+        }
         await Task.Run(() => NovellMaker.Core.Scripting.LuaModuleLibrary.ValidateProject(project));
         destination = Path.GetFullPath(destination);
         if (Directory.Exists(destination) || File.Exists(destination))

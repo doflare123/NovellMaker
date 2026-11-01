@@ -78,7 +78,8 @@ public sealed record NovelCharacter(Guid Id, string Name)
                 right is null ||
                 left.Id != right.Id ||
                 !string.Equals(left.Name, right.Name, StringComparison.Ordinal) ||
-                left.ImageId != right.ImageId)
+                left.ImageId != right.ImageId ||
+                (left.Visual is null ? right.Visual is not null : !left.Visual.ContentEquals(right.Visual)))
             {
                 return false;
             }

@@ -1,4 +1,4 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using NovellMaker.Core.Execution;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Scenes;
@@ -23,6 +23,7 @@ internal static class ActionReferences
                 PlaceAction a when !Object(a.ObjectId) => null,
                 MoveAction a when !Object(a.ObjectId) => null,
                 RunScriptAction a when !source.Scripts.Any(s => s.Id == a.ScriptId) => null,
+                PlayCharacterClipAction a when !source.Characters.Any(c => c.Id == a.ObjectId && c.States.Any(s => s.Id == a.StateId && s.Visual?.Clips.Any(v => v.Id == a.ClipId) == true)) => null,
                 StateAction a when !source.Characters.Any(c => c.Id == a.ObjectId && c.States.Any(s => s.Id == a.StateId)) => null,
                 JumpAction a when !Target(a.SceneId, a.ActionId) => null,
                 BranchAction a when !Target(a.SceneId, a.ActionId) => null,

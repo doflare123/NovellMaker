@@ -116,7 +116,7 @@ public sealed partial class EditorSession
 
     private static NovelProject RemoveImages(NovelProject source, HashSet<Guid> ids)
     {
-        var states = source.Characters.SelectMany(c => c.States).Where(s => ids.Contains(s.ImageId)).Select(s => s.Id).ToHashSet();
+        var states = source.Characters.SelectMany(c => c.States).Where(s => ids.Contains(s.ImageId) || s.Visual?.ImageIds().Any(ids.Contains) == true).Select(s => s.Id).ToHashSet();
         var updated = RemoveStates(source, states);
         return updated with
         {

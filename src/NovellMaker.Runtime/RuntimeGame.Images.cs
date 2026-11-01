@@ -29,7 +29,8 @@ internal sealed partial class RuntimeGame
 
         foreach (var character in player.Frame.Characters)
         {
-            wanted[character.Image.Id] = character.Image;
+            foreach (var id in character.Sprites.Select(s => s.ImageId))
+                if (player.Execution.Project.Images.FirstOrDefault(i => i.Id == id) is { } image) wanted[id] = image;
         }
 
         assetDiagnostics.Clear();
@@ -58,7 +59,7 @@ internal sealed partial class RuntimeGame
             imageHintsKey = hintKey;
             imageHints = imagePreloader?.Hints(state, player.Frame, screens.Stack.Instances.Select(i => i.Definition.Id)) ?? [];
         }
-        imageCache.SetWanted(wanted.Values.Where(asset => !screenBudgetRejected.Contains(asset.Id)), imageHints);
+        imageCache.SetWanted(wanted.Values.Where(asset => !screenBudgetRejected.Contains(asset.Id)), player.Frame.Characters.SelectMany(c => c.Visual?.UpcomingImages(c.AnimationTime) ?? []).Select(id => player.Execution.Project.Images.FirstOrDefault(i => i.Id == id)).OfType<ImageAsset>().Concat(imageHints));
         if (poll) imageCache.Poll();
         assetTextures.Clear();
         foreach (var (id, asset) in wanted)

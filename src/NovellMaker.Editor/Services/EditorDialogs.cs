@@ -201,6 +201,14 @@ public sealed class EditorDialogs(Window owner) : IEditorDialogs
         return file is null ? null : LocalPath(file);
     }
 
+    public async Task<string?> PickGifAsync()
+    {
+        var files = await owner.StorageProvider.OpenFilePickerAsync(new()
+        { Title = "Импортировать GIF персонажа", AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("Анимация GIF") { Patterns = ["*.gif"] }] });
+        return files.Count > 0 ? LocalPath(files[0]) : null;
+    }
+
     public async Task<string?> PickImageAsync()
     {
         var files = await owner.StorageProvider.OpenFilePickerAsync(new()

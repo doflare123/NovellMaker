@@ -10,6 +10,7 @@ namespace NovellMaker.Core.Execution;
 [JsonDerivedType(typeof(ShowAction), "show")]
 [JsonDerivedType(typeof(HideAction), "hide")]
 [JsonDerivedType(typeof(StateAction), "state")]
+[JsonDerivedType(typeof(PlayCharacterClipAction), "characterClip")]
 [JsonDerivedType(typeof(PlaceAction), "place")]
 [JsonDerivedType(typeof(MoveAction), "move")]
 [JsonDerivedType(typeof(WaitAction), "wait")]
@@ -29,6 +30,7 @@ public sealed record TextAction(Guid Id, [property: JsonRequired] Guid LineId) :
 public sealed record ShowAction(Guid Id, [property: JsonRequired] Guid ObjectId) : ScenarioAction(Id);
 public sealed record HideAction(Guid Id, [property: JsonRequired] Guid ObjectId) : ScenarioAction(Id);
 public sealed record StateAction(Guid Id, [property: JsonRequired] Guid ObjectId, [property: JsonRequired] Guid StateId) : ScenarioAction(Id);
+public sealed record PlayCharacterClipAction(Guid Id, [property: JsonRequired] Guid ObjectId, [property: JsonRequired] Guid StateId, [property: JsonRequired] Guid ClipId) : ScenarioAction(Id);
 public sealed record PlaceAction(Guid Id, [property: JsonRequired] Guid ObjectId, [property: JsonRequired] CharacterPlacement? Placement) : ScenarioAction(Id);
 public sealed record MoveAction(Guid Id, [property: JsonRequired] Guid ObjectId, [property: JsonRequired] CharacterPlacement Target,
     [property: JsonRequired] double Seconds) : ScenarioAction(Id);

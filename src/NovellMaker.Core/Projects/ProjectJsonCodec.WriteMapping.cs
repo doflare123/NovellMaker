@@ -87,6 +87,7 @@ internal static partial class ProjectJsonCodec
             Id = state.Id,
             Name = state.Name,
             ImageId = state.ImageId,
+            Visual = state.Visual,
         }).ToList(),
         DefaultStateId = character.DefaultStateId,
     };

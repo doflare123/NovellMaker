@@ -11,6 +11,7 @@ artifacts/
 
 /examples/*
 !/examples/author-interface/
+!/examples/character-animation/
 /docs/*
 !/docs/lua-reference/
 AGENTS.md

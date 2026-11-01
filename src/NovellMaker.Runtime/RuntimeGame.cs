@@ -485,6 +485,8 @@ internal sealed partial class RuntimeGame : Game
         SynchronizeAudio();
         return new(kind, success, player.Execution.State, player.Frame.Text)
         {
+            CharacterSprites = player.Frame.Characters.SelectMany(c => c.Sprites.Select(s => new RuntimeCharacterSprite(c.CharacterId, s.ImageId, c.AnimationTime,
+                [s.World.M11, s.World.M12, s.World.M21, s.World.M22, s.World.M31, s.World.M32], s.Opacity, s.Layer))).ToArray(),
             ScreenCount = screens.Stack.Instances.Length,
             ScreenInstanceIds = screens.Stack.Instances.Select(i => i.Id).ToArray(),
             ScreenTexts = screens.Stack.Instances.SelectMany(i => i.Definition.Nodes.Select(n => n.Text)).ToArray(),
@@ -658,33 +660,38 @@ internal sealed partial class RuntimeGame : Game
 
     private void DrawCharacters(SpriteBatch batch, IReadOnlyList<VisibleCharacter> characters)
     {
-        if (characters.Count == 0)
+        if (characters.Count == 0) return;
+        batch.End();
+        componentEffect ??= new BasicEffect(GraphicsDevice) { TextureEnabled = true, VertexColorEnabled = true,
+            Projection = Matrix.CreateOrthographicOffCenter(0, LogicalWidth, LogicalHeight, 0, 0, 1) };
+        GraphicsDevice.BlendState = BlendState.AlphaBlend;
+        GraphicsDevice.DepthStencilState = DepthStencilState.None;
+        GraphicsDevice.RasterizerState = RasterizerState.CullNone;
+        GraphicsDevice.SamplerStates[0] = SamplerState.LinearClamp;
+        foreach (var character in characters)
         {
-            return;
-        }
-
-        for (var index = 0; index < characters.Count; index++)
-        {
-            var character = characters[index];
-            if (!assetTextures.TryGetValue(character.Image.Id, out var texture))
+            var bounds = CharacterLayout.Calculate(character.Width, character.Height, character.AutomaticSlot, characters.Count, character.Placement);
+            var placement = System.Numerics.Matrix3x2.CreateScale((float)(bounds.Width / character.Width)) *
+                System.Numerics.Matrix3x2.CreateTranslation((float)bounds.X, (float)bounds.Y);
+            foreach (var sprite in character.Sprites)
             {
-                continue;
+                if (!assetTextures.TryGetValue(sprite.ImageId, out var texture)) continue;
+                var transform = sprite.World;
+                if (character.Visual?.Clips.FirstOrDefault(c => c.Id == character.Visual.DefaultClipId) is { Frames.IsEmpty: false })
+                    transform = System.Numerics.Matrix3x2.CreateScale(character.Width / (float)texture.Width, character.Height / (float)texture.Height);
+                transform *= placement;
+                VertexPositionColorTexture Vertex(float x, float y)
+                {
+                    var point = System.Numerics.Vector2.Transform(new(x * texture.Width, y * texture.Height), transform);
+                    return new(new Vector3(point.X, point.Y, 0), Color.White * (float)sprite.Opacity, new Vector2(x, y));
+                }
+                VertexPositionColorTexture[] vertices = [Vertex(0, 0), Vertex(1, 0), Vertex(1, 1), Vertex(0, 0), Vertex(1, 1), Vertex(0, 1)];
+                componentEffect.Texture = texture;
+                foreach (var pass in componentEffect.CurrentTechnique.Passes)
+                { pass.Apply(); GraphicsDevice.DrawUserPrimitives(PrimitiveType.TriangleList, vertices, 0, 2); }
             }
-
-            var bounds = CharacterLayout.Calculate(texture.Width, texture.Height, character.AutomaticSlot, characters.Count, character.Placement);
-            var scale = (float)(bounds.Width / texture.Width);
-            var position = new Vector2((float)bounds.X, (float)bounds.Y);
-            batch.Draw(
-                texture,
-                position,
-                sourceRectangle: null,
-                Color.White,
-                rotation: 0,
-                origin: Vector2.Zero,
-                new Vector2(scale),
-                SpriteEffects.None,
-                layerDepth: 0);
         }
+        batch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.LinearClamp, DepthStencilState.None, RasterizerState.CullNone);
     }
 
     private void DrawDiagnostics(SpriteBatch batch)
@@ -846,6 +853,8 @@ internal sealed record RuntimeSmokeReport(
     public Dictionary<NovellMaker.Core.Audio.AudioGroup, NovellMaker.Core.Audio.AudioBus> AudioMixer { get; init; } = [];
 }
 internal sealed record RuntimeSmokeStep(string Kind, double Seconds = 0, int X = 0, int Y = 0, string? Key = null);
+internal sealed record RuntimeCharacterSprite(Guid CharacterId, Guid ImageId, double Time, float[] World, double Opacity, int Layer);
+
 internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState State, string Text)
 {
     public NovellMaker.Core.Audio.VoicePlayback Voice { get; init; } = NovellMaker.Core.Audio.VoicePlayback.None;
@@ -870,6 +879,7 @@ internal sealed record RuntimeActionTrace(string Kind, bool Success, GameState S
     public bool Fullscreen { get; init; }
     public int ScreenCount { get; init; }
     public IReadOnlyList<string> ScreenTexts { get; init; } = [];
+    public RuntimeCharacterSprite[] CharacterSprites { get; init; } = [];
     public ScreenNode[] ScreenNodes { get; init; } = [];
     public int ActiveAnimations { get; init; }
     public int PausedAudioSources { get; init; }

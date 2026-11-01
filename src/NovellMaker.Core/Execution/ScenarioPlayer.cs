@@ -150,7 +150,8 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
             {
                 var character = project.Characters.First(c => c.Id == id);
                 var pose = character.States.First(s => s.Id == State.ObjectStates[id]);
-                return new VisibleCharacter(id, character.Name, pose.Id, project.Images.First(i => i.Id == pose.ImageId), State.Placements.GetValueOrDefault(id), slot);
+                return new VisibleCharacter(id, character.Name, pose.Id, project.Images.First(i => i.Id == pose.ImageId), State.Placements.GetValueOrDefault(id), slot)
+                { Assets = project.Images, Visual = State.CharacterClips.TryGetValue(id, out var activeClip) && pose.Visual is { } rig ? rig with { DefaultClipId = activeClip } : pose.Visual, AnimationTime = State.Time - State.CharacterStartedAt.GetValueOrDefault(id) };
             }).OrderBy(s => s.Placement?.Layer ?? 0).ToImmutableArray();
             return new SceneFrame(line?.Id, line is null ? -1 : scene.Lines.IndexOf(line), text ?? "",
                 line?.SpeakerId is { } speaker ? project.Characters.FirstOrDefault(c => c.Id == speaker)?.Name ?? "Неизвестный персонаж" : "",
@@ -220,7 +221,14 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
                 var character = project.Characters.FirstOrDefault(c => c.Id == a.ObjectId);
                 if (character?.States.Any(s => s.Id == a.StateId) != true)
                 { Diagnostic($"У персонажа {a.ObjectId} отсутствует состояние {a.StateId}."); State = State with { VisibleObjects = State.VisibleObjects.Remove(a.ObjectId), ObjectStates = State.ObjectStates.SetItem(a.ObjectId, a.StateId) }; }
-                else { State = State with { ObjectStates = State.ObjectStates.SetItem(a.ObjectId, a.StateId) }; if (State.VisibleObjects.Contains(a.ObjectId)) Show(a.ObjectId); }
+                else { State = State with { ObjectStates = State.ObjectStates.SetItem(a.ObjectId, a.StateId), CharacterClips = State.CharacterClips.Remove(a.ObjectId), CharacterStartedAt = State.CharacterStartedAt.SetItem(a.ObjectId, State.Time) }; if (State.VisibleObjects.Contains(a.ObjectId)) Show(a.ObjectId); }
+                break;
+            case PlayCharacterClipAction a:
+                if (!ScenarioProgram.IsValidAction(project, project.Scenes.First(s => s.Id == State.SceneId), a))
+                    throw new InvalidOperationException("Клип персонажа отсутствует.");
+                State = State with { ObjectStates = State.ObjectStates.SetItem(a.ObjectId, a.StateId),
+                    CharacterClips = State.CharacterClips.SetItem(a.ObjectId, a.ClipId), CharacterStartedAt = State.CharacterStartedAt.SetItem(a.ObjectId, State.Time) };
+                if (State.VisibleObjects.Contains(a.ObjectId)) Show(a.ObjectId);
                 break;
             case PlaceAction a:
                 if (!project.Characters.Any(c => c.Id == a.ObjectId)) { Diagnostic($"Персонаж размещения {a.ObjectId} отсутствует."); break; }
@@ -262,9 +270,11 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         var stateId = State.ObjectStates.TryGetValue(id, out var remembered) ? remembered : character.DefaultStateId;
         var pose = character.States.FirstOrDefault(s => s.Id == stateId);
         if (pose is null) { Diagnostic($"У персонажа {id} отсутствует состояние {stateId}."); return; }
-        if (!project.Images.Any(i => i.Id == pose.ImageId))
-        { Diagnostic($"Изображение {pose.ImageId} отсутствует."); State = State with { VisibleObjects = State.VisibleObjects.Remove(id) }; return; }
-        State = State with { ObjectStates = State.ObjectStates.SetItem(id, pose.Id),
+        var missingImage = (pose.Visual?.ImageIds() ?? []).Append(pose.ImageId).FirstOrDefault(image => !project.Images.Any(i => i.Id == image));
+        if (missingImage != Guid.Empty)
+        { Diagnostic($"Изображение {missingImage} отсутствует."); State = State with { VisibleObjects = State.VisibleObjects.Remove(id) }; return; }
+        State = State with { CharacterStartedAt = State.VisibleObjects.Contains(id) ? State.CharacterStartedAt : State.CharacterStartedAt.SetItem(id, State.Time),
+            ObjectStates = State.ObjectStates.SetItem(id, pose.Id),
             VisibleObjects = State.VisibleObjects.Contains(id) ? State.VisibleObjects : State.VisibleObjects.Add(id) };
     }
 
@@ -284,8 +294,10 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         var character = project.Characters.First(c => c.Id == id);
         var pose = character.States.FirstOrDefault(s => s.Id == State.ObjectStates.GetValueOrDefault(id)) ?? character.States.FirstOrDefault(s => s.Id == character.DefaultStateId);
         var image = project.Images.FirstOrDefault(i => i.Id == pose?.ImageId);
-        var scale = image is null ? 1 : Math.Min(Math.Min(360, 1200d / count) / image.PixelWidth, 560d / image.PixelHeight) /
-            Math.Min(360d / image.PixelWidth, 560d / image.PixelHeight);
+        var width = pose?.Visual?.Width ?? image?.PixelWidth ?? 360;
+        var height = pose?.Visual?.Height ?? image?.PixelHeight ?? 560;
+        var scale = Math.Min(Math.Min(360, 1200d / count) / width, 560d / height) /
+            Math.Min(360d / width, 560d / height);
         return new CharacterPlacement(x, 1, scale, 0);
     }
 

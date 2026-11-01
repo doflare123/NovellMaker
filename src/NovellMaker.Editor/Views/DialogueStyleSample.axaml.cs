@@ -41,7 +41,7 @@ public sealed partial class DialogueStyleSample : UserControl
     public static readonly StyledProperty<SceneDocumentViewModel?> PlacementEditorProperty = AvaloniaProperty.Register<DialogueStyleSample, SceneDocumentViewModel?>(nameof(PlacementEditor));
     public SceneDocumentViewModel? PlacementEditor { get => GetValue(PlacementEditorProperty); set => SetValue(PlacementEditorProperty, value); }
     private readonly Border selectionOutline = new() { BorderBrush = Brushes.LightSteelBlue, BorderThickness = new Thickness(2), IsHitTestVisible = false, ZIndex = int.MaxValue };
-    private ProjectImageView? draggedView;
+    private CharacterVisualView? draggedView;
     private IPointer? dragPointer;
     private Point dragStart;
     private Point dragOrigin;
@@ -175,7 +175,7 @@ public sealed partial class DialogueStyleSample : UserControl
     {
         var sprites = SampleFrame?.Characters ?? [];
         // Reuse existing views so typing dialogue does not restart every image load.
-        var existing = CharacterLayer.Children.OfType<ProjectImageView>().ToDictionary(view => (Guid)view.Tag!);
+        var existing = CharacterLayer.Children.OfType<CharacterVisualView>().ToDictionary(view => (Guid)view.Tag!);
         var ids = sprites.Select(sprite => sprite.CharacterId).ToHashSet();
         foreach (var old in existing.Where(pair => !ids.Contains(pair.Key))) CharacterLayer.Children.Remove(old.Value);
         for (var index = 0; index < sprites.Length; index++)
@@ -183,16 +183,14 @@ public sealed partial class DialogueStyleSample : UserControl
             var sprite = sprites[index];
             if (!existing.TryGetValue(sprite.CharacterId, out var view))
             {
-                view = new ProjectImageView { Tag = sprite.CharacterId, TransparentBackground = true, Focusable = true };
+                view = new CharacterVisualView { Tag = sprite.CharacterId, Focusable = true };
                 view.PointerPressed += DragPressed;
                 CharacterLayer.Children.Add(view);
             }
-            view.Asset = sprite.Image;
-            var bounds = CharacterLayout.Calculate(sprite.Image.PixelWidth, sprite.Image.PixelHeight, sprite.AutomaticSlot, sprites.Length, sprite.Placement);
+            view.Present(sprite, ProjectDirectory, AssetRevision);
+            var bounds = CharacterLayout.Calculate(sprite.Width, sprite.Height, sprite.AutomaticSlot, sprites.Length, sprite.Placement);
             view.Width = bounds.Width;
             view.Height = bounds.Height;
-            view.ProjectDirectory = ProjectDirectory;
-            view.Revision = AssetRevision;
             Canvas.SetLeft(view, bounds.X);
             Canvas.SetTop(view, bounds.Y);
             view.ZIndex = index;
@@ -209,7 +207,7 @@ public sealed partial class DialogueStyleSample : UserControl
     private void UpdateSelectionOutline()
     {
         var id = PlacementEditor?.SelectedPlacementCharacter?.Id;
-        var view = CharacterLayer.Children.OfType<ProjectImageView>().FirstOrDefault(item => (Guid)item.Tag! == id);
+        var view = CharacterLayer.Children.OfType<CharacterVisualView>().FirstOrDefault(item => (Guid)item.Tag! == id);
         selectionOutline.IsVisible = view is not null && PlacementEditor?.CanPlaceCharacter == true;
         if (view is null) return;
         selectionOutline.Width = view.Width;
@@ -220,7 +218,7 @@ public sealed partial class DialogueStyleSample : UserControl
 
     private void DragPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (PlacementEditor is not { CanEditLine: true } editor || sender is not ProjectImageView view || !e.GetCurrentPoint(view).Properties.IsLeftButtonPressed) return;
+        if (PlacementEditor is not { CanEditLine: true } editor || sender is not CharacterVisualView view || !e.GetCurrentPoint(view).Properties.IsLeftButtonPressed) return;
         editor.SelectedPlacementCharacter = editor.PlacementOptions.FirstOrDefault(option => option.Id == (Guid)view.Tag!);
         if (!editor.CanPlaceCharacter) return;
         editor.Session.EndEditGroup();

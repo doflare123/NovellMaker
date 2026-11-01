@@ -109,6 +109,8 @@
                                   MaximumWidth="1280" />
         </Border>
 
+        <views:CharacterAnimationEditor Name="CharacterAnimationEditor" />
+
         <TextBlock Text="{Binding CharacterStateStatus}" Foreground="#D9B68C" TextWrapping="Wrap" />
         <SelectableTextBlock Text="{Binding CharacterStateInfo}" TextWrapping="Wrap" FontSize="12" />
       </StackPanel>

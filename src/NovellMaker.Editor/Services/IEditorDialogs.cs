@@ -20,6 +20,7 @@ public interface IEditorDialogs
     Task<string?> EditLuaNameAsync(string suggestedName) => Task.FromResult<string?>(suggestedName);
     Task<Guid?> PickScriptAsync(IReadOnlyList<NovellMaker.Core.Execution.LuaScriptAsset> scripts) => Task.FromResult<Guid?>(scripts.FirstOrDefault()?.Id);
     Task<string?> PickSaveLuaScriptAsync(string suggestedName) => Task.FromResult<string?>(null);
+    Task<string?> PickGifAsync() => Task.FromResult<string?>(null);
     Task<string?> PickImageAsync() => Task.FromResult<string?>(null);
     Task<WindowsExportDestination?> PickWindowsExportAsync(NovellMaker.Core.Projects.NovelProject project) => Task.FromResult<WindowsExportDestination?>(null);
     Task<WindowsInstallerDestination?> PickWindowsInstallerAsync(NovellMaker.Core.Projects.NovelProject project) => Task.FromResult<WindowsInstallerDestination?>(null);

@@ -63,6 +63,7 @@ public sealed class ScenarioActionsView : UserControl
                 item.Click += (_, _) => Add(index); addMenu.Items.Add(item);
             }
             menu.Items.Add(addMenu);
+            var characterClip = new MenuItem { Header = "Запустить клип персонажа" }; characterClip.Click += (_, _) => Add(15); addMenu.Items.Add(characterClip);
             var minigame = new MenuItem { Header = "Запустить мини-игру" }; minigame.Click += (_, _) => Add(13); addMenu.Items.Add(minigame);
             var result = new MenuItem { Header = "Ветвление по результату мини-игры" }; result.Click += (_, _) => Add(14); addMenu.Items.Add(result);
             var lua = new MenuItem { Header = "Создать Lua-скрипт…", Name = "CreatePhraseLuaMenu" }; lua.Click += (_, _) => Add(11); menu.Items.Add(lua);
@@ -328,6 +329,7 @@ public sealed class ScenarioActionsView : UserControl
         if (field == "Token") yield return new(null, "Любой активный предмет");
         if (field == "ScriptId") foreach (var s in project.Scripts) yield return new(s.Id, "Lua: " + s.Name);
         if (field is "ObjectId" or "Lua") foreach (var c in project.Characters) yield return new(c.Id, c.Name);
+        if (field == "ClipId") foreach (var c in project.Characters) foreach (var s in c.States) foreach (var clip in s.Visual?.Clips ?? []) yield return new(clip.Id, c.Name + " / " + s.Name + " / " + clip.Name);
         if (field is "StateId" or "Lua") foreach (var c in project.Characters) foreach (var s in c.States) yield return new(s.Id, c.Name + " / " + s.Name);
         foreach (var scene in project.Scenes)
         {
@@ -372,6 +374,8 @@ public sealed class ScenarioActionsView : UserControl
             _ = document.Session.AttachExistingScriptAsync(scene.Id, chosenAnchor.LineId, ((Phase)phases.SelectedItem!).Value);
             return;
         }
+        var animated = project.Characters.SelectMany(c => c.States.SelectMany(s => (s.Visual?.Clips ?? []).Select(clip => (Actor: c, State: s, Clip: clip)))).FirstOrDefault();
+        if (kind == 15 && animated.Clip is null) { error.Text = "Сначала создайте клип в библиотеке персонажей."; return; }
         ScenarioAction action = kind switch
         {
             0 => new MoveAction(id, actor?.Id ?? Guid.Empty, new(0.75, 1, 1, 0), 1),
@@ -383,6 +387,7 @@ public sealed class ScenarioActionsView : UserControl
             10 => new HotspotAction(id, Guid.NewGuid(), "Предмет", 0.4, 0.4, 0.2, 0.1),
             12 => new RunScriptAction(id, project.Scripts[0].Id),
             13 => new StartMinigameAction(id, resource!.Id, resource.Canvas.Minigame!.DefaultParameters),
+            15 => new PlayCharacterClipAction(id, animated.Actor.Id, animated.State.Id, animated.Clip.Id),
             14 => new BranchMinigameAction(id, "$status", NovellMaker.Core.Scripting.LuaValue.FromString("completed"), scene.Id, target),
             _ => new ScriptAction(id, "-- Поведение выбранной фразы\n-- game.move(refs.actor, 0.75, 1, 1, 0, 2)", "phrase.lua")
         };
@@ -436,10 +441,10 @@ public sealed class ScenarioActionsView : UserControl
         HotspotAction h => h.Label, _ => "Команда сценария"
     };
     private static string PhaseLabel(ScriptPhase phase) => phase switch { ScriptPhase.BeforeLine => "До фразы", ScriptPhase.DuringLine => "Во время фразы", ScriptPhase.AfterLine => "После продолжения", ScriptPhase.SceneEnd => "Конец сцены", _ => "Начало сцены" };
-    private static string ActionLabel(ScenarioAction action) => action switch { StartMinigameAction => "Мини-игра", BranchMinigameAction => "Результат мини-игры", TextAction => "Показать текст", ShowAction => "Показать", HideAction => "Скрыть", StateAction => "Сменить состояние", PlaceAction => "Разместить", MoveAction => "Двигать", WaitAction => "Ожидать", ChoiceAction => "Выбор", JumpAction => "Переход", SetAction => "Переменная", BranchAction => "Условие", ScriptAction => "Lua", RunScriptAction => "Вызвать Lua-скрипт", HotspotAction => "Предмет", _ => "Действие" };
+    private static string ActionLabel(ScenarioAction action) => action switch { StartMinigameAction => "Мини-игра", BranchMinigameAction => "Результат мини-игры", TextAction => "Показать текст", ShowAction => "Показать", HideAction => "Скрыть", StateAction => "Сменить состояние", PlayCharacterClipAction => "Клип персонажа", PlaceAction => "Разместить", MoveAction => "Двигать", WaitAction => "Ожидать", ChoiceAction => "Выбор", JumpAction => "Переход", SetAction => "Переменная", BranchAction => "Условие", ScriptAction => "Lua", RunScriptAction => "Вызвать Lua-скрипт", HotspotAction => "Предмет", _ => "Действие" };
     private static string Label(string name) => name switch
     {
-        "LineId" => "Фраза", "ObjectId" => "Персонаж / предмет", "StateId" => "Состояние", "SceneId" or "TargetSceneId" => "Сцена", "ActionId" or "TargetActionId" => "Целевая фраза",
+        "LineId" => "Фраза", "ObjectId" => "Персонаж / предмет", "StateId" => "Состояние", "ClipId" => "Клип персонажа", "SceneId" or "TargetSceneId" => "Сцена", "ActionId" or "TargetActionId" => "Целевая фраза",
         "ScriptId" => "Ресурс Lua",
         "Seconds" => "Длительность, с", "Mode" => "Чего ожидать", "Source" => "Lua-код", "Token" => "Предмет", "Name" => "Имя скрипта для сообщений об ошибках", "Label" => "Подпись", "Text" => "Текст варианта",
         "Variable" => "Переменная", "Value" => "Значение", "EqualsValue" => "Равно", "Options" => "Варианты", "Target" => "Конечное положение", "Placement" => "Размещение",

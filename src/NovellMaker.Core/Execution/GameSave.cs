@@ -10,7 +10,7 @@ public sealed record GameSaveSnapshot(GameState State, NovelProject Project);
 
 public static class GameSave
 {
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
     private static readonly SemaphoreSlim PreparationGate = new(2, 2);
     private static int admittedPreparations;
     private sealed record Document([property: JsonRequired] int Version, [property: JsonRequired] GameState State);
@@ -74,8 +74,8 @@ public static class GameSave
         try
         {
             var document = JsonSerializer.Deserialize<Document>(json, Options) ?? throw new ArgumentException("Пустое сохранение.");
-            if (document.Version is not (1 or 2 or CurrentVersion)) throw new ArgumentException($"Версия сохранения {document.Version} не поддерживается.");
-            if (document.Version == CurrentVersion)
+            if (document.Version is not (1 or 2 or 3 or CurrentVersion)) throw new ArgumentException($"Версия сохранения {document.Version} не поддерживается.");
+            if (document.Version >= 3)
             {
                 using var current = JsonDocument.Parse(json);
                 if (!current.RootElement.GetProperty("State").TryGetProperty("History", out _))
@@ -88,6 +88,12 @@ public static class GameSave
                 if (state.TryGetProperty("Minigame", out _) || state.TryGetProperty("MinigameOutcome", out _) ||
                     document.State.QueuedActions.Any(a => a is StartMinigameAction or BranchMinigameAction))
                     throw new ArgumentException("Старый формат не поддерживает данные мини-игры.");
+            }
+            if (document.Version == CurrentVersion)
+            {
+                using var current = JsonDocument.Parse(json);
+                if (!current.RootElement.GetProperty("State").TryGetProperty("CharacterStartedAt", out _) || !current.RootElement.GetProperty("State").TryGetProperty("CharacterClips", out _))
+                    throw new ArgumentException("Нет времени анимации персонажей в сохранении v4.");
             }
             return document.State;
         }
@@ -127,11 +133,17 @@ public static class GameSave
             !double.IsFinite(state.Time) || state.Time < 0 || state.Time > TimeSpan.MaxValue.TotalSeconds || !double.IsFinite(state.TextStartedAt) || state.TextStartedAt < 0 || state.TextStartedAt > state.Time || state.Variables is null || state.ObjectStates is null || state.Placements is null ||
             state.VisibleObjects.IsDefault || state.ActiveActions.IsDefault || state.QueuedActions.IsDefault || state.Hotspots.IsDefault || state.Diagnostics.IsDefault)
             throw new ArgumentException("Некорректная позиция или коллекции сохранения.");
+        if (state.CharacterClips is null || state.CharacterClips.Any(p => !state.ObjectStates.TryGetValue(p.Key, out var pose) ||
+            !project.Characters.Any(c => c.Id == p.Key && c.States.Any(s => s.Id == pose && s.Visual?.Clips.Any(v => v.Id == p.Value) == true))))
+            throw new ArgumentException("Некорректный клип персонажа.");
+        if (state.CharacterStartedAt is null || state.CharacterStartedAt.Any(p => !KnownObject(p.Key) || !double.IsFinite(p.Value) || p.Value < 0 || p.Value > state.Time))
+            throw new ArgumentException("Некорректное время анимации персонажа.");
         if (!LuaLimits.ValidVariables(state.Variables) || state.Diagnostics.Any(d => d is null) ||
             state.Placements.Any(p => !KnownObject(p.Key) || p.Value is not { IsValid: true }) ||
             state.ObjectStates.Any(p => !project.Characters.Any(c => c.Id == p.Key && c.States.Any(s => s.Id == p.Value))) ||
             state.VisibleObjects.Distinct().Count() != state.VisibleObjects.Length || state.VisibleObjects.Any(id =>
-                !state.ObjectStates.TryGetValue(id, out var pose) || !project.Characters.Any(c => c.Id == id && c.States.Any(s => s.Id == pose && project.Images.Any(i => i.Id == s.ImageId)))) ||
+                !state.ObjectStates.TryGetValue(id, out var pose) || !project.Characters.Any(c => c.Id == id && c.States.Any(s => s.Id == pose && project.Images.Any(i => i.Id == s.ImageId) &&
+                    (s.Visual is null || s.Visual.ImageIds().All(image => project.Images.Any(i => i.Id == image)) && state.CharacterStartedAt.ContainsKey(id))))) ||
             state.ActiveActions.Any(a => a is null || a.ActionId == Guid.Empty || !KnownObject(a.ObjectId) || a.From is not { IsValid: true } || a.Target is not { IsValid: true } ||
                 !ScenarioProgram.Duration(a.Duration) || a.Duration <= 0 || !double.IsFinite(a.Elapsed) || a.Elapsed < 0 || a.Elapsed >= a.Duration) ||
             state.ActiveActions.Select(a => a.ObjectId).Distinct().Count() != state.ActiveActions.Length)

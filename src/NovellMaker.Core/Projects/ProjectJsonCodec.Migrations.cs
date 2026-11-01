@@ -393,7 +393,7 @@ internal static partial class ProjectJsonCodec
         foreach (var stateDocument in document.States)
         {
             var state = stateDocument ?? throw new ArgumentException("Коллекция состояний персонажа содержит null.");
-            states.Add(new CharacterState(state.Id, state.Name!, state.ImageId));
+            states.Add(new CharacterState(state.Id, state.Name!, state.ImageId) { Visual = state.Visual });
         }
 
         return new NovelCharacter(document.Id, document.Name!)

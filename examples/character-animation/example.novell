@@ -1,0 +1,551 @@
+{
+  "releaseCheck": null,
+  "startScreenSceneId": null,
+  "scenes": [
+    {
+      "canvas": {
+        "nodes": [
+          {
+            "id": "52752cc1-4091-45ad-568e-8e25604f769e",
+            "parentId": null,
+            "kind": 0,
+            "bounds": {
+              "x": 0,
+              "y": 0,
+              "width": 1280,
+              "height": 720
+            },
+            "text": "",
+            "visible": true,
+            "enabled": true,
+            "imageId": null,
+            "name": "",
+            "dialogue": 0,
+            "geometry": {
+              "anchorX": 0,
+              "anchorY": 0,
+              "pivotX": 0,
+              "pivotY": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "opacity": 1
+            },
+            "clipChildren": true,
+            "order": 0,
+            "color": "#FFFFFF"
+          },
+          {
+            "id": "61034aae-7b82-4f3f-a882-d1e3bb0f8aa6",
+            "parentId": "52752cc1-4091-45ad-568e-8e25604f769e",
+            "kind": 1,
+            "bounds": {
+              "x": 32,
+              "y": 538,
+              "width": 960,
+              "height": 150
+            },
+            "text": "",
+            "visible": true,
+            "enabled": true,
+            "imageId": null,
+            "name": "Диалог",
+            "dialogue": 4,
+            "geometry": {
+              "anchorX": 0,
+              "anchorY": 0,
+              "pivotX": 0,
+              "pivotY": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "opacity": 1
+            },
+            "clipChildren": true,
+            "order": 1000,
+            "color": "#FFFFFF"
+          },
+          {
+            "id": "e645f8a0-fe0f-4d64-b104-ae85157febdd",
+            "parentId": "61034aae-7b82-4f3f-a882-d1e3bb0f8aa6",
+            "kind": 2,
+            "bounds": {
+              "x": 24,
+              "y": 24,
+              "width": 912,
+              "height": 28.549999999999997
+            },
+            "text": "",
+            "visible": true,
+            "enabled": true,
+            "imageId": null,
+            "name": "Имя говорящего",
+            "dialogue": 3,
+            "geometry": {
+              "anchorX": 0,
+              "anchorY": 0,
+              "pivotX": 0,
+              "pivotY": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "opacity": 1
+            },
+            "clipChildren": true,
+            "order": 0,
+            "color": "#FFFFFF"
+          },
+          {
+            "id": "a7ca18bd-34a8-4ea6-bbc9-4afd25279909",
+            "parentId": "61034aae-7b82-4f3f-a882-d1e3bb0f8aa6",
+            "kind": 2,
+            "bounds": {
+              "x": 24,
+              "y": 52.55,
+              "width": 912,
+              "height": 73.45
+            },
+            "text": "",
+            "visible": true,
+            "enabled": true,
+            "imageId": null,
+            "name": "Текст реплики",
+            "dialogue": 2,
+            "geometry": {
+              "anchorX": 0,
+              "anchorY": 0,
+              "pivotX": 0,
+              "pivotY": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "opacity": 1
+            },
+            "clipChildren": true,
+            "order": 0,
+            "color": "#FFFFFF"
+          }
+        ],
+        "handlerScriptId": null,
+        "references": {},
+        "buttons": [],
+        "pauseOnOverlay": true,
+        "blockInputOnOverlay": true
+      },
+      "scriptBlocks": [],
+      "actions": [],
+      "useActions": false,
+      "id": "d52bed88-ed1a-4c39-bd0b-ac3e0f5ad6e2",
+      "name": "Пример · персонаж из частей",
+      "lines": [
+        {
+          "id": "0abf8dcc-3e69-45dd-ab9f-eff68d0e527b",
+          "textKey": "line.0abf8dcc3e6945ddab9feff68d0e527b",
+          "texts": {
+            "ru": "Тело, голова и рука: общая иерархия, отдельные pivot и ключи. F7 — сохранить, F8 — загрузить; анимация продолжится с сохранённой фазы."
+          },
+          "speakerId": "d5c38e78-727d-4300-babf-7bc04493af8e",
+          "characterStateId": "c1987036-f449-45cc-9d39-860b4e9d46da",
+          "hideCharacterId": null,
+          "placements": []
+        },
+        {
+          "id": "c54f2de0-98bd-436a-832a-94f78644b80b",
+          "textKey": "line.c54f2de098bd436a832a94f78644b80b",
+          "texts": {
+            "ru": "Теперь та же поза воспроизводится покадровым клипом. Длительности кадров редактируются в библиотеке персонажей."
+          },
+          "speakerId": "d5c38e78-727d-4300-babf-7bc04493af8e",
+          "characterStateId": "d3bed45a-1a6e-44bd-87d8-5fd48a3baeb6",
+          "hideCharacterId": null,
+          "placements": []
+        },
+        {
+          "id": "837dff19-9d8a-4255-bc94-b24167acbada",
+          "textKey": "line.837dff199d8a4255bc94b24167acbada",
+          "texts": {
+            "ru": "Вернулись к частям. Измените ключи в библиотеке персонажей и запустите F6. Готовая игра использует тот же исполнитель."
+          },
+          "speakerId": "d5c38e78-727d-4300-babf-7bc04493af8e",
+          "characterStateId": "c1987036-f449-45cc-9d39-860b4e9d46da",
+          "hideCharacterId": null,
+          "placements": []
+        }
+      ],
+      "dialogueCssOverride": null,
+      "backgroundImageId": null
+    }
+  ],
+  "inputBindings": [
+    {
+      "key": "F7",
+      "action": 10,
+      "targetSceneId": null
+    },
+    {
+      "key": "F8",
+      "action": 11,
+      "targetSceneId": null
+    }
+  ],
+  "scripts": [],
+  "audio": {
+    "playback": {
+      "fadeInSeconds": 0,
+      "fadeOutSeconds": 0,
+      "crossfadeSeconds": 0,
+      "duckingEnabled": false,
+      "duckingVolume": 0.35,
+      "duckingAttackSeconds": 0.15,
+      "duckingReleaseSeconds": 0.3
+    },
+    "assets": [],
+    "sceneSounds": {},
+    "lineEffects": {},
+    "voices": {},
+    "mixer": {}
+  },
+  "formatVersion": 22,
+  "id": "6b7240fd-ea24-475c-8669-514667ec64cc",
+  "name": "Персонаж из частей",
+  "images": [
+    {
+      "id": "870aad3f-277c-4f26-b172-8fc6bb1d7930",
+      "name": "Тело",
+      "relativePath": "Assets/Images/870aad3f277c4f26b1728fc6bb1d7930.png",
+      "pixelWidth": 160,
+      "pixelHeight": 280
+    },
+    {
+      "id": "39610252-455b-4dc4-ae8a-5bb25d0cfb4b",
+      "name": "Голова",
+      "relativePath": "Assets/Images/39610252455b4dc4ae8a5bb25d0cfb4b.png",
+      "pixelWidth": 120,
+      "pixelHeight": 140
+    },
+    {
+      "id": "3b90bea4-f86a-46a8-a202-3ead90f8e346",
+      "name": "Рука",
+      "relativePath": "Assets/Images/3b90bea4f86a46a8a2023ead90f8e346.png",
+      "pixelWidth": 44,
+      "pixelHeight": 170
+    },
+    {
+      "id": "5d322c92-c0bb-4694-9a68-8855921e21f9",
+      "name": "Приветствие · кадр 1",
+      "relativePath": "Assets/Images/5d322c92c0bb46949a688855921e21f9.png",
+      "pixelWidth": 360,
+      "pixelHeight": 560
+    },
+    {
+      "id": "acee6350-022d-4ab5-a6a2-5c24aad7a62a",
+      "name": "Приветствие · кадр 2",
+      "relativePath": "Assets/Images/acee6350022d4ab5a6a25c24aad7a62a.png",
+      "pixelWidth": 360,
+      "pixelHeight": 560
+    },
+    {
+      "id": "1235f1b4-4868-4f1c-a50d-54a483b84b61",
+      "name": "Приветствие · кадр 3",
+      "relativePath": "Assets/Images/1235f1b448684f1ca50d54a483b84b61.png",
+      "pixelWidth": 360,
+      "pixelHeight": 560
+    },
+    {
+      "id": "ba51b836-34a3-4834-9b76-3a4d995d608b",
+      "name": "Приветствие · кадр 4",
+      "relativePath": "Assets/Images/ba51b83634a348349b763a4d995d608b.png",
+      "pixelWidth": 360,
+      "pixelHeight": 560
+    }
+  ],
+  "characters": [
+    {
+      "id": "d5c38e78-727d-4300-babf-7bc04493af8e",
+      "name": "Механик",
+      "states": [
+        {
+          "visual": {
+            "width": 360,
+            "height": 560,
+            "parts": [
+              {
+                "id": "46dab2a2-74e0-4c37-80d5-4c145ab60d29",
+                "name": "Тело",
+                "imageId": "870aad3f-277c-4f26-b172-8fc6bb1d7930",
+                "parentId": null,
+                "pivotX": 80,
+                "pivotY": 140,
+                "layer": 0,
+                "transform": {
+                  "x": 180,
+                  "y": 330,
+                  "rotation": 0,
+                  "scaleX": 1,
+                  "scaleY": 1,
+                  "opacity": 1
+                }
+              },
+              {
+                "id": "5508fb5b-7515-4a15-b9d0-165e29217969",
+                "name": "Голова",
+                "imageId": "39610252-455b-4dc4-ae8a-5bb25d0cfb4b",
+                "parentId": "46dab2a2-74e0-4c37-80d5-4c145ab60d29",
+                "pivotX": 60,
+                "pivotY": 120,
+                "layer": 2,
+                "transform": {
+                  "x": 80,
+                  "y": 5,
+                  "rotation": 0,
+                  "scaleX": 1,
+                  "scaleY": 1,
+                  "opacity": 1
+                }
+              },
+              {
+                "id": "63872548-542c-4b7b-bcc3-b8355b69b9d0",
+                "name": "Рука",
+                "imageId": "3b90bea4-f86a-46a8-a202-3ead90f8e346",
+                "parentId": "46dab2a2-74e0-4c37-80d5-4c145ab60d29",
+                "pivotX": 22,
+                "pivotY": 22,
+                "layer": 1,
+                "transform": {
+                  "x": 140,
+                  "y": 35,
+                  "rotation": 0,
+                  "scaleX": 1,
+                  "scaleY": 1,
+                  "opacity": 1
+                }
+              }
+            ],
+            "clips": [
+              {
+                "id": "bfa34e9a-a08a-4e31-9eed-d37701093bc5",
+                "name": "Приветствие",
+                "duration": 2,
+                "loop": true,
+                "tracks": [
+                  {
+                    "partId": "46dab2a2-74e0-4c37-80d5-4c145ab60d29",
+                    "keys": [
+                      {
+                        "time": 0,
+                        "transform": {
+                          "x": 180,
+                          "y": 330,
+                          "rotation": 0,
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "opacity": 1
+                        },
+                        "imageId": null,
+                        "hold": false
+                      },
+                      {
+                        "time": 1,
+                        "transform": {
+                          "x": 180,
+                          "y": 320,
+                          "rotation": 0,
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "opacity": 1
+                        },
+                        "imageId": null,
+                        "hold": false
+                      },
+                      {
+                        "time": 2,
+                        "transform": {
+                          "x": 180,
+                          "y": 330,
+                          "rotation": 0,
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "opacity": 1
+                        },
+                        "imageId": null,
+                        "hold": false
+                      }
+                    ]
+                  },
+                  {
+                    "partId": "5508fb5b-7515-4a15-b9d0-165e29217969",
+                    "keys": [
+                      {
+                        "time": 0,
+                        "transform": {
+                          "x": 80,
+                          "y": 5,
+                          "rotation": 0,
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "opacity": 1
+                        },
+                        "imageId": null,
+                        "hold": false
+                      },
+                      {
+                        "time": 1,
+                        "transform": {
+                          "x": 80,
+                          "y": 5,
+                          "rotation": -8,
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "opacity": 1
+                        },
+                        "imageId": null,
+                        "hold": false
+                      },
+                      {
+                        "time": 2,
+                        "transform": {
+                          "x": 80,
+                          "y": 5,
+                          "rotation": 0,
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "opacity": 1
+                        },
+                        "imageId": null,
+                        "hold": false
+                      }
+                    ]
+                  },
+                  {
+                    "partId": "63872548-542c-4b7b-bcc3-b8355b69b9d0",
+                    "keys": [
+                      {
+                        "time": 0,
+                        "transform": {
+                          "x": 140,
+                          "y": 35,
+                          "rotation": -20,
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "opacity": 1
+                        },
+                        "imageId": null,
+                        "hold": false
+                      },
+                      {
+                        "time": 0.5,
+                        "transform": {
+                          "x": 140,
+                          "y": 35,
+                          "rotation": -110,
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "opacity": 1
+                        },
+                        "imageId": null,
+                        "hold": false
+                      },
+                      {
+                        "time": 1,
+                        "transform": {
+                          "x": 140,
+                          "y": 35,
+                          "rotation": -70,
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "opacity": 1
+                        },
+                        "imageId": null,
+                        "hold": false
+                      },
+                      {
+                        "time": 1.5,
+                        "transform": {
+                          "x": 140,
+                          "y": 35,
+                          "rotation": -110,
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "opacity": 1
+                        },
+                        "imageId": null,
+                        "hold": false
+                      },
+                      {
+                        "time": 2,
+                        "transform": {
+                          "x": 140,
+                          "y": 35,
+                          "rotation": -20,
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "opacity": 1
+                        },
+                        "imageId": null,
+                        "hold": false
+                      }
+                    ]
+                  }
+                ],
+                "frames": [],
+                "repeatCount": 0
+              }
+            ],
+            "defaultClipId": "bfa34e9a-a08a-4e31-9eed-d37701093bc5"
+          },
+          "id": "c1987036-f449-45cc-9d39-860b4e9d46da",
+          "name": "Из частей",
+          "imageId": "870aad3f-277c-4f26-b172-8fc6bb1d7930"
+        },
+        {
+          "visual": {
+            "width": 360,
+            "height": 560,
+            "parts": [],
+            "clips": [
+              {
+                "id": "7786168e-a74e-42fe-9b92-33eac73443e8",
+                "name": "Покадровое приветствие",
+                "duration": 2,
+                "loop": true,
+                "tracks": [],
+                "frames": [
+                  {
+                    "imageId": "5d322c92-c0bb-4694-9a68-8855921e21f9",
+                    "duration": 0.5
+                  },
+                  {
+                    "imageId": "acee6350-022d-4ab5-a6a2-5c24aad7a62a",
+                    "duration": 0.5
+                  },
+                  {
+                    "imageId": "1235f1b4-4868-4f1c-a50d-54a483b84b61",
+                    "duration": 0.5
+                  },
+                  {
+                    "imageId": "ba51b836-34a3-4834-9b76-3a4d995d608b",
+                    "duration": 0.5
+                  }
+                ],
+                "repeatCount": 0
+              }
+            ],
+            "defaultClipId": "7786168e-a74e-42fe-9b92-33eac73443e8"
+          },
+          "id": "d3bed45a-1a6e-44bd-87d8-5fd48a3baeb6",
+          "name": "Покадровый",
+          "imageId": "5d322c92-c0bb-4694-9a68-8855921e21f9"
+        }
+      ],
+      "defaultStateId": "c1987036-f449-45cc-9d39-860b4e9d46da"
+    }
+  ],
+  "defaultLanguage": "ru",
+  "explorerShowsFiles": false,
+  "dialogueUi": {
+    "css": ".dialogue {\n  background-color: #202226EE;\n  color: #E6E7E9;\n  padding: 24px;\n  border-color: #454950;\n  border-width: 1px;\n  border-radius: 8px;\n  font-size: 22px;\n  font-family: Inter;\n  text-align: left;\n  width: 960px;\n  min-height: 150px;\n  left: 32px;\n  bottom: 32px;\n}",
+    "showVoiceProgress": true,
+    "showVoiceControls": true,
+    "showNavigationControls": true
+  }
+}

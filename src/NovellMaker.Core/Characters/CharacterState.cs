@@ -1,7 +1,7 @@
 namespace NovellMaker.Core.Characters;
 
 /// <summary>
-/// A named visual state of a character backed by an imported image asset.
+/// A named pose with a static image or an optional layered/flipbook visual.
 /// </summary>
 public sealed record CharacterState(Guid Id, string Name, Guid ImageId)
 {
@@ -11,11 +11,14 @@ public sealed record CharacterState(Guid Id, string Name, Guid ImageId)
 
     public Guid ImageId { get; init; } = ValidateImageId(ImageId);
 
+    public CharacterVisual? Visual { get; init; }
+
     internal static void ValidateForPersistence(CharacterState state)
     {
         ValidateId(state.Id);
         ValidateName(state.Name);
         ValidateImageId(state.ImageId);
+        state.Visual?.Validate();
     }
 
     private static Guid ValidateId(Guid id)

@@ -1341,13 +1341,13 @@ public sealed class EditorWindowTests
             Dispatcher.UIThread.RunJobs();
             var sceneBackground = Find<ProjectImageView>(sample, "SceneBackground");
             var layer = Find<Canvas>(sample, "CharacterLayer");
-            await UntilAsync(() => sceneBackground.HasImage && layer.Children.OfType<ProjectImageView>().Single().HasImage);
+            await UntilAsync(() => sceneBackground.HasImage && layer.GetVisualDescendants().OfType<ProjectImageView>().Single().HasImage);
             Assert.AreEqual(sadId, document.SampleFrame!.Characters.Single().StateId);
             Assert.AreEqual("Анна", Find<TextBlock>(sample, "DialogueSpeaker").Text);
             var body = Find<TextBlock>(sample, "DialogueText");
             var colored = body.Inlines!.OfType<Run>().Single(run => run.Text == "я грущу");
             Assert.AreEqual(Color.FromRgb(224, 128, 128), ((SolidColorBrush)colored.Foreground!).Color);
-            Assert.IsTrue(layer.Children.OfType<ProjectImageView>().Single().TransparentBackground);
+            Assert.IsTrue(layer.GetVisualDescendants().OfType<ProjectImageView>().Single().TransparentBackground);
             Capture(window, "editor-scene-character.png");
 
             Find<TabControl>(window, "SceneSections").SelectedItem = Find<TabItem>(window, "PlacementTab");
@@ -1366,7 +1366,7 @@ public sealed class EditorWindowTests
             Assert.AreEqual(4m, document.PlacementLayer);
             sample.BringIntoView();
             Dispatcher.UIThread.RunJobs();
-            var sprite = layer.Children.OfType<ProjectImageView>().Single();
+            var sprite = layer.Children.OfType<CharacterVisualView>().Single();
             Assert.AreEqual(320, Canvas.GetLeft(sprite) + sprite.Width / 2, 0.01);
             Assert.AreEqual(612, Canvas.GetTop(sprite) + sprite.Height, 0.01);
             var beforeDrag = document.SelectedLine!.Model.Placements.Single().Placement!;
@@ -1847,6 +1847,48 @@ public sealed class EditorWindowTests
             return request.Completion.Task;
         }
     }
+
+    [TestMethod]
+    public Task CharacterPartsEditorAppliesPivotAndKeyAndRendersComposedPreview() => WithUi(async () =>
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "NovellMaker.UiRig", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var dialogs = new UiDialogs { SavePath = Path.Combine(directory, "rig.novell") };
+            using var session = new EditorSession(new JsonProjectStore(), dialogs, new UiGit());
+            var window = CreateWindow(session); window.Width = 1400; window.Height = 1100; window.Show();
+            await session.NewProjectAsync(); session.OpenCharacterLibrary(); Dispatcher.UIThread.RunJobs();
+            var editor = Find<CharacterAnimationEditor>(window, "CharacterAnimationEditor");
+            Button Action(string text) => editor.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == text);
+            Click(window, Action("Добавить готовый пример"));
+            await UntilAsync(() => !session.IsBusy && session.SelectedState?.Model.Visual is not null);
+            editor = Find<CharacterAnimationEditor>(window, "CharacterAnimationEditor");
+            await UntilAsync(() => editor.GetVisualDescendants().OfType<ProjectImageView>().Count(v => v.HasImage) == 3);
+            var state = session.SelectedState!.Id;
+            Find<NumericUpDown>(editor, "PartPivotX").Value = 18;
+            Click(window, Action("Применить часть (базовая поза)"));
+            Assert.AreEqual(18, session.SelectedState.Model.Visual!.Parts[0].PivotX);
+            Find<NumericUpDown>(editor, "PartRotation").Value = 22;
+            Find<NumericUpDown>(editor, "PartKeyTime").Value = .5m;
+            Click(window, Action("Записать ключ"));
+            Assert.AreEqual(22, session.SelectedState.Model.Visual!.Clips[0].Tracks.Single(t => t.PartId == session.SelectedState.Model.Visual.Parts[0].Id).Keys.Single(k => k.Time == .5).Transform.Rotation);
+            session.Undo(); session.Redo(); Assert.AreEqual(state, session.SelectedState.Id);
+            var preview = editor.GetVisualDescendants().OfType<CharacterVisualView>().Single();
+            preview.BringIntoView(); Dispatcher.UIThread.RunJobs();
+            await UntilAsync(() => editor.GetVisualDescendants().OfType<ProjectImageView>().Count(v => v.HasImage) == 3);
+            Capture(window, "editor-character-parts.png");
+            Click(window, Action("Пуск / пауза"));
+            await Task.Delay(150); Dispatcher.UIThread.RunJobs();
+            Assert.IsTrue(editor.GetVisualDescendants().OfType<Slider>().Single().Value > .5);
+            Click(window, Action("Пуск / пауза"));
+            await session.SaveAsync();
+            var loaded = await new JsonProjectStore().LoadAsync(dialogs.SavePath);
+            Assert.IsTrue(session.SelectedState.Model.Visual.ContentEquals(loaded.Characters[0].States[0].Visual));
+            window.Close();
+        }
+        finally { Directory.Delete(directory, true); }
+    });
 
     private sealed record PreviewRequest(CancellationToken Cancellation, TaskCompletionSource<byte[]> Completion);
 

@@ -24,6 +24,8 @@ public sealed record GameState
     [JsonRequired] public string? Error { get; init; }
     [JsonRequired] public ImmutableDictionary<string, string> Variables { get; init; } = ImmutableDictionary<string, string>.Empty;
     [JsonRequired] public ImmutableDictionary<Guid, Guid> ObjectStates { get; init; } = ImmutableDictionary<Guid, Guid>.Empty;
+    public ImmutableDictionary<Guid, Guid> CharacterClips { get; init; } = ImmutableDictionary<Guid, Guid>.Empty;
+    public ImmutableDictionary<Guid, double> CharacterStartedAt { get; init; } = ImmutableDictionary<Guid, double>.Empty;
     [JsonRequired] public ImmutableArray<Guid> VisibleObjects { get; init; } = [];
     [JsonRequired] public ImmutableDictionary<Guid, CharacterPlacement> Placements { get; init; } = ImmutableDictionary<Guid, CharacterPlacement>.Empty;
     [JsonRequired] public ImmutableArray<ActiveMove> ActiveActions { get; init; } = [];
