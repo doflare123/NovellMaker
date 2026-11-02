@@ -6,7 +6,7 @@ Avalonia, MonoGame и ограниченный Lua 5.2/MoonSharp. Сцены, и
 
 Начните с [руководства автора](docs/lua-reference/engine-guide.md)
 и [полного справочника Lua](docs/lua-reference/index.md).
-В справочнике 109 функций, модель исполнения, все события, квоты и
+В справочнике 111 функций, модель исполнения, все события, квоты и
 проверяемые примеры сценариев, интерфейсов и мини-игр.
 Ограничения проверки: [verification.md](docs/lua-reference/verification.md).
 

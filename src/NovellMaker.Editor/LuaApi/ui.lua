@@ -263,3 +263,7 @@ function ui.is_restoring() end
 function ui.complete_minigame(result) end
 ---Cancel this mini-game and continue the scenario with status cancelled.
 function ui.cancel_minigame() end
+
+---Opt into exact argument counts/types for this VM. Defaults to false; no commands emitted.
+---@param enabled boolean
+function ui.strict_arguments(enabled) end

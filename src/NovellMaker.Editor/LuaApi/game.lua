@@ -65,7 +65,7 @@ function game.wait_click(token) end
 ---@param width number
 ---@param height number
 function game.hotspot(id, text, x, y, width, height) end
----@param result string Writes minigame.result; no mini-game lifecycle.
+---@param result string Writes minigame.result and updates game.get immediately; no mini-game lifecycle.
 function game.finish(result) end
 ---@param resource string Registered script GUID or refs.script. Queued, no return value.
 function game.run(resource) end
@@ -83,5 +83,10 @@ function game.choice(options) end
 ---@param parameters? NMValue Defaults are taken from the resource.
 function game.start_minigame(sceneId, parameters) end
 ---Last committed structured outcome, separate from legacy game.finish(string).
----@return {status:string,data:NMValue}?
+---Top-level null data is Lua nil; nested nulls retain their markers.
+---@return {status:string,data:NMValue?}?
 function game.minigame_result() end
+
+---Opt into exact argument counts/types for this VM. Defaults to false; no commands emitted.
+---@param enabled boolean
+function game.strict_arguments(enabled) end

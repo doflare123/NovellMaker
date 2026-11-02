@@ -244,7 +244,7 @@ public sealed class LuaReferenceExamplesTests
     }
 
     [TestMethod]
-    public void LegacyFinishDoesNotChangeTheCurrentLuaGetSnapshot()
+    public void LegacyFinishUpdatesTheCurrentLuaGetSnapshot()
     {
         var scene = NovelScene.Create("Story");
         var project = NovelProject.Create("Reference") with { Scenes = [scene] };
@@ -252,7 +252,7 @@ public sealed class LuaReferenceExamplesTests
         var commands = LuaActionScript.Run(new(Guid.NewGuid(),
             "game.finish('new'); game.set('observed',game.get('minigame.result') or 'missing')", "finish-snapshot"), state, project);
         Assert.AreEqual("new", ((SetAction)commands[0]).Value);
-        Assert.AreEqual("missing", ((SetAction)commands[1]).Value);
+        Assert.AreEqual("new", ((SetAction)commands[1]).Value);
     }
 
     [TestMethod]
@@ -272,15 +272,18 @@ public sealed class LuaReferenceExamplesTests
     }
 
     [TestMethod]
-    public void CancelledMinigameDataIsANullMarkerRatherThanLuaNilInScenarioWorker()
+    [DataRow(MinigamePhase.Cancelled)]
+    [DataRow(MinigamePhase.Failed)]
+    [DataRow(MinigamePhase.Completed)]
+    public void NullMinigameDataIsLuaNilInScenarioWorker(MinigamePhase phase)
     {
         var scene = NovelScene.Create("Story");
         var project = NovelProject.Create("Reference") with { Scenes = [scene] };
         var state = new GameState { ProjectId = project.Id, SceneId = scene.Id, Revision = "reference",
-            MinigameOutcome = new(Guid.NewGuid(), new(MinigamePhase.Cancelled, LuaValue.Null, "")) };
+            MinigameOutcome = new(Guid.NewGuid(), new(phase, LuaValue.Null, "")) };
         var commands = LuaActionScript.Run(new(Guid.NewGuid(),
-            "local r=game.minigame_result(); game.set('observed', r.status=='cancelled' and r.data~=nil and 'marker' or 'unexpected')",
+            $"local r=game.minigame_result(); game.set('observed', r.status=='{phase.ToString().ToLowerInvariant()}' and r.data==nil and 'nil' or 'unexpected')",
             "null-projection"), state, project);
-        Assert.AreEqual("marker", ((SetAction)commands.Single()).Value);
+        Assert.AreEqual("nil", ((SetAction)commands.Single()).Value);
     }
 }

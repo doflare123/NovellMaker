@@ -50,8 +50,15 @@ internal sealed class ScreenLuaVm
         string Handle(Guid id) => new ScreenNodeHandle(definition.Id, instanceId, id).ToString();
         foreach (var pair in references) refs.Set(pair.Key, DynValue.NewString(Handle(pair.Value)));
         script.Globals.Set("refs", DynValue.NewTable(refs));
-        void Bind(string name, Func<CallbackArguments, DynValue> callback) => ui.Set(name, DynValue.NewCallback((_, args) => callback(args)));
-        string Str(CallbackArguments args, int index) => args.AsType(index, "ui", DataType.String, false).String;
+        var arguments = new LuaApiArguments("ui");
+        void Bind(string name, int minimum, int maximum, Func<CallbackArguments, DynValue> callback) =>
+            ui.Set(name, DynValue.NewCallback((_, args) =>
+            {
+                arguments.CheckCount(name, args, minimum, maximum);
+                return callback(args);
+            }));
+        Bind("strict_arguments", 1, 1, arguments.Configure);
+        string Str(CallbackArguments args, int index) => arguments.Read(args, index, DataType.String).String;
         Guid Node(CallbackArguments args, int index = 0) => ScreenNodeHandle.TryParse(Str(args, index), out var handle) && handle.ResourceId == definition.Id && handle.InstanceId == instanceId &&
             Definition.Nodes.Any(n => n.Id == handle.NodeId) ? handle.NodeId : throw new ScriptRuntimeException("Чужой или удалённый узел экрана.");
         DynValue Add(ScreenChange change)
@@ -62,20 +69,20 @@ internal sealed class ScreenLuaVm
         }
         animations.Install(script, ui, () => handling, a => Node(a), () => Definition, Add);
         LuaAudioApi.Install(script, ui, audioReferences ?? ImmutableDictionary<string, Guid>.Empty, () => handling, Add);
-        void Input(string name, bool node) => Bind(name, a =>
+        void Input(string name, bool node) => Bind(name, node ? 1 : 0, node ? 1 : 0, a =>
         {
             if (!handling || !InputEvents || a.Count != (node ? 1 : 0)) throw new ScriptRuntimeException("Команда ввода требует input_events=true и обработчик с точными аргументами.");
             return Add(new(name, node ? Node(a) : null, null, null));
         });
         Input("capture_pointer", true); Input("release_pointer", false); Input("focus", true);
-        Bind("set_text", a => Add(new("text", Node(a), Str(a, 1), null)));
-        Bind("set_visible", a => Add(new("visible", Node(a), null, a.AsType(1, "ui", DataType.Boolean, false).Boolean)));
-        Bind("set_enabled", a => Add(new("enabled", Node(a), null, a.AsType(1, "ui", DataType.Boolean, false).Boolean)));
-        Bind("set_geometry", a => Add(new("geometry", Node(a), null, null) { Patch = ReadPatch(a.AsType(1, "ui", DataType.Table, false).Table) }));
-        Bind("set_parent", a => Add(new("parent", Node(a), null, null) { ParentId = Node(a, 1) }));
-        Bind("remove", a => Add(new("remove", Node(a), null, null)));
-        Bind("find", a => references.TryGetValue(Str(a, 0), out var id) && Definition.Nodes.Any(n => n.Id == id) ? DynValue.NewString(Handle(id)) : DynValue.Nil);
-        Bind("create", a =>
+        Bind("set_text", 2, 2, a => Add(new("text", Node(a), Str(a, 1), null)));
+        Bind("set_visible", 2, 2, a => Add(new("visible", Node(a), null, arguments.Read(a, 1, DataType.Boolean).Boolean)));
+        Bind("set_enabled", 2, 2, a => Add(new("enabled", Node(a), null, arguments.Read(a, 1, DataType.Boolean).Boolean)));
+        Bind("set_geometry", 2, 2, a => Add(new("geometry", Node(a), null, null) { Patch = ReadPatch(arguments.Read(a, 1, DataType.Table).Table) }));
+        Bind("set_parent", 2, 2, a => Add(new("parent", Node(a), null, null) { ParentId = Node(a, 1) }));
+        Bind("remove", 1, 1, a => Add(new("remove", Node(a), null, null)));
+        Bind("find", 1, 1, a => references.TryGetValue(Str(a, 0), out var id) && Definition.Nodes.Any(n => n.Id == id) ? DynValue.NewString(Handle(id)) : DynValue.Nil);
+        Bind("create", 2, 2, a =>
         {
             var sourceId = Node(a); var parentId = Node(a, 1);
             var copy = ScreenTree.Copy(Definition, sourceId, parentId);
@@ -84,25 +91,25 @@ internal sealed class ScreenLuaVm
             foreach (var pair in copy.Ids) mapped.Set(Handle(pair.Key), DynValue.NewString(Handle(pair.Value)));
             return DynValue.NewTuple(DynValue.NewString(Handle(copy.Ids[sourceId])), DynValue.NewTable(mapped));
         });
-        Bind("close", _ => Add(new("close", null, null, null)));
-        Bind("get", a => snapshot.TryGetValue(Str(a, 0), out var value) ? DynValue.NewString(value) : DynValue.Nil);
+        Bind("close", 0, 0, _ => Add(new("close", null, null, null)));
+        Bind("get", 1, 1, a => snapshot.TryGetValue(Str(a, 0), out var value) ? DynValue.NewString(value) : DynValue.Nil);
         var projection = new LuaValueProjection(script);
-        Bind("minigame_parameters", _ => handling && this.minigame is { } invocation ? projection.Write(invocation.Parameters) :
+        Bind("minigame_parameters", 0, 0, _ => handling && this.minigame is { } invocation ? projection.Write(invocation.Parameters) :
             throw new ScriptRuntimeException("Нет активного обработчика мини-игры."));
-        Bind("is_restoring", _ => handling && this.minigame is not null ? DynValue.NewBoolean(this.minigame.Restoring) :
+        Bind("is_restoring", 0, 0, _ => handling && this.minigame is not null ? DynValue.NewBoolean(this.minigame.Restoring) :
             throw new ScriptRuntimeException("Нет активного обработчика мини-игры."));
         DynValue Complete(NovellMaker.Core.Minigames.MinigamePhase phase, LuaValue result, string message)
         {
             if (!handling || this.minigame is null) throw new ScriptRuntimeException("Нет активного обработчика мини-игры.");
             return Add(new("minigame_result", null, null, null) { MinigameResult = new(phase, result, message) });
         }
-        Bind("complete_minigame", a => Complete(NovellMaker.Core.Minigames.MinigamePhase.Completed, projection.Read(a[0]), ""));
-        Bind("cancel_minigame", _ => Complete(NovellMaker.Core.Minigames.MinigamePhase.Cancelled, LuaValue.Null, "Отменено автором."));
+        Bind("complete_minigame", 1, 1, a => Complete(NovellMaker.Core.Minigames.MinigamePhase.Completed, projection.Read(a[0]), ""));
+        Bind("cancel_minigame", 0, 0, _ => Complete(NovellMaker.Core.Minigames.MinigamePhase.Cancelled, LuaValue.Null, "Отменено автором."));
         ui.Set("null", projection.Null);
-        Bind("list", a => projection.Mark(a[0], true));
-        Bind("object", a => projection.Mark(a[0], false));
-        Bind("get_state", _ => handling ? projection.Write(state) : throw new ScriptRuntimeException("Состояние доступно только в обработчике."));
-        Bind("set_state", a =>
+        Bind("list", 1, 1, a => projection.Mark(a[0], true));
+        Bind("object", 1, 1, a => projection.Mark(a[0], false));
+        Bind("get_state", 0, 0, _ => handling ? projection.Write(state) : throw new ScriptRuntimeException("Состояние доступно только в обработчике."));
+        Bind("set_state", 1, 1, a =>
         {
             if (!handling) throw new ScriptRuntimeException("Состояние доступно только в обработчике.");
             var next = projection.Read(a[0]);
@@ -117,38 +124,38 @@ internal sealed class ScreenLuaVm
         string ExactString(CallbackArguments a, int index) => a[index].Type == DataType.String ? a[index].String :
             throw new ScriptRuntimeException("Ожидалась строка.");
         string? OptionalString(CallbackArguments a, int index) => a[index].IsNil() ? null : ExactString(a, index);
-        Bind("trigger", a => Add(new("trigger", null, null, null) { Trigger = new(ExactString(a, 0), OptionalString(a, 1)) }));
+        Bind("trigger", 1, 2, a => Add(new("trigger", null, null, null) { Trigger = new(ExactString(a, 0), OptionalString(a, 1)) }));
         DynValue Service(GameServiceAction action, string? slot = null, string? title = null, Guid? scene = null, PlayerSettingChange? setting = null, string? key = null, string? data = null)
         {
             var command = new GameServiceCommand(Guid.NewGuid(), action, slot, title, scene) { Setting = setting, Key = key, DataValue = data };
             command.Validate(); Add(new("service", null, null, null) { Service = command });
             return DynValue.NewString(command.RequestId.ToString("N"));
         }
-        Bind("new_game", a => Service(GameServiceAction.NewGame, scene: Optional(a, 0) is { } id
+        Bind("new_game", 0, 1, a => Service(GameServiceAction.NewGame, scene: Optional(a, 0) is { } id
             ? Guid.TryParse(id, out var parsed) && parsed != Guid.Empty ? parsed : throw new ScriptRuntimeException("Ожидался ID сцены.") : null));
-        Bind("main_menu", _ => Service(GameServiceAction.MainMenu));
-        Bind("end_session", _ => Service(GameServiceAction.EndSession));
-        Bind("continue_game", _ => Service(GameServiceAction.ContinueGame));
-        Bind("list_slots", _ => Service(GameServiceAction.ListSlots));
-        Bind("save_slot", a => Service(GameServiceAction.SaveSlot, Optional(a, 0), Optional(a, 1)));
-        Bind("load_slot", a => Service(GameServiceAction.LoadSlot, Str(a, 0)));
-        Bind("delete_slot", a => Service(GameServiceAction.DeleteSlot, Str(a, 0)));
-        Bind("get_settings", _ => Service(GameServiceAction.GetSettings));
-        Bind("check_game_release", a =>
+        Bind("main_menu", 0, 0, _ => Service(GameServiceAction.MainMenu));
+        Bind("end_session", 0, 0, _ => Service(GameServiceAction.EndSession));
+        Bind("continue_game", 0, 0, _ => Service(GameServiceAction.ContinueGame));
+        Bind("list_slots", 0, 0, _ => Service(GameServiceAction.ListSlots));
+        Bind("save_slot", 0, 2, a => Service(GameServiceAction.SaveSlot, Optional(a, 0), Optional(a, 1)));
+        Bind("load_slot", 1, 1, a => Service(GameServiceAction.LoadSlot, Str(a, 0)));
+        Bind("delete_slot", 1, 1, a => Service(GameServiceAction.DeleteSlot, Str(a, 0)));
+        Bind("get_settings", 0, 0, _ => Service(GameServiceAction.GetSettings));
+        Bind("check_game_release", 0, 0, a =>
         {
             if (a.Count != 0) throw new ScriptRuntimeException("check_game_release ожидает 0 аргументов.");
             return Service(GameServiceAction.CheckGameRelease);
         });
-        Bind("cancel_release_check", a =>
+        Bind("cancel_release_check", 1, 1, a =>
         {
             if (a.Count != 1 || !Guid.TryParseExact(ExactString(a, 0), "N", out var id) || id == Guid.Empty)
                 throw new ScriptRuntimeException("cancel_release_check ожидает ID запроса.");
             var command = new GameServiceCommand(Guid.NewGuid(), GameServiceAction.CancelReleaseCheck) { ReleaseRequestId = id };
             command.Validate(); Add(new("service", null, null, null) { Service = command }); return DynValue.Nil;
         });
-        Bind("get_persistent", a => Service(GameServiceAction.GetPersistent, key: ExactString(a, 0)));
-        Bind("set_persistent", a => Service(GameServiceAction.SetPersistent, key: ExactString(a, 0), data: OptionalString(a, 1)));
-        Bind("set_setting", a =>
+        Bind("get_persistent", 1, 1, a => Service(GameServiceAction.GetPersistent, key: ExactString(a, 0)));
+        Bind("set_persistent", 1, 2, a => Service(GameServiceAction.SetPersistent, key: ExactString(a, 0), data: OptionalString(a, 1)));
+        Bind("set_setting", 2, 2, a =>
         {
             var value = a[1];
             if (value.Type is not (DataType.Number or DataType.Boolean)) throw new ScriptRuntimeException("Настройка ожидает число или boolean.");
@@ -156,7 +163,7 @@ internal sealed class ScreenLuaVm
                 value.Type == DataType.Number ? value.Number : null, value.Type == DataType.Boolean ? value.Boolean : null));
         });
         script.Globals.Set("ui", DynValue.NewTable(ui));
-        handlers = Execute(new LuaModuleLoader(script, library).Compile(source, modules, ui));
+        handlers = Execute(new LuaModuleLoader(script, library, arguments).Compile(source, modules, ui));
         if (handlers.Type != DataType.Table || handlers.Table.Get("on_event").Type != DataType.Function ||
             handlers.Table.Get("on_load").Type is not (DataType.Nil or DataType.Function))
             throw new InvalidOperationException("Экранный Lua должен вернуть таблицу с функцией on_event и необязательной on_load.");

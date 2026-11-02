@@ -303,6 +303,6 @@ return {on_load=function() ui.check_game_release() end,
 
 ## Результат мини-игры в сценарии
 
-Это **не ui-событие**: следующая game-VM читает `game.minigame_result() -> {status,data}|nil`. status: `completed`, `cancelled`, `failed`. При completed data соответствует ResultSchema, при двух других — null-маркер. Message, SceneId и RunId host сохраняет внутренне, но Lua-функция их не возвращает. `game.start_minigame` очищает прошлый итог при исполнении; итог затем хранится в GameState/слоте. Старое строковое `game.finish` от него независимо.
+Это **не ui-событие**: следующая game-VM читает `game.minigame_result() -> {status,data}|nil`. status: `completed`, `cancelled`, `failed`. При completed data соответствует ResultSchema, при двух других — Lua nil. Completed с data=null также проецируется в nil; вложенные null остаются маркерами. Message, SceneId и RunId host сохраняет внутренне, но Lua-функция их не возвращает. `game.start_minigame` очищает прошлый итог при исполнении; итог затем хранится в GameState/слоте. Старое строковое `game.finish` от него независимо.
 
 Пример: [мини-игра и следующий ресурс](examples.md#minigame). Источники: [проекция](../../src/NovellMaker.Core/Execution/LuaActionScript.cs), [lifecycle](../../src/NovellMaker.Core/Execution/ScenarioPlayer.Minigames.cs). Тесты: [MinigameTests](../../tests/NovellMaker.Core.Tests/Execution/MinigameTests.cs).

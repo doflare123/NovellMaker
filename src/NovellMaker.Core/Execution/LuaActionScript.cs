@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using MoonSharp.Interpreter;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Scenes;
+using NovellMaker.Core.Scripting;
 
 namespace NovellMaker.Core.Execution;
 
@@ -82,10 +83,11 @@ public static class LuaActionScript
             if (!catalog.IsValid(command)) throw new ScriptRuntimeException($"Некорректные параметры или ссылки команды {command.GetType().Name}.");
             commands.Add(command);
         }
-        string Str(CallbackArguments args, int index) => args.AsType(index, "game", DataType.String, false).String;
+        var arguments = new LuaApiArguments("game");
+        string Str(CallbackArguments args, int index) => arguments.Read(args, index, DataType.String).String;
         double Num(CallbackArguments args, int index)
         {
-            var value = args.AsType(index, "game", DataType.Number, false).Number;
+            var value = arguments.Read(args, index, DataType.Number).Number;
             return double.IsFinite(value) ? value : throw new ScriptRuntimeException("Ожидается конечное число.");
         }
         int Layer(CallbackArguments args, int index)
@@ -95,18 +97,26 @@ public static class LuaActionScript
         }
         Guid Id(CallbackArguments args, int index) => Guid.TryParse(Str(args, index), out var id) && id != Guid.Empty
             ? id : throw new ScriptRuntimeException("Ожидается непустой GUID.");
-        void Bind(string name, Func<CallbackArguments, DynValue> callback) =>
-            api.Set(name, DynValue.NewCallback((_, args) => callback(args)));
+        void Bind(string name, int minimum, int maximum, Func<CallbackArguments, DynValue> callback) =>
+            api.Set(name, DynValue.NewCallback((_, args) =>
+            {
+                arguments.CheckCount(name, args, minimum, maximum);
+                return callback(args);
+            }));
         DynValue Emit(ScenarioAction command) { Add(command); return DynValue.Nil; }
-        Bind("get", a => variables.TryGetValue(Str(a, 0), out var value) ? DynValue.NewString(value) : DynValue.Nil);
-        Bind("set", a => { var key = Str(a, 0); var value = Str(a, 1);
+        DynValue Set(string key, string value)
+        {
             if (!LuaLimits.ValidVariable(key, value)) throw new ScriptRuntimeException("Превышен размер переменной Lua.");
             variables[key] = value;
             if (!LuaLimits.ValidVariables(variables)) throw new ScriptRuntimeException("Превышен бюджет переменных Lua.");
-            return Emit(new SetAction(Guid.NewGuid(), key, value)); });
-        Bind("time", _ => DynValue.NewNumber(state.Time));
-        Bind("visible", a => DynValue.NewBoolean(state.VisibleObjects.Contains(Id(a, 0))));
-        Bind("object", a =>
+            return Emit(new SetAction(Guid.NewGuid(), key, value));
+        }
+        Bind("strict_arguments", 1, 1, arguments.Configure);
+        Bind("get", 1, 1, a => variables.TryGetValue(Str(a, 0), out var value) ? DynValue.NewString(value) : DynValue.Nil);
+        Bind("set", 2, 2, a => Set(Str(a, 0), Str(a, 1)));
+        Bind("time", 0, 0, _ => DynValue.NewNumber(state.Time));
+        Bind("visible", 1, 1, a => DynValue.NewBoolean(state.VisibleObjects.Contains(Id(a, 0))));
+        Bind("object", 1, 1, a =>
         {
             var id = Id(a, 0); var table = new Table(script);
             table.Set("visible", DynValue.NewBoolean(state.VisibleObjects.Contains(id)));
@@ -118,34 +128,44 @@ public static class LuaActionScript
             }
             return DynValue.NewTable(table);
         });
-        Bind("show", a => Emit(new ShowAction(Guid.NewGuid(), Id(a, 0))));
-        Bind("hide", a => Emit(new HideAction(Guid.NewGuid(), Id(a, 0))));
-        Bind("state", a => Emit(new StateAction(Guid.NewGuid(), Id(a, 0), Id(a, 1))));
-        Bind("text", a => Emit(new TextAction(Guid.NewGuid(), Id(a, 0))));
-        Bind("place", a => Emit(new PlaceAction(Guid.NewGuid(), Id(a, 0), new CharacterPlacement(Num(a, 1), Num(a, 2), Num(a, 3), Layer(a, 4)))));
-        Bind("auto", a => Emit(new PlaceAction(Guid.NewGuid(), Id(a, 0), null)));
-        Bind("move", a => Emit(new MoveAction(Guid.NewGuid(), Id(a, 0),
+        Bind("show", 1, 1, a => Emit(new ShowAction(Guid.NewGuid(), Id(a, 0))));
+        Bind("hide", 1, 1, a => Emit(new HideAction(Guid.NewGuid(), Id(a, 0))));
+        Bind("state", 2, 2, a => Emit(new StateAction(Guid.NewGuid(), Id(a, 0), Id(a, 1))));
+        Bind("text", 1, 1, a => Emit(new TextAction(Guid.NewGuid(), Id(a, 0))));
+        Bind("place", 5, 5, a => Emit(new PlaceAction(Guid.NewGuid(), Id(a, 0), new CharacterPlacement(Num(a, 1), Num(a, 2), Num(a, 3), Layer(a, 4)))));
+        Bind("auto", 1, 1, a => Emit(new PlaceAction(Guid.NewGuid(), Id(a, 0), null)));
+        Bind("move", 6, 6, a => Emit(new MoveAction(Guid.NewGuid(), Id(a, 0),
             new CharacterPlacement(Num(a, 1), Num(a, 2), Num(a, 3), Layer(a, 4)), Num(a, 5))));
-        Bind("wait", a => Emit(new WaitAction(Guid.NewGuid(), "timer", Num(a, 0))));
-        Bind("wait_input", _ => Emit(new WaitAction(Guid.NewGuid(), "input")));
-        Bind("wait_actions", _ => Emit(new WaitAction(Guid.NewGuid(), "actions")));
-        Bind("wait_click", a => Emit(new WaitAction(Guid.NewGuid(), "interaction", Token: a.Count == 0 ? null : Id(a, 0))));
-        Bind("hotspot", a => Emit(new HotspotAction(Guid.NewGuid(), Id(a, 0), Str(a, 1), Num(a, 2), Num(a, 3), Num(a, 4), Num(a, 5))));
-        Bind("finish", a => Emit(new SetAction(Guid.NewGuid(), "minigame.result", Str(a, 0))));
+        Bind("wait", 1, 1, a => Emit(new WaitAction(Guid.NewGuid(), "timer", Num(a, 0))));
+        Bind("wait_input", 0, 0, _ => Emit(new WaitAction(Guid.NewGuid(), "input")));
+        Bind("wait_actions", 0, 0, _ => Emit(new WaitAction(Guid.NewGuid(), "actions")));
+        Bind("wait_click", 0, 1, a => Emit(new WaitAction(Guid.NewGuid(), "interaction", Token: a.Count == 0 ? null : Id(a, 0))));
+        Bind("hotspot", 6, 6, a => Emit(new HotspotAction(Guid.NewGuid(), Id(a, 0), Str(a, 1), Num(a, 2), Num(a, 3), Num(a, 4), Num(a, 5))));
+        Bind("finish", 1, 1, a => Set("minigame.result", Str(a, 0)));
         var values = new NovellMaker.Core.Scripting.LuaValueProjection(script);
-        Bind("start_minigame", a =>
+        Bind("start_minigame", 1, 2, a =>
         {
             var id = Id(a, 0);
             if (catalog.Minigames is not { } games || !games.TryGetValue(id, out var resource)) throw new ScriptRuntimeException("Ресурс мини-игры отсутствует.");
             return Emit(new StartMinigameAction(Guid.NewGuid(), id, a.Count < 2 ? resource.Defaults : values.Read(a[1])));
         });
-        Bind("minigame_result", _ => state.MinigameOutcome is { } result ? values.Write(NovellMaker.Core.Scripting.LuaValue.FromObject(
-            new Dictionary<string, NovellMaker.Core.Scripting.LuaValue> { ["status"] = NovellMaker.Core.Scripting.LuaValue.FromString(result.Result.Phase.ToString().ToLowerInvariant()), ["data"] = result.Result.Data })) : DynValue.Nil);
-        Bind("run", a => Emit(new RunScriptAction(Guid.NewGuid(), Id(a, 0))));
-        Bind("jump", a => Emit(new JumpAction(Guid.NewGuid(), Id(a, 0), Id(a, 1))));
-        Bind("choice", a =>
+        Bind("minigame_result", 0, 0, _ =>
         {
-            var table = a.AsType(0, "choice", DataType.Table, false).Table;
+            if (state.MinigameOutcome is not { } outcome) return DynValue.Nil;
+            var result = values.Write(LuaValue.FromObject(new Dictionary<string, LuaValue>
+            {
+                ["status"] = LuaValue.FromString(outcome.Result.Phase.ToString().ToLowerInvariant()),
+                ["data"] = outcome.Result.Data
+            }));
+            // Only the optional top-level payload maps to nil. Nested nulls retain list/object shape.
+            if (outcome.Result.Data.Kind == LuaValueKind.Null) result.Table.Set("data", DynValue.Nil);
+            return result;
+        });
+        Bind("run", 1, 1, a => Emit(new RunScriptAction(Guid.NewGuid(), Id(a, 0))));
+        Bind("jump", 2, 2, a => Emit(new JumpAction(Guid.NewGuid(), Id(a, 0), Id(a, 1))));
+        Bind("choice", 1, 1, a =>
+        {
+            var table = arguments.Read(a, 0, DataType.Table).Table;
             if (table.Length is < 1 or > 8) throw new ScriptRuntimeException("Выбор содержит от 1 до 8 вариантов.");
             var options = ImmutableArray.CreateBuilder<ChoiceOption>();
             for (var i = 1; i <= table.Length; i++)
@@ -162,7 +182,7 @@ public static class LuaActionScript
         var references = new Table(script);
         foreach (var reference in action.References) references.Set(reference.Key, DynValue.NewString(reference.Value.ToString()));
         script.Globals.Set("refs", DynValue.NewTable(references));
-        Bind("jump_line", a => Emit(new JumpAction(Guid.NewGuid(), Id(a, 0), ScenarioProgram.LineEntryId(Id(a, 1)))));
+        Bind("jump_line", 2, 2, a => Emit(new JumpAction(Guid.NewGuid(), Id(a, 0), ScenarioProgram.LineEntryId(Id(a, 1)))));
         try
         {
             var function = script.LoadString(action.Source, null, action.Name);

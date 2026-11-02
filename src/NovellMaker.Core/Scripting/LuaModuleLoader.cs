@@ -4,7 +4,7 @@ using MoonSharp.Interpreter;
 namespace NovellMaker.Core.Scripting;
 
 /// <summary>VM-local cache and environments. Imports call Lua chunks in the caller's coroutine, never recursively through CLR.</summary>
-internal sealed class LuaModuleLoader(Script script, LuaStandardLibrary library)
+internal sealed class LuaModuleLoader(Script script, LuaStandardLibrary library, LuaApiArguments arguments)
 {
     private readonly Dictionary<Guid, DynValue> chunks = [];
     private readonly Dictionary<Guid, DynValue> exports = [];
@@ -30,6 +30,7 @@ internal sealed class LuaModuleLoader(Script script, LuaStandardLibrary library)
             descriptor.Set("ui", DynValue.NewTable(api));
             descriptor.Set("resolve", DynValue.NewCallback((_, args) =>
             {
+                arguments.CheckCount("import", args, 1, 1);
                 if (args[0].Type != DataType.String || !Guid.TryParse(args[0].String, out var id) || !allowed.Contains(id))
                     throw new ScriptRuntimeException("Lua-модуль не объявлен: используйте ui.import(modules.<имя>) и ссылки Lua-ресурса.");
                 if (exports.TryGetValue(id, out var value)) return DynValue.NewTuple(value, DynValue.Nil);
@@ -53,8 +54,9 @@ internal sealed class LuaModuleLoader(Script script, LuaStandardLibrary library)
         return script.LoadString("""
             for i=1,#apis do
               local api=apis[i]
-              api.ui.import=function(id)
-                local value,chunk=api.resolve(id)
+              api.ui.import=function(...)
+                local id=...
+                local value,chunk=api.resolve(...)
                 if chunk==nil then return value end
                 value=chunk()
                 return publish(id,value)

@@ -1,6 +1,6 @@
 # Lua-справочник NovellMaker
 
-Практический справочник текущего кода на 1 ноября 2026 года. Проект v22, Lua 5.2/MoonSharp 2.0.0, screen protocol v19. Запланированные функции не включены. Для начала прочитайте [модель исполнения](execution-model.md), затем [законченные примеры](examples.md). Персонажи из частей, ключевые кадры и GIF: [руководство анимации](characters.md). Возможности редактора, ресурсы и экспорт: [руководство движка](engine-guide.md).
+Практический справочник текущего кода на 2 ноября 2026 года. Проект v22, Lua 5.2/MoonSharp 2.0.0, screen protocol v19. Запланированные функции не включены. Для начала прочитайте [модель исполнения](execution-model.md), затем [законченные примеры](examples.md). Персонажи из частей, ключевые кадры и GIF: [руководство анимации](characters.md). Возможности редактора, ресурсы и экспорт: [руководство движка](engine-guide.md).
 
 ## Категории
 
@@ -24,6 +24,8 @@
 
 `refs`, `modules`, `audio`, `ui.null`, `math.pi`, таблицы handlers и событий, строки ID и handles **не функции**. Их контексты/сроки жизни описаны в [модели исполнения](execution-model.md#namespaces). Авторские функции модулей и примеров не становятся API движка. Ни весь Lua, ни вся стандартная библиотека MoonSharp не подключены.
 
+По умолчанию сохранены старые преобразования аргументов. Строгий режим включается явно: [game.strict_arguments](scenario.md#game-strict-arguments) или [ui.strict_arguments](components.md#ui-strict-arguments).
+
 ## Полный алфавитный указатель
 
 - [game.auto](scenario.md#game-auto)
@@ -43,6 +45,7 @@
 - [game.show](scenario.md#game-show)
 - [game.start_minigame](scenario.md#game-start-minigame)
 - [game.state](scenario.md#game-state)
+- [game.strict_arguments](scenario.md#game-strict-arguments)
 - [game.text](scenario.md#game-text)
 - [game.time](scenario.md#game-time)
 - [game.visible](scenario.md#game-visible)
@@ -133,9 +136,10 @@
 - [ui.set_text](components.md#ui-set-text)
 - [ui.set_visible](components.md#ui-set-visible)
 - [ui.stop_audio](audio.md#ui-stop-audio)
+- [ui.strict_arguments](components.md#ui-strict-arguments)
 - [ui.trigger](input-and-triggers.md#ui-trigger)
 - [ui.tween](animations.md#ui-tween)
 
-**Всего 109 функций:** game — 24, ui — 50 (включая import), ограниченная библиотека ui — 35. В модуле тот же ui и библиотека, новых встроенных экспортов нет.
+**Всего 111 функций:** game — 25, ui — 51 (включая import), ограниченная библиотека ui — 35. В модуле тот же ui и библиотека, новых встроенных экспортов нет.
 
 Параметры появления текста, авточтение, пропуск прочитанного и история с повтором голоса: [чтение новеллы](engine-guide.md#чтение-новеллы).
