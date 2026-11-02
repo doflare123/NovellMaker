@@ -9,9 +9,16 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
 {
     public static string DefaultTemplateDirectory => Path.Combine(AppContext.BaseDirectory, "ExportTemplates", "win-x64");
 
-    public async Task ExportAsync(NovelProject project, string assetsRoot, Guid startSceneId, string destination)
+    public async Task ExportAsync(NovelProject project, string assetsRoot, Guid startSceneId, string destination,
+        WindowsGameOptions? options = null)
     {
         _ = project.ReleaseCheck?.ToConfiguration();
+        var explicitOptions = options is not null;
+        options ??= new(project.ReleaseCheck?.CurrentVersion ?? "1.0.0");
+        options.ValidateProjectVersion(project);
+        var icon = WindowsExecutableBranding.ReadIcon(options.IconPath);
+        if (!OperatingSystem.IsWindows() && explicitOptions)
+            throw new PlatformNotSupportedException("Оформление игрового EXE требует Windows.");
         DialogueDisplayValidation.Validate(project);
         foreach (var state in project.Characters.SelectMany(c => c.States))
         {
@@ -47,6 +54,9 @@ public sealed class WindowsExportService(string templateDirectory, IImageAssetSe
             await images.CopyAsync(assetsRoot, staging, project.Images);
             await AudioAssetService.CopyAsync(assetsRoot, staging, project.Audio.Assets);
             runtime.CopyTo(staging);
+            if (OperatingSystem.IsWindows())
+                WindowsExecutableBranding.Apply(Path.Combine(staging, "NovellMaker.Runtime.exe"), project.Name, options, icon);
+            if (icon is not null) await File.WriteAllBytesAsync(Path.Combine(staging, "game.ico"), icon);
             await new GamePackage(GamePackage.CurrentVersion, project.Id, startSceneId, project.DefaultLanguage, project.Name)
                 { StartScreenSceneId = project.StartScreenSceneId }.SaveAsync(staging);
             await File.WriteAllTextAsync(Path.Combine(staging, "Как играть.txt"),

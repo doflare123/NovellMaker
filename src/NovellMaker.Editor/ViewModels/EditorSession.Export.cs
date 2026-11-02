@@ -43,7 +43,7 @@ public sealed partial class EditorSession
         Log("Сборка Windows x64: проверка проекта и копирование автономной игры…");
         var exporter = new WindowsExportService(WindowsExportService.DefaultTemplateDirectory, imageAssets);
         var assetsRoot = ProjectDirectory ?? Path.GetTempPath();
-        await Task.Run(() => exporter.ExportAsync(snapshot, assetsRoot, destination.StartSceneId, destination.Directory));
+        await Task.Run(() => exporter.ExportAsync(snapshot, assetsRoot, destination.StartSceneId, destination.Directory, destination.Options));
         Log("Игра Windows x64 собрана: " + destination.Directory);
         await dialogs.ShowInformationAsync("Игра собрана", "Папка игры:\n" + destination.Directory +
             "\n\nЗапустите NovellMaker.Runtime.exe. Для передачи игроку скопируйте всю папку.\nДля одного передаваемого файла выберите «Сборка → Установщик игры EXE…».");

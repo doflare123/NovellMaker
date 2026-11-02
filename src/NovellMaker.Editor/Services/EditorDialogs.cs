@@ -103,45 +103,28 @@ public sealed class EditorDialogs(Window owner) : IEditorDialogs
         var dialog = CreateDialog("Установщик игры EXE — Windows x64");
         var picker = new ComboBox { Name = "InstallerStartScene", ItemsSource = project.Scenes.Select(s => new StartScene(s.Id, s.Name)).ToArray(), SelectedIndex = 0,
             HorizontalAlignment = HorizontalAlignment.Stretch };
-        var version = new TextBox { Name = "InstallerVersion", Text = project.ReleaseCheck?.CurrentVersion ?? "1.0.0" };
-        var iconLabel = new TextBlock { Name = "InstallerIconPath", Text = "Стандартная иконка", TextWrapping = Avalonia.Media.TextWrapping.Wrap };
-        string? iconPath = null;
-        var icon = new Button { Content = "Выбрать ICO…", Name = "PickInstallerIcon" };
-        icon.Click += async (_, _) =>
-        {
-            try
-            {
-                var icons = await dialog.StorageProvider.OpenFilePickerAsync(new() { Title = "Иконка установщика и ярлыка", AllowMultiple = false,
-                    FileTypeFilter = [new FilePickerFileType("Иконка Windows") { Patterns = ["*.ico"] }] });
-                if (icons.Count > 0) { iconPath = LocalPath(icons[0]); iconLabel.Text = iconPath; }
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { iconLabel.Text = error.Message; }
-        };
-        var clearIcon = new Button { Content = "Сбросить" };
-        clearIcon.Click += (_, _) => { iconPath = null; iconLabel.Text = "Стандартная иконка"; };
+        var branding = CreateGameBrandingControls(dialog, project, "Installer");
         var errorText = new TextBlock { Name = "InstallerValidation", Foreground = Avalonia.Media.Brushes.Orange, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
         var cancel = new Button { Content = "Отмена" };
         var export = new Button { Content = "Собрать EXE…", Name = "ConfirmInstallerExport" };
         cancel.Click += (_, _) => dialog.Close(false);
         export.Click += (_, _) =>
         {
-            try { new Export.WindowsInstallerOptions(version.Text ?? "").ValidateProjectVersion(project); dialog.Close(true); }
+            try { branding.Read().ValidateProjectVersion(project); dialog.Close(true); }
             catch (ArgumentException error) { errorText.Text = error.Message; }
         };
         dialog.Content = new StackPanel { Margin = new Thickness(24), Spacing = 12, Children =
         {
             new TextBlock { Text = "Один EXE для передачи игроку: игра и .NET внутри. Установка для текущего пользователя, ярлык в меню «Пуск» и удаление через параметры Windows. Сохранения остаются при удалении. Используются текущие изменения проекта.", TextWrapping = Avalonia.Media.TextWrapping.Wrap },
             new TextBlock { Text = "Стартовая сцена:" }, picker,
-            new TextBlock { Text = "Версия сборки (например 1.0.0):" }, version,
-            new TextBlock { Text = "Иконка установщика и ярлыка (необязательно):" }, iconLabel,
-            new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { icon, clearIcon } }, errorText,
+            branding.Panel, errorText,
             new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, export } }
         } };
         dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(false); };
         if (!await dialog.ShowDialog<bool>(owner) || picker.SelectedItem is not StartScene scene) return null;
         var file = await owner.StorageProvider.SaveFilePickerAsync(new() { Title = "Сохранить установщик игры", SuggestedFileName = $"Game-{project.Id.ToString("N")[..8]}-Setup.exe",
             DefaultExtension = "exe", FileTypeChoices = [new FilePickerFileType("Установщик Windows") { Patterns = ["*.exe"] }], ShowOverwritePrompt = false });
-        return file is null ? null : new(LocalPath(file), scene.Id, new(version.Text ?? "", iconPath));
+        return file is null ? null : new(LocalPath(file), scene.Id, new(branding.Read().Version, branding.Read().IconPath));
     }
 
     public async Task<WindowsExportDestination?> PickWindowsExportAsync(NovellMaker.Core.Projects.NovelProject project)
@@ -150,21 +133,56 @@ public sealed class EditorDialogs(Window owner) : IEditorDialogs
         var scenes = project.Scenes.Select(s => new StartScene(s.Id, s.Name)).ToArray();
         var picker = new ComboBox { Name = "ExportStartScene", ItemsSource = scenes, SelectedIndex = 0,
             HorizontalAlignment = HorizontalAlignment.Stretch };
+        var branding = CreateGameBrandingControls(dialog, project, "Export");
+        var errorText = new TextBlock { Foreground = Avalonia.Media.Brushes.Orange, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
         var cancel = new Button { Content = "Отмена" };
         var export = new Button { Content = "Выбрать папку и собрать…", Name = "ConfirmWindowsExport" };
         cancel.Click += (_, _) => dialog.Close(false);
-        export.Click += (_, _) => dialog.Close(true);
+        export.Click += (_, _) =>
+        {
+            try { branding.Read().ValidateProjectVersion(project); dialog.Close(true); }
+            catch (ArgumentException error) { errorText.Text = error.Message; }
+        };
         dialog.Content = new StackPanel { Margin = new Thickness(24), Spacing = 16, Children =
         {
             new TextBlock { Text = "Автономная игра в новой папке. Используется текущий снимок проекта, включая несохранённые изменения. Редактор и SDK игроку не нужны. Язык: " + project.DefaultLanguage, TextWrapping = Avalonia.Media.TextWrapping.Wrap },
             new TextBlock { Text = "Стартовая сцена:" }, picker,
+            branding.Panel, errorText,
             new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, export } }
         } };
         dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(false); };
         if (!await dialog.ShowDialog<bool>(owner) || picker.SelectedItem is not StartScene scene) return null;
         var folders = await owner.StorageProvider.OpenFolderPickerAsync(new() { Title = "Куда поместить папку игры?", AllowMultiple = false });
         if (folders.Count == 0) return null;
-        return new(Path.Combine(LocalPath(folders[0]), $"Game-{project.Id.ToString("N")[..8]}-{Guid.NewGuid().ToString("N")[..8]}"), scene.Id);
+        return new(Path.Combine(LocalPath(folders[0]), $"Game-{project.Id.ToString("N")[..8]}-{Guid.NewGuid().ToString("N")[..8]}"), scene.Id, branding.Read());
+    }
+
+    private static (StackPanel Panel, Func<Export.WindowsGameOptions> Read) CreateGameBrandingControls(
+        Window dialog, NovellMaker.Core.Projects.NovelProject project, string prefix)
+    {
+        var version = new TextBox { Name = prefix + "Version", Text = project.ReleaseCheck?.CurrentVersion ?? "1.0.0" };
+        var label = new TextBlock { Name = prefix + "IconPath", Text = "Стандартная иконка", TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+        string? iconPath = null;
+        var icon = new Button { Content = "Выбрать ICO…", Name = "Pick" + prefix + "Icon" };
+        icon.Click += async (_, _) =>
+        {
+            try
+            {
+                var files = await dialog.StorageProvider.OpenFilePickerAsync(new() { Title = "Иконка игрового EXE, установщика и ярлыка", AllowMultiple = false,
+                    FileTypeFilter = [new FilePickerFileType("Иконка Windows") { Patterns = ["*.ico"] }] });
+                if (files.Count > 0) { iconPath = LocalPath(files[0]); label.Text = iconPath; }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { label.Text = error.Message; }
+        };
+        var clear = new Button { Content = "Сбросить" };
+        clear.Click += (_, _) => { iconPath = null; label.Text = "Стандартная иконка"; };
+        var panel = new StackPanel { Spacing = 8, Children =
+        {
+            new TextBlock { Text = "Версия игры и установщика (например 1.0.0):" }, version,
+            new TextBlock { Text = "Иконка игрового EXE, установщика и ярлыка (необязательно):", TextWrapping = Avalonia.Media.TextWrapping.Wrap }, label,
+            new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { icon, clear } }
+        } };
+        return (panel, () => new(version.Text ?? "", iconPath));
     }
 
     public async Task<string?> PickAudioAsync()

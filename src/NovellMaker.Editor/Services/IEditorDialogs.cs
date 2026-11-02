@@ -1,7 +1,7 @@
 namespace NovellMaker.Editor.Services;
 
 public enum UnsavedChangesDecision { Save, Discard, Cancel }
-public sealed record WindowsExportDestination(string Directory, Guid StartSceneId);
+public sealed record WindowsExportDestination(string Directory, Guid StartSceneId, Export.WindowsGameOptions? Options = null);
 public sealed record WindowsInstallerDestination(string FilePath, Guid StartSceneId, Export.WindowsInstallerOptions Options);
 
 public interface IEditorDialogs

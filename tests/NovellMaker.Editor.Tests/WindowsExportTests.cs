@@ -13,6 +13,63 @@ namespace NovellMaker.Editor.Tests;
 public sealed class WindowsExportTests
 {
     [TestMethod]
+    public async Task GameExeBrandingIsAppliedOnlyToExportAndCanBeReplaced()
+    {
+        if (!OperatingSystem.IsWindows()) { Assert.Inconclusive("PE resource updates require Windows."); return; }
+        var templateExe = Path.Combine(template, "NovellMaker.Runtime.exe");
+        var original = File.ReadAllBytes(templateExe);
+        var iconPath = Path.Combine(root, "game.ico");
+        var icon = CreateIcon(); await File.WriteAllBytesAsync(iconPath, icon);
+        var destination = Path.Combine(root, "branded");
+        await new WindowsExportService(template, new ImageAssetService()).ExportAsync(project, source, project.Scenes[0].Id,
+            destination, new("5.6.7.8", iconPath));
+        var exe = Path.Combine(destination, "NovellMaker.Runtime.exe");
+        void Check(string path, string version, string title)
+        {
+            var info = FileVersionInfo.GetVersionInfo(path);
+            Assert.AreEqual(version, info.FileVersion); Assert.AreEqual(version, info.ProductVersion);
+            Assert.AreEqual(title, info.ProductName); Assert.AreEqual(title, info.FileDescription);
+        }
+        Check(exe, "5.6.7.8", project.Name);
+        ExecutableResources.AssertIcon(exe, icon);
+        // Replacing existing resources must not leave an older language/version/icon as the shell's first entry.
+        WindowsExecutableBranding.Apply(exe, "Другая игра $ {} &", new("2.0.1"), icon);
+        Check(exe, "2.0.1.0", "Другая игра $ {} &"); ExecutableResources.AssertIcon(exe, icon);
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(templateExe));
+        RuntimeTemplateManifest.Validate(template);
+    }
+
+    [TestMethod]
+    [DataRow("bounds")] [DataRow("truncated")] [DataRow("count")] [DataRow("frame")]
+    public async Task InvalidIconCannotLeaveAnExport(string mutation)
+    {
+        var icon = CreateIcon();
+        switch (mutation)
+        {
+            case "bounds": BitConverter.GetBytes(uint.MaxValue).CopyTo(icon, 18); break;
+            case "truncated": icon = icon[..20]; break;
+            case "count": icon[4] = 255; break;
+            case "frame": icon[22] = 0; break;
+        }
+        var path = Path.Combine(root, "invalid.ico"); await File.WriteAllBytesAsync(path, icon);
+        var destination = Path.Combine(root, "invalid-icon");
+        await Assert.ThrowsExactlyAsync<ArgumentException>(() => new WindowsExportService(template, new ImageAssetService())
+            .ExportAsync(project, source, project.Scenes[0].Id, destination, new("1.0.0", path)));
+        Assert.IsFalse(Directory.Exists(destination)); Assert.IsEmpty(Directory.GetDirectories(root, ".novell-export-*"));
+    }
+
+    private static byte[] CreateIcon()
+    {
+        using var bitmap = new SkiaSharp.SKBitmap(32, 32); bitmap.Erase(SkiaSharp.SKColors.Coral);
+        using var png = bitmap.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+        using var data = new MemoryStream(); using var writer = new BinaryWriter(data);
+        writer.Write((ushort)0); writer.Write((ushort)1); writer.Write((ushort)1);
+        writer.Write(new byte[] { 32, 32, 0, 0 }); writer.Write((ushort)1); writer.Write((ushort)32);
+        writer.Write((uint)png.Size); writer.Write(22u); writer.Write(png.ToArray());
+        return data.ToArray();
+    }
+
+    [TestMethod]
     [DataRow("missing-manifest")] [DataRow("version")] [DataRow("rid")] [DataRow("project-format")]
     [DataRow("game-manifest")] [DataRow("wire")] [DataRow("features")] [DataRow("hash")]
     [DataRow("length")] [DataRow("missing-file")] [DataRow("core-module")] [DataRow("runtime-module")]

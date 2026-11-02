@@ -115,6 +115,7 @@ public sealed class NativeRuntimeSmokeTests
     }
     [TestMethod]
     [TestCategory("NativeSmoke")]
+    [TestCategory("Delivery")]
     [DataRow(false)]
     [DataRow(true)]
     public async Task Runtime_RendersSceneAndUsesSharedNextPreviousStateTransitions(bool manualPlacement)
@@ -128,7 +129,8 @@ public sealed class NativeRuntimeSmokeTests
         }
 
         var repositoryRoot = FindRepositoryRoot();
-        var artifactDirectory = Path.Combine(repositoryRoot, "artifacts", "screenshots");
+        var evidence = Environment.GetEnvironmentVariable("NOVELLMAKER_DELIVERY_EVIDENCE_DIR");
+        var artifactDirectory = evidence is null ? Path.Combine(repositoryRoot, "artifacts", "screenshots") : Path.Combine(evidence, "runtime");
         var fixtureDirectory = Path.Combine(artifactDirectory, "runtime-fixture");
         var imageDirectory = Path.Combine(fixtureDirectory, "Assets", "Images");
         Directory.CreateDirectory(imageDirectory);
@@ -137,8 +139,9 @@ public sealed class NativeRuntimeSmokeTests
         var fixture = await CreateFixtureAsync(fixtureDirectory, imageDirectory, manualPlacement);
         var screenshotPath = Path.Combine(artifactDirectory, manualPlacement ? "runtime-placement.png" : "runtime-scene.png");
         var reportPath = Path.Combine(artifactDirectory, manualPlacement ? "runtime-placement-report.json" : "runtime-scene-report.json");
+        var delivery = Environment.GetEnvironmentVariable("NOVELLMAKER_DELIVERY_EDITOR_DIR");
         var runtimePath = Path.Combine(
-            AppContext.BaseDirectory,
+            delivery is null ? AppContext.BaseDirectory : Path.Combine(delivery, "Runtime"),
             OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
         Assert.IsTrue(File.Exists(runtimePath), $"Runtime apphost not found: {runtimePath}");
 

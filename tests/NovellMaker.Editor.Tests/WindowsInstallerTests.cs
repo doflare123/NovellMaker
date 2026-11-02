@@ -5,6 +5,9 @@ using NovellMaker.Core.Projects;
 using NovellMaker.Editor.Services;
 using NovellMaker.Editor.Services.Assets;
 using NovellMaker.Editor.Services.Export;
+using NovellMaker.Editor.Services.Git;
+using NovellMaker.Editor.Services.Preview;
+using NovellMaker.Editor.ViewModels;
 
 namespace NovellMaker.Editor.Tests;
 
@@ -61,6 +64,7 @@ public sealed class WindowsInstallerTests
 
     [TestMethod]
     [TestCategory("NativeSmoke")]
+    [TestCategory("Delivery")]
     public async Task NativeInstallerInstallsRunsGameAndUninstallsWithoutRemovingSavesOrForeignFiles()
     {
         if (!OperatingSystem.IsWindows() || Environment.GetEnvironmentVariable("NOVELLMAKER_INSTALLER_SMOKE") != "1")
@@ -70,8 +74,22 @@ public sealed class WindowsInstallerTests
         Assert.IsNotNull(repo);
         var root = Path.Combine(Path.GetTempPath(), "NovellMaker.Installer.Tests", Guid.NewGuid().ToString("N"));
         var source = Path.Combine(root, "source");
+        Directory.CreateDirectory(source);
         var installed = Path.Combine(root, "Установленная игра с пробелами");
-        var project = BuiltInExample.Create(source) with { Name = "Игра \"EXE\" $INSTDIR ${NSISDIR} $%TEMP% & тест" };
+        var dialogs = new DeliveryDialogs(Path.Combine(source, "delivery.novell"));
+        var distribution = Environment.GetEnvironmentVariable("NOVELLMAKER_DELIVERY_EDITOR_DIR") ??
+            Path.Combine(repo.FullName, "src", "NovellMaker.Editor", "bin", new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name, "net10.0");
+        using var preview = new PreviewService(Path.Combine(distribution, "Runtime", "NovellMaker.Runtime.exe"), Path.Combine(root, "preview"), hidden: true);
+        using var session = new EditorSession(new JsonProjectStore(), dialogs, new GitStatusService(), previewService: preview);
+        // File -> Example creates an independent authoring project through the editor's command.
+        await session.OpenExampleAsync();
+        var exampleDirectory = Path.GetDirectoryName(session.ProjectPath!)!;
+        session.ProjectName = "Игра \"EXE\" $INSTDIR ${NSISDIR} $%TEMP% & тест";
+        await session.SaveAsync(true);
+        Assert.IsEmpty(dialogs.Errors, string.Join("\n", dialogs.Errors));
+        Assert.AreEqual(dialogs.Path, session.ProjectPath);
+        Assert.IsFalse(session.IsDirty);
+        var project = await new JsonProjectStore().LoadAsync(dialogs.Path);
         var unusual = project.Images[0] with { RelativePath = "Assets/Images/actor${NSISDIR}-$value.png" };
         File.Move(Path.Combine(source, project.Images[0].RelativePath), Path.Combine(source, unusual.RelativePath));
         project = project with { Images = project.Images.SetItem(0, unusual) };
@@ -82,10 +100,23 @@ public sealed class WindowsInstallerTests
         var output = Path.Combine(repo.FullName, "artifacts", "installers"); Directory.CreateDirectory(output);
         var installer = Path.Combine(output, "NovellMaker-Example-Setup.exe");
         if (File.Exists(installer)) File.Delete(installer);
-        var compiler = Path.Combine(repo.FullName, "artifacts", "build-tools", "nsis-3.13");
+        var compiler = Path.Combine(distribution, "BuildTools", "NSIS");
         try
         {
-            var exporter = new WindowsExportService(Path.Combine(repo.FullName, "artifacts", "export-templates", "win-x64"), new ImageAssetService());
+            if (Environment.GetEnvironmentVariable("NOVELLMAKER_DELIVERY_EDITOR_DIR") is not null)
+                await AssertEditorStartsAsync(distribution, root);
+            await new JsonProjectStore().SaveAsync(dialogs.Path, project);
+            await session.OpenProjectAsync();
+            session.OpenScene(project.Scenes[0].Id);
+            await session.PreviewSceneAsync();
+            Assert.IsEmpty(dialogs.Errors, string.Join("\n", dialogs.Errors));
+            Assert.IsNotNull(preview.ActiveProcessId);
+            await Task.Delay(1000);
+            Assert.IsNotNull(preview.ActiveProcessId, string.Join("\n", session.Diagnostics));
+            var snapshot = Directory.GetFiles(Path.Combine(root, "preview"), "snapshot.novell", SearchOption.AllDirectories).Single();
+            Assert.IsTrue(project.ContentEquals(await new JsonProjectStore().LoadAsync(snapshot)));
+            preview.Dispose(); await preview.Completion.WaitAsync(TimeSpan.FromSeconds(15));
+            var exporter = new WindowsExportService(Path.Combine(distribution, "ExportTemplates", "win-x64"), new ImageAssetService());
             var service = new WindowsInstallerService(exporter, compiler);
             var options = new WindowsInstallerOptions("1.2.3", Path.Combine(compiler, "Contrib", "Graphics", "Icons", "modern-install.ico"));
             await service.ExportAsync(project, source, project.Scenes[0].Id, installer, options);
@@ -107,6 +138,12 @@ public sealed class WindowsInstallerTests
             Assert.AreEqual(0, await RunAsync(installer, ["/S", "/D=" + installed], root));
             Assert.IsTrue(File.Exists(Path.Combine(installed, "coreclr.dll")));
             Assert.IsTrue(File.Exists(Path.Combine(installed, "game.ico")));
+            var gameVersion = FileVersionInfo.GetVersionInfo(Path.Combine(installed, "NovellMaker.Runtime.exe"));
+            Assert.AreEqual("1.2.3.0", gameVersion.FileVersion);
+            Assert.AreEqual("1.2.3.0", gameVersion.ProductVersion);
+            Assert.AreEqual(project.Name, gameVersion.ProductName);
+            Assert.AreEqual(project.Name, gameVersion.FileDescription);
+            ExecutableResources.AssertIcon(Path.Combine(installed, "NovellMaker.Runtime.exe"), await File.ReadAllBytesAsync(options.IconPath!));
             StringAssert.Contains(await File.ReadAllTextAsync(Path.Combine(installed, "Licenses", "PCG.txt")), "Copyright 2014 Melissa O'Neill");
             Assert.AreEqual(project.Id, GamePackage.Load(installed).ProjectId);
             using (var registry = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64))
@@ -119,7 +156,9 @@ public sealed class WindowsInstallerTests
             Assert.AreEqual(2, Directory.GetFiles(shortcuts, "*.lnk").Length);
             Assert.AreNotEqual(0, await RunAsync(installer, ["/S", "/D=" + Path.Combine(root, "second")], root), "A second installation of the same project must be rejected.");
             foreach (var image in project.Images) File.Delete(Path.Combine(source, image.RelativePath));
-            var capture = Path.Combine(repo.FullName, "artifacts", "screenshots", "installer"); Directory.CreateDirectory(capture);
+            var evidence = Environment.GetEnvironmentVariable("NOVELLMAKER_DELIVERY_EVIDENCE_DIR");
+            var capture = evidence is null ? Path.Combine(repo.FullName, "artifacts", "screenshots", "installer") : Path.Combine(evidence, "installer");
+            Directory.CreateDirectory(capture);
             var plan = Path.Combine(root, "plan.json");
             await File.WriteAllTextAsync(plan, """
                 [{"Kind":"tick","Seconds":2},{"Kind":"quicksave"},{"Kind":"tick","Seconds":3},{"Kind":"quickload"}]
@@ -136,10 +175,14 @@ public sealed class WindowsInstallerTests
                 Assert.AreEqual(Path.Combine(installed, "System.Private.CoreLib.dll"), json.RootElement.GetProperty("RuntimeLibraryPath").GetString());
             }
             var save = await File.ReadAllBytesAsync(Path.Combine(saves, "quicksave.json"));
+            await File.WriteAllTextAsync(Path.Combine(saves, "user-data.txt"), "данные игрока");
+            var userData = Directory.GetFiles(saves, "*", SearchOption.AllDirectories)
+                .ToDictionary(p => Path.GetRelativePath(saves, p), File.ReadAllBytes);
             await File.WriteAllTextAsync(Path.Combine(installed, "foreign.txt"), "retain me");
             var uninstaller = Path.Combine(installed, "Uninstall.exe");
             Assert.AreEqual(0, await RunAsync(uninstaller, ["/S", "_?=" + installed], root));
             CollectionAssert.AreEqual(save, await File.ReadAllBytesAsync(Path.Combine(saves, "quicksave.json")));
+            foreach (var data in userData) CollectionAssert.AreEqual(data.Value, await File.ReadAllBytesAsync(Path.Combine(saves, data.Key)));
             Assert.AreEqual("retain me", await File.ReadAllTextAsync(Path.Combine(installed, "foreign.txt")));
             Assert.IsFalse(File.Exists(Path.Combine(installed, "NovellMaker.Runtime.exe")));
             Assert.IsFalse(File.Exists(Path.Combine(installed, "Licenses", "PCG.txt")));
@@ -148,15 +191,72 @@ public sealed class WindowsInstallerTests
             // Installation after uninstall is possible; another revision still uses the same save identity.
             var reinstall = Path.Combine(root, "reinstalled");
             Assert.AreEqual(0, await RunAsync(installer, ["/S", "/D=" + reinstall], root));
+            // A fresh process after reinstall must read the preserved slot, rather than create a new one.
+            await File.WriteAllTextAsync(plan, """[{"Kind":"quickload"}]""");
+            var reloadReport = Path.Combine(capture, "reinstalled-report.json");
+            Assert.AreEqual(0, await RunAsync(Path.Combine(reinstall, "NovellMaker.Runtime.exe"),
+                ["--smoke-output", Path.Combine(capture, "reinstalled.png"), "--smoke-report", reloadReport, "--smoke-plan", plan], root));
+            using (var reloaded = JsonDocument.Parse(await File.ReadAllTextAsync(reloadReport)))
+            using (var original = JsonDocument.Parse(await File.ReadAllTextAsync(report)))
+            {
+                Assert.IsTrue(reloaded.RootElement.GetProperty("ActionTrace")[0].GetProperty("Success").GetBoolean());
+                Assert.AreEqual(original.RootElement.GetProperty("ActionTrace")[1].GetProperty("State").GetRawText(),
+                    reloaded.RootElement.GetProperty("ActionTrace")[0].GetProperty("State").GetRawText());
+            }
             Assert.AreEqual(0, await RunAsync(Path.Combine(reinstall, "Uninstall.exe"), ["/S", "_?=" + reinstall], root));
+            foreach (var data in userData) CollectionAssert.AreEqual(data.Value, await File.ReadAllBytesAsync(Path.Combine(saves, data.Key)));
         }
         finally
         {
             using var registry = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64);
             registry.DeleteSubKeyTree(key, throwOnMissingSubKey: false);
+            preview.Dispose(); await preview.Completion.WaitAsync(TimeSpan.FromSeconds(15));
             DeleteFixture(root);
+            var examplesRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "NovellMaker", "Examples"));
+            if (Path.GetDirectoryName(Path.GetFullPath(exampleDirectory)) == examplesRoot && Directory.Exists(exampleDirectory)) Directory.Delete(exampleDirectory, true);
             if (Path.GetFileName(saves) == project.Id.ToString() && Directory.Exists(saves)) Directory.Delete(saves, true);
             if (Path.GetFileName(shortcuts) == id && Directory.Exists(shortcuts)) Directory.Delete(shortcuts, true);
+        }
+    }
+
+    private sealed class DeliveryDialogs(string path) : IEditorDialogs
+    {
+        internal string Path => path;
+        internal List<string> Errors { get; } = [];
+        public Task<string?> PickOpenProjectAsync() => Task.FromResult<string?>(path);
+        public Task<string?> PickSaveProjectAsync(string name) => Task.FromResult<string?>(path);
+        public Task<UnsavedChangesDecision> ConfirmUnsavedChangesAsync(string name) => Task.FromResult(UnsavedChangesDecision.Discard);
+        public Task ShowErrorAsync(string title, string message) { Errors.Add(title + ": " + message); return Task.CompletedTask; }
+    }
+
+    private static async Task AssertEditorStartsAsync(string distribution, string workingDirectory)
+    {
+        var start = new ProcessStartInfo(Path.Combine(distribution, "NovellMaker.Editor.exe"))
+        {
+            WorkingDirectory = workingDirectory, UseShellExecute = false, CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardError = true, RedirectStandardOutput = true
+        };
+        start.Environment["DOTNET_ROOT"] = Path.Combine(workingDirectory, "no-dotnet");
+        start.Environment["DOTNET_ROOT_X64"] = Path.Combine(workingDirectory, "no-dotnet");
+        start.Environment["PATH"] = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        using var process = Process.Start(start)!;
+        var stderr = process.StandardError.ReadToEndAsync(); var stdout = process.StandardOutput.ReadToEndAsync();
+        var timer = Stopwatch.StartNew();
+        try
+        {
+            while (!process.HasExited && timer.Elapsed < TimeSpan.FromSeconds(15))
+            {
+                process.Refresh();
+                if (process.MainWindowHandle != IntPtr.Zero) return;
+                await Task.Delay(100);
+            }
+            if (process.HasExited) Assert.Fail("Delivered editor exited before creating its window: " + await stderr + await stdout);
+            Assert.Fail("Delivered editor did not create its window within 15 seconds.");
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync(); await stderr; await stdout;
         }
     }
 
@@ -176,6 +276,7 @@ public sealed class WindowsInstallerTests
         try { await process.WaitForExitAsync(timeout.Token); }
         catch (OperationCanceledException) { process.Kill(true); await process.WaitForExitAsync(); Assert.Fail("Installer process timed out: " + executable); }
         await stderr; await stdout;
+        if (process.ExitCode != 0) Trace.WriteLine($"{executable}: {await stderr}\n{await stdout}");
         return process.ExitCode;
     }
 
