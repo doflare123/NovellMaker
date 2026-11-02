@@ -43,12 +43,24 @@ public sealed class EditorRecoveryTests
             Assert.IsTrue(File.Exists(ready), process.HasExited ? await output + await errors : "Автоматический снимок не появился.");
             writer = Process.GetProcessById(int.Parse(await File.ReadAllTextAsync(ready), System.Globalization.CultureInfo.InvariantCulture));
             var main = await File.ReadAllBytesAsync(fixture.Dialogs.SavePath!);
+            var snapshotPath = fixture.Recovery.Candidates().Single();
+            using (var live = fixture.Recovery.Claim(snapshotPath))
+                Assert.IsNull(live, "Работающий редактор должен владеть блокировкой снимка.");
             process.Kill(entireProcessTree: true); // No Closing event, save prompt or Dispose.
             await process.WaitForExitAsync(deadline.Token);
             // Kill/WaitForExit on vstest only waits for that process, not its testhost descendants.
             await writer.WaitForExitAsync(deadline.Token);
+            // Synchronize on snapshot ownership as well as process exit. Startup deliberately
+            // skips unclaimable leases, including transient Windows file-sharing conflicts.
+            using (var snapshot = await WaitForSnapshotAsync(fixture.Recovery, snapshotPath, deadline.Token))
+            {
+                var persisted = await snapshot.ReadAsync();
+                Assert.AreEqual("Правки перед принудительным завершением", persisted.DraftName);
+                Assert.AreEqual("Реплика из аварийного процесса", persisted.Project.Scenes[0].Lines[0].Texts["ru"]);
+            }
             using var recovered = fixture.Session();
             await recovered.RecoverOnStartupAsync();
+            Assert.HasCount(1, fixture.Dialogs.Offers, string.Join(Environment.NewLine, recovered.Diagnostics));
             Assert.AreEqual("Правки перед принудительным завершением", recovered.ProjectName,
                 string.Join(Environment.NewLine, recovered.Diagnostics));
             Assert.AreEqual("Реплика из аварийного процесса", recovered.ActiveScene!.LineText);
@@ -67,6 +79,46 @@ public sealed class EditorRecoveryTests
                 writer.Dispose();
             }
             if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+        }
+    }
+
+    private static async Task<EditorRecoveryStore.Lease> WaitForSnapshotAsync(EditorRecoveryStore recovery, string path,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var lease = recovery.Claim(path);
+            if (lease is not null) return lease;
+            await Task.Delay(50, cancellationToken);
+        }
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task CrashProbeWaitsForSnapshotOwnershipAndCanBeCancelled(bool cancel)
+    {
+        using var fixture = new Fixture();
+        using var owner = fixture.Recovery.Create();
+        var project = NovelProject.Create("Снимок процесса");
+        await owner.WriteAsync(new(1, project, null, project.Name, null, null, DateTimeOffset.UtcNow, null, null));
+        var path = fixture.Recovery.Candidates().Single();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var waiting = WaitForSnapshotAsync(fixture.Recovery, path, deadline.Token);
+        Assert.IsFalse(waiting.IsCompleted, "Ожидание не должно принимать снимок работающего редактора.");
+        if (cancel)
+        {
+            deadline.Cancel();
+            await Assert.ThrowsAsync<OperationCanceledException>(() => waiting);
+            using var stillOwned = fixture.Recovery.Claim(path);
+            Assert.IsNull(stillOwned, "Отмена ожидания не должна освобождать чужую блокировку.");
+        }
+        else
+        {
+            owner.Dispose();
+            using var acquired = await waiting;
+            Assert.AreEqual(project.Name, (await acquired.ReadAsync()).DraftName);
         }
     }
 
