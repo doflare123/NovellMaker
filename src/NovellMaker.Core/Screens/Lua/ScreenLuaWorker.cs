@@ -141,6 +141,25 @@ internal sealed class ScreenLuaVm
         Bind("load_slot", 1, 1, a => Service(GameServiceAction.LoadSlot, Str(a, 0)));
         Bind("delete_slot", 1, 1, a => Service(GameServiceAction.DeleteSlot, Str(a, 0)));
         Bind("get_settings", 0, 0, _ => Service(GameServiceAction.GetSettings));
+        Bind("get_history", 0, 3, a =>
+        {
+            if (a.Count > 3) throw new ScriptRuntimeException("get_history ожидает от 0 до 3 аргументов.");
+            int Integer(int i, int fallback) => i >= a.Count ? fallback : a[i].Type == DataType.Number &&
+                double.IsFinite(a[i].Number) && a[i].Number == Math.Truncate(a[i].Number) && a[i].Number is >= 0 and <= 1000000
+                ? (int)a[i].Number : throw new ScriptRuntimeException("Ожидалось целое число истории.");
+            var command = new GameServiceCommand(Guid.NewGuid(), GameServiceAction.GetHistory)
+            { HistoryIndex = Integer(0, 0), HistoryPage = Integer(1, 1), HistoryPageSize = Integer(2, HistoryPage.DefaultPageSize) };
+            command.Validate(); Add(new("service", null, null, null) { Service = command });
+            return DynValue.NewString(command.RequestId.ToString("N"));
+        });
+        Bind("replay_history_voice", 1, 1, a =>
+        {
+            if (a.Count != 1 || !Guid.TryParseExact(ExactString(a, 0), "N", out var visit) || visit == Guid.Empty)
+                throw new ScriptRuntimeException("Ожидался ID посещения истории.");
+            var command = new GameServiceCommand(Guid.NewGuid(), GameServiceAction.ReplayHistoryVoice) { VisitId = visit };
+            command.Validate(); Add(new("service", null, null, null) { Service = command });
+            return DynValue.NewString(command.RequestId.ToString("N"));
+        });
         Bind("check_game_release", 0, 0, a =>
         {
             if (a.Count != 0) throw new ScriptRuntimeException("check_game_release ожидает 0 аргументов.");
@@ -223,6 +242,18 @@ internal sealed class ScreenLuaVm
                 argument.Set("operation", DynValue.NewString(result.Action.ToString()));
                 argument.Set("success", DynValue.NewBoolean(result.Success));
                 argument.Set("message", DynValue.NewString(result.Message));
+                if (result.History is { } history)
+                {
+                    var row = new Table(script);
+                    row.Set("count", DynValue.NewNumber(history.Count)); row.Set("index", DynValue.NewNumber(history.Index));
+                    row.Set("page", DynValue.NewNumber(history.Page)); row.Set("pages", DynValue.NewNumber(history.Pages));
+                    row.Set("visit_id", history.VisitId is { } visit ? DynValue.NewString(visit.ToString("N")) : DynValue.Nil);
+                    row.Set("scene_id", history.SceneId is { } scene ? DynValue.NewString(scene.ToString("N")) : DynValue.Nil);
+                    row.Set("line_id", history.LineId is { } line ? DynValue.NewString(line.ToString("N")) : DynValue.Nil);
+                    row.Set("language", DynValue.NewString(history.Language)); row.Set("speaker", DynValue.NewString(history.Speaker));
+                    row.Set("text", DynValue.NewString(history.Text)); row.Set("can_replay", DynValue.NewBoolean(history.CanReplay));
+                    argument.Set("history", DynValue.NewTable(row));
+                }
                 if (result.ReleaseCheck is { } check)
                 {
                     argument.Set("provider", DynValue.NewString(check.Provider));

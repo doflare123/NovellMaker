@@ -10,26 +10,10 @@ namespace NovellMaker.Runtime;
 
 internal static class DialogueTextureRenderer
 {
-    internal static IReadOnlyList<string> HistoryLines(string text)
-    {
-        using var typeface = CreateTypeface("Segoe UI");
-        using var font = new SKFont(typeface, 18);
-        var lines = new List<string>(); var line = new StringBuilder();
-        var elements = StringInfo.GetTextElementEnumerator(string.Concat(DialogueText.Parse(text).Select(r => r.Text)).Replace("\r\n", "\n", StringComparison.Ordinal));
-        while (elements.MoveNext())
-        {
-            var element = elements.GetTextElement();
-            if (element is "\n" or "\r") { lines.Add(line.ToString()); line.Clear(); continue; }
-            if (line.Length > 0 && font.MeasureText(line.ToString() + element) > 1090) { lines.Add(line.ToString()); line.Clear(); }
-            line.Append(element);
-        }
-        lines.Add(line.ToString()); return lines;
-    }
-
     internal static RenderedTexture RenderComponent(GraphicsDevice device, ScreenRaster raster)
     {
         if (raster.Dialogue == NovellMaker.Core.Screens.DialogueBinding.None || raster.Style is null)
-            return RenderButton(device, raster.Text, raster.Width, raster.Height, raster.OffsetX, raster.OffsetY, raster.LogicalHeight, raster.Transparent);
+            return RenderButton(device, raster.Text, raster.Width, raster.Height, raster.OffsetX, raster.OffsetY, raster.LogicalHeight, raster.Transparent, raster.LogicalWidth);
         using var bitmap = NovellMaker.Rendering.DialogueRasterizer.Render(raster.Dialogue, raster.Style, raster.Text,
             raster.LogicalWidth, raster.LogicalHeight, raster.Width, raster.Height, raster.OffsetX, raster.OffsetY);
         return new(CreateTexture(device, bitmap), raster.Width, raster.Height);
@@ -103,7 +87,7 @@ internal static class DialogueTextureRenderer
     }
 
     public static RenderedTexture RenderButton(GraphicsDevice device, string text, int width, int height,
-        int offsetX = 0, int offsetY = 0, double? logicalHeight = null, bool transparent = false)
+        int offsetX = 0, int offsetY = 0, double? logicalHeight = null, bool transparent = false, double logicalWidth = 0)
     {
         if (width <= 0 || height <= 0 || width > ScreenTextureCache<RenderedTexture>.MaximumTextureSide ||
             height > ScreenTextureCache<RenderedTexture>.MaximumTextureSide ||
@@ -115,7 +99,19 @@ internal static class DialogueTextureRenderer
         using var typeface = CreateTypeface("Segoe UI");
         using var font = new SKFont(typeface, 18);
         using var paint = new SKPaint { IsAntialias = true, Color = new SKColor(230, 231, 233) };
-        canvas.DrawText(text, 12 - offsetX, (float)((logicalHeight ?? height) / 2) - offsetY -
+        if (transparent && ((logicalHeight ?? height) > 64 || text.Contains('\n') || font.MeasureText(text) > (logicalWidth > 0 ? logicalWidth : width) - 24))
+        {
+            var lines = LayoutRuns([new TextRun(text, null)], font, paint, (float)(logicalWidth > 0 ? logicalWidth : width) - 24);
+            var y = 4 - offsetY - font.Metrics.Ascent;
+            var lineHeight = Math.Max(22, font.Metrics.Descent - font.Metrics.Ascent + font.Metrics.Leading);
+            foreach (var line in lines)
+            {
+                var x = 12f - offsetX;
+                foreach (var piece in line.Pieces) { canvas.DrawText(piece.Text, x, y, font, paint); x += font.MeasureText(piece.Text); }
+                y += lineHeight;
+            }
+        }
+        else canvas.DrawText(text, 12 - offsetX, (float)((logicalHeight ?? height) / 2) - offsetY -
             (font.Metrics.Ascent + font.Metrics.Descent) / 2, font, paint);
         return new RenderedTexture(CreateTexture(device, bitmap), width, height);
     }

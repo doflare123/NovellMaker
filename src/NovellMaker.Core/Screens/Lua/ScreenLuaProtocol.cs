@@ -74,7 +74,7 @@ public sealed record MinigameInvocation(LuaValue Parameters, bool Restoring);
 
 internal static class ScreenLuaProtocol
 {
-    internal const int Version = 19;
+    internal const int Version = 20;
     internal const int MaximumFrameBytes = 1024 * 1024;
     internal static readonly JsonSerializerOptions Json = new()
     {

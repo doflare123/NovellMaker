@@ -30,6 +30,7 @@ public static class ReadingControlsModule
             buttons.Add(new(id, action, null));
         }
         var result = project with { Scenes = project.Scenes.Replace(scene, scene with { Canvas = scene.Canvas with { Nodes = nodes.ToImmutable(), Buttons = buttons.ToImmutable() } }) };
+        result = ReadingScreenTemplates.Ensure(result);
         ScreenAsset.ValidateProject(result); return result;
     }
 }

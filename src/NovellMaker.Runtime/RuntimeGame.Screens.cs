@@ -16,7 +16,7 @@ internal sealed partial class RuntimeGame
 
     private void ResetSessionResources()
     {
-        CloseReadingPanel(); reading.Stop();
+        reading.Stop();
         screens.Reset(); audio?.Stop();
         imageHintsKey = null;
         lineElapsed = TimeSpan.Zero; saveMessage = "";
@@ -30,7 +30,7 @@ internal sealed partial class RuntimeGame
     {
         var result = screens.Route(input, player.Execution.State.SceneId);
         ApplySceneNavigation();
-        SynchronizeReadingPanel();
+        historyServices.Update(inputActive, screens.Stack.Instances.LastOrDefault());
         return result.Consumed;
     }
 
@@ -39,7 +39,7 @@ internal sealed partial class RuntimeGame
         screens.SyncScene(player.Execution.State.SceneId);
         var consumed = screens.RouteKey(key);
         ApplySceneNavigation();
-        SynchronizeReadingPanel();
+        historyServices.Update(inputActive, screens.Stack.Instances.LastOrDefault());
         return consumed;
     }
 

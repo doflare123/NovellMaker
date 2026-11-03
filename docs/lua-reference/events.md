@@ -223,6 +223,8 @@ node отсутствует. `slot_id`, `settings`, `persisted`, `key`, `value`,
 | GetPersistent | key всегда, value строка либо nil, persisted всегда boolean |
 | SetPersistent | как GetPersistent, value — действующая память после попытки операции |
 | CheckGameRelease | provider/code обязательны, retry_after_seconds/release условны; см. ниже |
+| GetHistory | history при успехе; count/index/page/pages, visit_id/scene_id/line_id, language/speaker/text/can_replay; [контракт](history.md#ui-get-history) |
+| ReplayHistoryVoice | message — код ok/history_unavailable/voice_unavailable; history/settings/persisted отсутствуют |
 
 `CancelReleaseCheck` **не доставляется** как operation собственного ответа. Отмена завершается ответом исходного CheckGameRelease.
 

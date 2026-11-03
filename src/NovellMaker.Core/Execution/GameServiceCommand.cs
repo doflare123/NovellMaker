@@ -3,16 +3,24 @@ using NovellMaker.Core.Profiles;
 
 namespace NovellMaker.Core.Execution;
 
-public enum GameServiceAction { NewGame, MainMenu, EndSession, ContinueGame, ListSlots, SaveSlot, LoadSlot, DeleteSlot, GetSettings, SetSetting, GetPersistent, SetPersistent, CheckGameRelease, CancelReleaseCheck }
+public enum GameServiceAction { NewGame, MainMenu, EndSession, ContinueGame, ListSlots, SaveSlot, LoadSlot, DeleteSlot, GetSettings, SetSetting, GetPersistent, SetPersistent, CheckGameRelease, CancelReleaseCheck, GetHistory, ReplayHistoryVoice }
 public sealed record GameServiceCommand(Guid RequestId, GameServiceAction Action, string? SlotId = null, string? Title = null, Guid? SceneId = null)
 {
     public PlayerSettingChange? Setting { get; init; }
     public string? Key { get; init; }
     public string? DataValue { get; init; }
     public Guid? ReleaseRequestId { get; init; }
+    public int? HistoryIndex { get; init; }
+    public int? HistoryPage { get; init; }
+    public int? HistoryPageSize { get; init; }
+    public Guid? VisitId { get; init; }
     public void Validate()
     {
         if (RequestId == Guid.Empty || !Enum.IsDefined(Action) ||
+            (Action == GameServiceAction.GetHistory ? HistoryIndex is null or < 0 or > DialogueHistory.MaximumEntries ||
+                HistoryPage is null or < 1 or > 1000000 || HistoryPageSize is null or < 1 or > global::NovellMaker.Core.Execution.HistoryPage.MaximumPageSize :
+                HistoryIndex is not null || HistoryPage is not null || HistoryPageSize is not null) ||
+            (Action == GameServiceAction.ReplayHistoryVoice ? VisitId is null || VisitId == Guid.Empty : VisitId is not null) ||
             (Action == GameServiceAction.CancelReleaseCheck ? ReleaseRequestId is null || ReleaseRequestId == Guid.Empty : ReleaseRequestId is not null) ||
             (Action is GameServiceAction.SaveSlot or GameServiceAction.LoadSlot or GameServiceAction.DeleteSlot
                 ? SlotId is not null && !GameSlotStore.IsValidSlotId(SlotId) || Action != GameServiceAction.SaveSlot && SlotId is null
@@ -36,9 +44,11 @@ public sealed record GameServiceResult(Guid RequestId, GameServiceAction Action,
     public bool? ProfileSaved { get; init; }
     public string? Key { get; init; }
     public string? DataValue { get; init; }
+    public HistoryPage? History { get; init; }
     public void Validate()
     {
         if (RequestId == Guid.Empty || !Enum.IsDefined(Action) || Message is null || Message.Length > 1024 ||
+            (Action == GameServiceAction.GetHistory ? Success && History is null : History is not null) ||
             Action == GameServiceAction.CancelReleaseCheck ||
             (Action == GameServiceAction.CheckGameRelease ? ReleaseCheck is null || ReleaseCheck.RequestId != RequestId || ReleaseCheck.Success != Success || Message != ReleaseCheck.Message || SlotId is not null : ReleaseCheck is not null) ||
             SlotId is not null && !GameSlotStore.IsValidSlotId(SlotId) || Slots.IsDefault || Slots.Length > GameSlotStore.MaxSlots ||
@@ -54,6 +64,7 @@ public sealed record GameServiceResult(Guid RequestId, GameServiceAction Action,
                 : Key is not null || DataValue is not null))
             throw new ArgumentException("Некорректный результат игрового сервиса.");
         Settings?.Validate();
+        History?.Validate();
         ReleaseCheck?.Validate();
     }
 }

@@ -131,7 +131,7 @@ public sealed class ScreenPropertiesView : UserControl
         Button(keys, "SetProjectKey", "Назначить", () => { if (session?.SelectedScreen is { } selected) Try(() =>
         {
             var kind = shortcutActions[Math.Max(0, shortcutAction.SelectedIndex)];
-            session.SetInputBinding(new(shortcut.Text ?? "", kind, kind is ScreenButtonAction.Open or ScreenButtonAction.Toggle or ScreenButtonAction.Scene or ScreenButtonAction.NewGame ? selected.Id : null));
+            session.SetInputBinding(new(shortcut.Text ?? "", kind, kind is ScreenButtonAction.Open or ScreenButtonAction.Toggle or ScreenButtonAction.Scene or ScreenButtonAction.NewGame or ScreenButtonAction.History or ScreenButtonAction.ReadingSettings ? selected.Id : null));
         }); });
         Button(keys, "RemoveProjectKey", "Удалить назначение", () => session?.RemoveInputBinding(shortcut.Text ?? ""));
         keys.Children.Add(shortcuts);
@@ -178,7 +178,7 @@ public sealed class ScreenPropertiesView : UserControl
         target.SelectionChanged += (_, _) =>
         {
             if (!refreshing && (ScreenButtonAction)action.SelectedIndex is ScreenButtonAction.Open or ScreenButtonAction.Replace or
-                ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame) ApplyButton();
+                ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame or ScreenButtonAction.History or ScreenButtonAction.ReadingSettings) ApplyButton();
         };
         screenName.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty && !refreshing && session?.SelectedScreen is { } s && !string.IsNullOrWhiteSpace(screenName.Text)) session.UpdateScreen(s with { Name = screenName.Text }, "screen-name:" + s.Id); };
         handler.SelectionChanged += (_, _) => { if (!refreshing && session?.SelectedScreen is { } s) session.UpdateScreen(s with { HandlerScriptId = (handler.SelectedItem as Option)?.Id }); };
@@ -212,8 +212,8 @@ public sealed class ScreenPropertiesView : UserControl
     {
         if (session?.SelectedScreen is not { } screen || session.SelectedScreenNode is not { Kind: ScreenNodeKind.Button or ScreenNodeKind.Area } node) return;
         var kind = (ScreenButtonAction)Math.Max(0, action.SelectedIndex);
-        var id = kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame ? (target.SelectedItem as Option)?.Id : null;
-        if (kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame && id is null) { status.Text = "Выберите целевую сцену."; return; }
+        var id = kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame or ScreenButtonAction.History or ScreenButtonAction.ReadingSettings ? (target.SelectedItem as Option)?.Id : null;
+        if (kind is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame or ScreenButtonAction.History or ScreenButtonAction.ReadingSettings && id is null) { status.Text = "Выберите целевую сцену."; return; }
         var usesSlot = kind is ScreenButtonAction.SaveSlot or ScreenButtonAction.LoadSlot or ScreenButtonAction.DeleteSlot;
         var selectedSlot = usesSlot && !string.IsNullOrWhiteSpace(slotId.Text) ? slotId.Text : null;
         if (usesSlot && (selectedSlot is not null && !NovellMaker.Core.Execution.GameSlotStore.IsValidSlotId(selectedSlot) || kind != ScreenButtonAction.SaveSlot && selectedSlot is null))
@@ -271,7 +271,7 @@ public sealed class ScreenPropertiesView : UserControl
             audioGroup.SelectedItem = binding?.Group ?? NovellMaker.Core.Audio.AudioGroup.Master;
             audioAmount.Value = (decimal)(binding?.Amount ?? 0) * 100; audioAmount.IsVisible = binding?.Action == ScreenButtonAction.Volume;
             var previous = (target.SelectedItem as Option)?.Id;
-            target.ItemsSource = screens; target.SelectedItem = screens.FirstOrDefault(s => s.Id == binding?.TargetScreenId) ?? screens.FirstOrDefault(s => s.Id == previous) ?? screens.FirstOrDefault(); target.IsEnabled = action.SelectedIndex is 2 or 3 or 6 or 12 or 13; targetField.IsVisible = target.IsEnabled;
+            target.ItemsSource = screens; target.SelectedItem = screens.FirstOrDefault(s => s.Id == binding?.TargetScreenId) ?? screens.FirstOrDefault(s => s.Id == previous) ?? screens.FirstOrDefault(); target.IsEnabled = action.SelectedIndex is 2 or 3 or 6 or 12 or 13 or 21 or 24; targetField.IsVisible = target.IsEnabled;
             startScreen.IsChecked = screen is not null && session?.Project?.StartScreenSceneId == screen.Id;
             screenName.Text = screen?.Name ?? "";
             pauseBelow.IsChecked = screen?.PauseOnOverlay == true; blockBelow.IsChecked = screen?.BlockInputOnOverlay == true;

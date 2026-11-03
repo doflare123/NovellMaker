@@ -99,7 +99,11 @@ internal sealed partial class RuntimeGame : Game
         settingsServices.IsCurrentOrigin = services.IsCurrentOrigin;
         settingsServices.Completed += (origin, result) => serviceFeedbackDelivered = screens.DeliverServiceResult(origin, result);
         screens.Stack.Presentation = PresentComponents;
-        screens.HostActivation = ActivateReading;
+        historyServices = new(session, (line, language) => audio?.CanReplayVoice(line, language) == true,
+            (line, language) => { audio?.ReplayVoice(line, language); return audio?.IsReplayVoicePlaying == true; },
+            () => audio?.StopReplayVoice(), value => audio?.PauseReplayVoice(value));
+        historyServices.IsCurrentOrigin = services.IsCurrentOrigin;
+        historyServices.Completed += (origin, result) => serviceFeedbackDelivered = screens.DeliverServiceResult(origin, result);
         screens.Configure(player.Execution.Project, () => player.Execution.State.Variables, () => session.Generation, () => player.Execution);
         session.Resetting += ResetSessionResources;
         if (arguments.SmokePlanPath is { } plan) smokePlan = JsonSerializer.Deserialize<RuntimeSmokeStep[]>(File.ReadAllText(plan)) ?? throw new ArgumentException("Пустой smoke-план.");
@@ -562,6 +566,11 @@ internal sealed partial class RuntimeGame : Game
     private void ApplyService(ScreenInstance? origin, GameServiceCommand command, long generation)
     {
         serviceFeedbackDelivered = false;
+        if (command.Action is GameServiceAction.GetHistory or GameServiceAction.ReplayHistoryVoice)
+        {
+            historyServices.Request(origin, command, generation);
+            RefreshInteractions(); return;
+        }
         if (command.Action is GameServiceAction.GetSettings or GameServiceAction.SetSetting or GameServiceAction.GetPersistent or GameServiceAction.SetPersistent)
         {
             settingsServices.Request(origin, command, generation);

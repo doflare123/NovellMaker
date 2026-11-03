@@ -6,6 +6,21 @@ namespace NovellMaker.Runtime.Tests;
 public sealed class ScreenTextureCacheTests
 {
     [TestMethod]
+    public void AuthoredHistoryTextUsesBoundedTilesWithFullLogicalLayoutWidth()
+    {
+        var root = new ScreenNode(Guid.NewGuid(), null, ScreenNodeKind.Panel, Viewport);
+        var body = new ScreenNode(Guid.NewGuid(), root.Id, ScreenNodeKind.Text, new(80, 150, 1120, 380), "Long history\n日本語");
+        var definition = new ScreenDefinition(Guid.NewGuid(), [root, body]);
+        var tiles = ScreenTextureCache<Texture>.Plan(definition, Viewport);
+        Assert.AreEqual(1120 * 380, tiles.Sum(t => t.Raster.Width * t.Raster.Height));
+        Assert.IsTrue(tiles.All(t => t.Raster.Width * t.Raster.Height <= ScreenTextureCache<Texture>.MaximumTexturePixels && t.Raster.LogicalWidth == 1120));
+        Assert.AreEqual(0, tiles[0].Raster.OffsetY); Assert.IsGreaterThan(0, tiles[1].Raster.OffsetY);
+        using var cache = new ScreenTextureCache<Texture>(_ => new());
+        for (var i = 0; i < 4; i++) cache.Update(definition, Viewport);
+        Assert.AreEqual(0, cache.RejectedNodes); Assert.AreEqual(0, cache.DeferredNodes);
+    }
+
+    [TestMethod]
     public void LargeDialogueTilesShareFrameAndCacheBudgetsAndTextOnlyUpdatesKeepPanelRaster()
     {
         var scene = NovellMaker.Core.Scenes.NovelScene.Create("Сцена"); var root = scene.Canvas.Nodes[0];
@@ -115,7 +130,7 @@ public sealed class ScreenTextureCacheTests
         var plan = ScreenTextureCache<Texture>.Plan(definition, Viewport);
         Assert.AreEqual(1, plan.Count);
         Assert.AreEqual(40, plan[0].X); Assert.AreEqual(60, plan[0].Y);
-        Assert.AreEqual(new ScreenRaster("clipped", 100, 90, 50, 60, 100000, Transparent: true), plan[0].Raster);
+        Assert.AreEqual(new ScreenRaster("clipped", 100, 90, 50, 60, 100000, Transparent: true) { LogicalWidth = 100000 }, plan[0].Raster);
         using var cache = new ScreenTextureCache<Texture>(_ => new());
         cache.Update(definition, Viewport); Assert.AreEqual(9000, cache.CachedPixels);
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => DialogueTextureRenderer.RenderButton(null!, "huge", 100000, 100000));
@@ -144,7 +159,7 @@ public sealed class ScreenTextureCacheTests
         var definition = new ScreenDefinition(Guid.NewGuid(), [new(root, null, ScreenNodeKind.Container, new(0, 0, 100000, 100000)),
             new(Guid.NewGuid(), root, ScreenNodeKind.Text, new(0, 0, 2049, 1)),
             new(Guid.NewGuid(), root, ScreenNodeKind.Text, new(0, 0, 1, 2049)),
-            new(Guid.NewGuid(), root, ScreenNodeKind.Text, new(0, 0, 1024, 1024)),
+            new(Guid.NewGuid(), root, ScreenNodeKind.Button, new(0, 0, 1024, 1024)),
             .. Enumerable.Range(0, 20).Select(_ => new ScreenNode(Guid.NewGuid(), root, ScreenNodeKind.Text, new(0, 0, 512, 512)))]);
         var count = 0;
         using var cache = new ScreenTextureCache<Texture>(_ => { count++; return new(); });

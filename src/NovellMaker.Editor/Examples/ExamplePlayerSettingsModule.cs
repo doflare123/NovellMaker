@@ -11,6 +11,7 @@ public static class ExamplePlayerSettingsModule
 {
     public static NovelProject AddTo(NovelProject project)
     {
+        project = ReadingScreenTemplates.Ensure(project);
         var scene = NovelScene.Create("Пример · настройки игрока");
         var root = scene.Canvas.Nodes[0].Id;
         var nodes = scene.Canvas.Nodes.ToBuilder();
@@ -41,6 +42,7 @@ public static class ExamplePlayerSettingsModule
             References = refs.ToImmutable(), Buttons = [new(close, ScreenButtonAction.Close, null), new(reading, ScreenButtonAction.ReadingSettings, null)] } };
         var result = project with { Scenes = project.Scenes.Add(scene), Scripts = project.Scripts.Add(script),
             InputBindings = project.InputBindings.Where(b => b.Key != "F9").Append(new("F9", ScreenButtonAction.Toggle, scene.Id)).ToImmutableArray() };
+        result = ReadingScreenTemplates.Ensure(result);
         ScreenAsset.ValidateProject(result); return result;
     }
 

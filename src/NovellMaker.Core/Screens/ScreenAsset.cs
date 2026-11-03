@@ -97,7 +97,7 @@ public sealed record ScreenAsset(Guid Id, string Name, ImmutableArray<ScreenNode
                 (b.Action == ScreenButtonAction.SaveSlot ? b.SlotTitle is { Length: > 128 } : b.SlotTitle is not null) ||
                 !screen.Nodes.Any(n => n.Id == b.NodeId && n.Kind is ScreenNodeKind.Button or ScreenNodeKind.Area) ||
                 !Enum.IsDefined(b.Group) || !double.IsFinite(b.Amount) || Math.Abs(b.Amount) > 1 || b.Action != ScreenButtonAction.Volume && b.Amount != 0 ||
-                (b.Action is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame
+                (b.Action is ScreenButtonAction.Open or ScreenButtonAction.Replace or ScreenButtonAction.Scene or ScreenButtonAction.Toggle or ScreenButtonAction.NewGame or ScreenButtonAction.History or ScreenButtonAction.ReadingSettings
                     ? !project.Screens.Any(s => s is not null && s.Id == b.TargetScreenId)
                     : b.TargetScreenId is not null)) || screen.Buttons.Select(b => b.NodeId).Distinct().Count() != screen.Buttons.Length)
                 throw new ArgumentException($"Экран «{screen.Name}»: неверная привязка кнопки.");

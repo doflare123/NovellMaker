@@ -54,6 +54,7 @@ internal static partial class ProjectJsonCodec
             19 => MapVersion17(await DeserializeRequiredAsync<Version17ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false), allowSlots: true),
             20 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             22 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
+            23 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             21 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
             8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
@@ -78,6 +79,15 @@ internal static partial class ProjectJsonCodec
             throw new ProjectFormatException("Слоистые персонажи требуют формат проекта v22.");
         if (versionProbe.FormatVersion < 22 && project.Scenes.Any(s => s.Actions.Concat(s.ScriptBlocks.Select(b => b.Action)).Any(a => a is NovellMaker.Core.Execution.PlayCharacterClipAction)))
             throw new ProjectFormatException("Клипы персонажей требуют формат проекта v22.");
+        if (versionProbe.FormatVersion < 23)
+        {
+            bool Window(NovellMaker.Core.Screens.ScreenButtonAction action) => NovellMaker.Core.Screens.ReadingScreenTemplates.IsWindow(action);
+            if (project.Scenes.SelectMany(s => s.Canvas.Buttons).Any(b => Window(b.Action) && b.TargetScreenId is not null) ||
+                project.InputBindings.Any(b => Window(b.Action) && b.TargetSceneId is not null))
+                throw new ProjectFormatException("Авторские окна чтения требуют формат проекта v23.");
+            if (project.Scenes.SelectMany(s => s.Canvas.Buttons).Any(b => Window(b.Action)) || project.InputBindings.Any(b => Window(b.Action)))
+                project = NovellMaker.Core.Screens.ReadingScreenTemplates.Ensure(project);
+        }
         return project;
     }
     internal static Task WriteAsync(Stream stream, NovelProject project, CancellationToken cancellationToken) =>

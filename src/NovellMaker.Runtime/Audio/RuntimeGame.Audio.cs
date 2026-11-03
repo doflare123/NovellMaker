@@ -57,7 +57,7 @@ internal sealed partial class RuntimeGame
     }
     private void ApplyProjectCommand(NovellMaker.Core.Screens.ScreenButtonBinding command)
     {
-        if (command.Action is ScreenButtonAction.History or ScreenButtonAction.AutoRead or ScreenButtonAction.SkipRead or ScreenButtonAction.ReadingSettings)
+        if (command.Action is ScreenButtonAction.AutoRead or ScreenButtonAction.SkipRead)
         { ReadingAction(command.Action); RefreshInteractions(); return; }
         switch (command.Action)
         {

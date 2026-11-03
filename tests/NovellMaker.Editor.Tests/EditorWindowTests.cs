@@ -195,7 +195,7 @@ public sealed class EditorWindowTests
             var id = Guid.NewGuid(); session.UpdateAudio(before.Audio with { Assets = [new(id, "Пример.wav", $"Assets/Audio/{id:N}.wav")] }); before = session.Project!;
         }
         Find<Button>(inspector, exampleKind == 9 ? "AddInputExample" : exampleKind == 8 ? "AddAudioExample" : exampleKind == 7 ? "AddAnimationsExample" : exampleKind == 6 ? "AddLuaDiagnosticsExample" : exampleKind == 5 ? "AddLuaRandomExample" : exampleKind == 4 ? "AddLuaLibraryExample" : exampleKind == 3 ? "AddLuaModulesExample" : exampleKind == 2 ? "AddComponentStateExample" : exampleKind == 1 ? "AddTriggersExample" : "AddPlayerSettingsExample").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-        Assert.AreEqual(before.Scenes.Length + 1, session.Project!.Scenes.Length);
+        Assert.AreEqual(before.Scenes.Length + (exampleKind == 0 ? 3 : 1), session.Project!.Scenes.Length);
         session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo();
         session.OpenScreenLibrary(session.Project!.Scenes.Last().Id); Dispatcher.UIThread.RunJobs();
         Assert.IsTrue(session.SelectedScreen!.Nodes.Any(n => n.Text == (exampleKind == 9 ? "Указатель и клавиатура" : exampleKind == 8 ? "Звук из Lua" : exampleKind == 7 ? "Анимации компонентов" : exampleKind == 6 ? "Журнал Lua" : exampleKind == 5 ? "Управляемый RNG" : exampleKind == 4 ? "Библиотека Lua" : exampleKind == 3 ? "Модули Lua" : exampleKind == 2 ? "Состояние компонентов" : exampleKind == 1 ? "Триггеры и постоянные данные" : "Настройки")));
@@ -291,6 +291,36 @@ public sealed class EditorWindowTests
         Assert.AreEqual(before!.Scenes.Length + 2, session.Project!.Scenes.Length); Assert.IsNotNull(session.Project.StartScreenSceneId);
         session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo();
         Capture(window, "editor-game-slots.png"); window.Close();
+    });
+
+    [TestMethod]
+    public Task ReadingWindowTemplatesAndTargetsAreEditableThroughInspectorWithUndo() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); session.AddScene(); session.OpenScreenLibrary(); Dispatcher.UIThread.RunJobs();
+        var before = session.Project!;
+        var inspector = window.GetVisualDescendants().OfType<ScreenPropertiesView>().Single();
+        Find<Button>(inspector, "AddReadingControls").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        var after = session.Project!; Assert.AreEqual(before.Scenes.Length + 2, after.Scenes.Length);
+        var story = after.Scenes.Single(s => s.Id == before.Scenes[0].Id);
+        var history = story.Canvas.Buttons.Single(b => b.Action == NovellMaker.Core.Screens.ScreenButtonAction.History);
+        var reading = story.Canvas.Buttons.Single(b => b.Action == NovellMaker.Core.Screens.ScreenButtonAction.ReadingSettings);
+        session.Undo(); Assert.IsTrue(before.ContentEquals(session.Project)); session.Redo();
+        session.OpenScreenLibrary(history.TargetScreenId); Dispatcher.UIThread.RunJobs();
+        var title = session.SelectedScreen!.Nodes.Single(n => n.Name == "title"); session.SelectScreenNode(title.Id); Dispatcher.UIThread.RunJobs();
+        Find<TextBox>(inspector, "ScreenNodeText").Text = "Backlog";
+        Find<NumericUpDown>(inspector, "ScreenNodeX").Value = 123;
+        Assert.AreEqual("Backlog", session.SelectedScreenNode!.Text); Assert.AreEqual(123d, session.SelectedScreenNode.Bounds.X);
+        session.Undo(); Assert.AreEqual(title.Bounds.X, session.SelectedScreenNode!.Bounds.X); session.Redo();
+        session.OpenScreenLibrary(story.Id); session.SelectScreenNode(history.NodeId); Dispatcher.UIThread.RunJobs();
+        var target = Find<ComboBox>(inspector, "ScreenButtonTarget"); Assert.IsTrue(target.IsEnabled);
+        var previous = session.SelectedScreen!.Buttons.Single(b => b.NodeId == history.NodeId).TargetScreenId;
+        target.SelectedIndex = (target.SelectedIndex + 1) % target.ItemCount;
+        Assert.AreNotEqual(previous, session.SelectedScreen!.Buttons.Single(b => b.NodeId == history.NodeId).TargetScreenId);
+        session.Undo(); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(previous, session.SelectedScreen!.Buttons.Single(b => b.NodeId == history.NodeId).TargetScreenId);
+        session.SelectScreenNode(reading.NodeId); Dispatcher.UIThread.RunJobs(); Assert.IsTrue(target.IsEnabled);
+        window.Close();
     });
 
     [TestMethod]

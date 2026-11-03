@@ -39,7 +39,6 @@ internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
         };
     }
     public ScreenStack Stack { get; } = new(Guid.NewGuid());
-    public Func<ScreenActivation, bool>? HostActivation { get; set; }
     public ScreenLuaSession? Scripts { get; }
     public Guid? NavigationRequested { get; private set; }
     public bool HasOverlays => Stack.Instances.Any(i => !ReferenceEquals(i, sceneInstance));
@@ -132,7 +131,6 @@ internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
         if (input.Kind == ScreenInputKind.Activate && !HasOverlays && Stack.Focus is null) return new(false);
         var result = Stack.Route(input);
         if (result.Activation is not { } activation) return result;
-        if (HostActivation?.Invoke(activation) == true) return result;
         var instance = Stack.Instances.Single(i => i.Id == activation.InstanceId);
         var asset = project?.Scenes.FirstOrDefault(s => s.Id == instance.Definition.Id)?.AsScreen();
         if (asset is null) return result;
@@ -167,8 +165,10 @@ internal sealed partial class RuntimeScreens : IDisposable, IAsyncDisposable
                 case ScreenButtonAction.Open:
                 case ScreenButtonAction.Replace:
                 case ScreenButtonAction.Toggle:
+                case ScreenButtonAction.History:
+                case ScreenButtonAction.ReadingSettings:
                     var target = project!.Scenes.Single(s => s.Id == binding.TargetScreenId).AsScreen();
-                    if (binding.Action == ScreenButtonAction.Toggle && Stack.Instances.LastOrDefault() is { } top &&
+                    if (binding.Action is ScreenButtonAction.Toggle or ScreenButtonAction.History or ScreenButtonAction.ReadingSettings && Stack.Instances.LastOrDefault() is { } top &&
                         !IsSceneInstance(top) && top.Definition.Id == target.Id) Stack.Close(top);
                     else if (binding.Action == ScreenButtonAction.Replace && ReferenceEquals(instance, sceneInstance)) NavigationRequested = target.Id;
                     else Open(target, binding.Action == ScreenButtonAction.Replace ? instance : null, instance?.OwnerId);

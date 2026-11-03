@@ -1,5 +1,5 @@
 ---@meta NovellMaker.ui
--- NovellMaker screen API, wire 18 / Lua 5.2. Tooling only; never execute this file.
+-- NovellMaker screen API, wire 20 / Lua 5.2. Tooling only; never execute this file.
 -- Calls enqueue one atomic batch. A handler must return; waits do not suspend Lua.
 
 ---@alias NMHandle string Opaque resource/instance/node identity, valid only in its live instance.
@@ -34,6 +34,18 @@
 ---@field text_speed number 0–200 Unicode-знаков/с; 0 мгновенно
 ---@field auto_delay number 0–30 секунд после полного текста
 ---@field auto_wait_voice boolean
+---@class NMHistory
+---@field count integer 0..500 retained visits.
+---@field index integer One-based; 0 when empty.
+---@field page integer One-based; 0 when empty.
+---@field pages integer 0 when empty.
+---@field visit_id? string GUID N, absent when empty.
+---@field scene_id? string GUID N.
+---@field line_id? string GUID N.
+---@field language string At most 64 UTF-16 units.
+---@field speaker string At most 256 UTF-16 units.
+---@field text string Plain text, at most 4096 UTF-16 units.
+---@field can_replay boolean Exact visit language has a voice binding.
 ---@class NMSlot
 ---@field id string
 ---@field status string
@@ -54,6 +66,7 @@
 ---@field checked_at string UTC ISO 8601.
 ---@field from_cache boolean
 ---@class NMEvent
+---@field history? NMHistory GetHistory result; absent for other operations.
 ---@field provider? string github_releases_v1 for CheckGameRelease.
 ---@field code? string Ok/Disabled/Busy/RateLimited/Cancelled/Timeout or provider error.
 ---@field retry_after_seconds? integer
@@ -234,6 +247,16 @@ function ui.load_slot(id) end
 function ui.delete_slot(id) end
 ---@return string request_id
 function ui.get_settings() end
+---Read one bounded history page; result arrives as service_result.history.
+---@param index? integer 0 = newest (default); otherwise 1..500, clamped to retained visits.
+---@param page? integer 1..1000000, default 1, clamped to available pages.
+---@param page_size? integer 1..2048 Unicode scalars, default 700. Also at most 8 newlines per page.
+---@return string request_id
+function ui.get_history(index, page, page_size) end
+---Replay a retained visit without executing scenario commands. Owned by the requesting canvas.
+---@param visit_id string GUID N from history.visit_id.
+---@return string request_id
+function ui.replay_history_voice(visit_id) end
 ---Exactly zero arguments. No network until the whole batch commits. No automatic retry.
 ---@return string request_id Result arrives as service_result, operation CheckGameRelease.
 function ui.check_game_release() end

@@ -61,6 +61,7 @@ public sealed class AudioService(NovelProject project, string root, string langu
     }
     private readonly AudioOwner historyOwner = new(Guid.NewGuid(), 0, Guid.NewGuid(), Guid.NewGuid());
     public bool IsVoicePlaying => sources.Any(s => s.Owner is null && s.Group == AudioGroup.Voice);
+    public bool IsReplayVoicePlaying => sources.Any(s => s.Owner == historyOwner);
     public bool CanReplayVoice(Guid line, string voiceLanguage) => project.Audio.Voices.TryGetValue(line, out var voices) && voices.ContainsKey(voiceLanguage);
     /// <summary>Independent history channel: no line effects, scenario commands or scene music restart.</summary>
     public void ReplayVoice(Guid line, string voiceLanguage)

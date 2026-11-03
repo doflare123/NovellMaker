@@ -1,6 +1,6 @@
 # Lua-справочник NovellMaker
 
-Практический справочник текущего кода на 2 ноября 2026 года. Проект v22, Lua 5.2/MoonSharp 2.0.0, screen protocol v19. Запланированные функции не включены. Для начала прочитайте [модель исполнения](execution-model.md), затем [законченные примеры](examples.md). Персонажи из частей, ключевые кадры и GIF: [руководство анимации](characters.md). Возможности редактора, ресурсы и экспорт: [руководство движка](engine-guide.md).
+Практический справочник текущего кода на 3 ноября 2026 года. Проект v23, Lua 5.2/MoonSharp 2.0.0, screen protocol v20. Запланированные функции не включены. Для начала прочитайте [модель исполнения](execution-model.md), затем [законченные примеры](examples.md). Персонажи из частей, ключевые кадры и GIF: [руководство анимации](characters.md). Возможности редактора, ресурсы и экспорт: [руководство движка](engine-guide.md).
 
 ## Категории
 
@@ -12,6 +12,7 @@
 - [Анимации компонентов](animations.md)
 - [Звук Lua](audio.md) и [озвучка/fades/ducking проекта](engine-guide.md#озвучка-fades-и-ducking)
 - [Игровой сеанс, слоты, настройки и профиль](session-and-storage.md)
+- [Авторские окна истории и чтения](history.md)
 - [Внешний сервис проверки выпуска](external-services.md)
 - [Мини-игры и возврат результата](minigames.md)
 - [Диагностика](diagnostics.md)
@@ -103,6 +104,7 @@
 - [ui.find](components.md#ui-find)
 - [ui.focus](input-and-triggers.md#ui-focus)
 - [ui.get](state-and-random.md#ui-get)
+- [ui.get_history](history.md#ui-get-history)
 - [ui.get_persistent](session-and-storage.md#ui-get-persistent)
 - [ui.get_random_state](state-and-random.md#ui-get-random-state)
 - [ui.get_settings](session-and-storage.md#ui-get-settings)
@@ -122,6 +124,7 @@
 - [ui.random](state-and-random.md#ui-random)
 - [ui.release_pointer](input-and-triggers.md#ui-release-pointer)
 - [ui.remove](components.md#ui-remove)
+- [ui.replay_history_voice](history.md#ui-replay-history-voice)
 - [ui.save_slot](session-and-storage.md#ui-save-slot)
 - [ui.seed_random](state-and-random.md#ui-seed-random)
 - [ui.sequence](animations.md#ui-sequence)
@@ -140,6 +143,6 @@
 - [ui.trigger](input-and-triggers.md#ui-trigger)
 - [ui.tween](animations.md#ui-tween)
 
-**Всего 111 функций:** game — 25, ui — 51 (включая import), ограниченная библиотека ui — 35. В модуле тот же ui и библиотека, новых встроенных экспортов нет.
+**Всего 113 функций:** game — 25, ui — 53 (включая import), ограниченная библиотека ui — 35. В модуле тот же ui и библиотека, новых встроенных экспортов нет.
 
 Параметры появления текста, авточтение, пропуск прочитанного и история с повтором голоса: [чтение новеллы](engine-guide.md#чтение-новеллы).

@@ -121,14 +121,15 @@ internal sealed class ScreenTextureCache<T>(Func<ScreenRaster, T> render) : IDis
             var width = (int)Math.Ceiling(Math.Min(node.Bounds.Width, local.X + local.Width) - 1e-8) - left;
             var height = (int)Math.Ceiling(Math.Min(node.Bounds.Height, local.Y + local.Height) - 1e-8) - top;
             if (width <= 0 || height <= 0) continue;
-            if (width > MaximumTextureSide || height > MaximumTextureSide || node.Dialogue == DialogueBinding.None && (long)width * height > MaximumTexturePixels)
+            var tileText = node.Kind == ScreenNodeKind.Text || node.Dialogue != DialogueBinding.None;
+            if (width > MaximumTextureSide || height > MaximumTextureSide || !tileText && (long)width * height > MaximumTexturePixels)
             { reject?.Invoke(node); continue; }
-            var stripHeight = node.Dialogue == DialogueBinding.None ? height : Math.Max(1, MaximumTexturePixels / width);
+            var stripHeight = tileText ? Math.Max(1, MaximumTexturePixels / width) : height;
             for (var y = top; y < top + height; y += stripHeight)
             {
                 var origin = visual.World.Apply(left, y);
                 result.Add(new(node, new(node.Text, width, Math.Min(stripHeight, top + height - y), left, y, node.Bounds.Height, node.ImageId is not null || node.Kind == ScreenNodeKind.Text)
-                    { Dialogue = node.Dialogue, LogicalWidth = node.Dialogue == DialogueBinding.None ? 0 : node.Bounds.Width }, (int)origin.X, (int)origin.Y));
+                    { Dialogue = node.Dialogue, LogicalWidth = node.Bounds.Width }, (int)origin.X, (int)origin.Y));
             }
         }
         return result;
