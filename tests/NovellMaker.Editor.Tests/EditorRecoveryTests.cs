@@ -1,3 +1,4 @@
+using Avalonia.VisualTree;
 using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
@@ -141,8 +142,9 @@ public sealed class EditorRecoveryTests
             var settings = new ProjectSettingsView { DataContext = session };
             settings.FindControl<TextBox>("ProjectNameBox")!.Text = "Правки перед принудительным завершением";
             session.ActiveScene.SelectedSection = 0;
-            var scene = new SceneEditorView { DataContext = session.ActiveScene };
-            scene.FindControl<TextBox>("LineTextBox")!.Text = "Реплика из аварийного процесса";
+            Dispatcher.UIThread.RunJobs();
+            var text = window.GetVisualDescendants().OfType<TextBox>().Single(c => c.Name == "RowTextBox" && (c.DataContext as DialogueLineViewModel)?.Id == session.ActiveScene.SelectedLine!.Id);
+            text.Text = "Реплика из аварийного процесса";
             Dispatcher.UIThread.RunJobs();
             var expected = session.Project;
             while (!session.RecoveryStatus.StartsWith("Снимок восстановления", StringComparison.Ordinal)) await Task.Delay(50);

@@ -227,6 +227,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         var audio = Audio;
         if (audio.Voices.TryGetValue(source.Id, out var voices)) audio = audio with { Voices = audio.Voices.SetItem(copy.Id, voices) };
         if (audio.LineEffects.TryGetValue(source.Id, out var effect)) audio = audio with { LineEffects = audio.LineEffects.SetItem(copy.Id, effect) };
+        if (audio.VoiceOmissions.TryGetValue(source.Id, out var omissions)) audio = audio with { VoiceOmissions = audio.VoiceOmissions.SetItem(copy.Id, omissions) };
         Session.UpdateScene(scene with { Lines = scene.Lines.Insert(SelectedIndex + 1, copy), ScriptBlocks = scene.ScriptBlocks.AddRange(blocks) }, audio: audio);
         SelectLine(copy.Id);
     }
@@ -271,7 +272,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
             var model = scene.Lines[index];
             if (!rowsById.TryGetValue(model.Id, out var row))
             {
-                row = new DialogueLineViewModel(model);
+                row = new DialogueLineViewModel(model) { Owner = this };
                 Lines.Insert(index, row);
             }
             else if (!ReferenceEquals(Lines[index], row)) Lines.Move(Lines.IndexOf(row), index);
@@ -288,6 +289,7 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
         foreach (var property in new[] { nameof(Name), nameof(NameValidation), nameof(IsNameValid), nameof(IsModified), nameof(UseSceneStyle), nameof(Css),
                      nameof(Style), nameof(CssError), nameof(HasCssError), nameof(CanEditCss) }) Changed(property);
         RefreshLineSelection();
+        RefreshDialogueRows();
         RefreshHeader();
     }
 
@@ -304,13 +306,14 @@ public sealed partial class SceneDocumentViewModel : DocumentViewModel
 
     internal void NotifyCommands()
     {
+        RefreshDialogueRows();
         foreach (var property in new[] { nameof(CanEditLine), nameof(CanEditCss), nameof(CanChooseState) }) Changed(property);
         foreach (var command in new[] { AddLineCommand, DeleteLineCommand, DuplicateLineCommand, MoveUpCommand, MoveDownCommand,
                      PreviousLineCommand, NextLineCommand, CloseCommand, OpenPhraseScriptCommand }) command?.NotifyCanExecuteChanged();
     }
 }
 
-public sealed class DialogueLineViewModel(DialogueLine model) : System.ComponentModel.INotifyPropertyChanged
+public sealed partial class DialogueLineViewModel(DialogueLine model) : System.ComponentModel.INotifyPropertyChanged
 {
     private string? lastLanguage;
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
@@ -339,6 +342,8 @@ public sealed class DialogueLineViewModel(DialogueLine model) : System.Component
         Number = number;
         var text = line.Texts.GetValueOrDefault(language, "").Replace('\r', ' ').Replace('\n', ' ');
         Label = $"{number}. {(text.Length == 0 ? "Пустая реплика" : text.Length > 64 ? text[..64] + "…" : text)}";
-        PropertyChanged?.Invoke(this, new(null));
+        refreshingDetails = true;
+        try { PropertyChanged?.Invoke(this, new(null)); }
+        finally { refreshingDetails = false; }
     }
 }

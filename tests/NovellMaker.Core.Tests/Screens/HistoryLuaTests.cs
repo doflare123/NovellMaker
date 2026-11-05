@@ -174,7 +174,7 @@ public sealed class HistoryLuaTests
             foreach (var binding in json["inputBindings"]!.AsArray()) binding!["targetSceneId"] = null;
             var legacy = json.ToJsonString(); await File.WriteAllTextAsync(path, legacy);
             var migrated = await store.LoadAsync(path); var repeated = await store.LoadAsync(path);
-            Assert.AreEqual(23, migrated.FormatVersion); Assert.IsTrue(migrated.ContentEquals(repeated));
+            Assert.AreEqual(NovelProject.CurrentFormatVersion, migrated.FormatVersion); Assert.IsTrue(migrated.ContentEquals(repeated));
             Assert.AreEqual(legacy, await File.ReadAllTextAsync(path));
             var historyScene = migrated.Scenes.Single(s => s.Id == migrated.InputBindings[0].TargetSceneId);
             var title = historyScene.Canvas.Nodes.Single(n => n.Name == "title");

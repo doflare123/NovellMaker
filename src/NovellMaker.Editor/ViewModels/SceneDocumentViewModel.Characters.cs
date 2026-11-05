@@ -62,6 +62,7 @@ public sealed partial class SceneDocumentViewModel
             {
                 SpeakerOptions = Options("Рассказчик / без персонажа", catalog.Select(item => new CharacterOption(item.Id, item.Name)), speaker);
                 Changed(nameof(SpeakerOptions));
+                Changed(nameof(SpeakerFilters));
             }
             if (changed || NeedsOptions(HideOptions, catalog.Select(item => item.Id), hidden))
             {

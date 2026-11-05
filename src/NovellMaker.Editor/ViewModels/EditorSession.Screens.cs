@@ -190,6 +190,7 @@ public sealed partial class EditorSession
         {
             if (audio.Voices.TryGetValue(line.Id, out var voices)) audio = audio with { Voices = audio.Voices.Add(ids[line.Id], voices) };
             if (audio.LineEffects.TryGetValue(line.Id, out var effect)) audio = audio with { LineEffects = audio.LineEffects.Add(ids[line.Id], effect) };
+            if (audio.VoiceOmissions.TryGetValue(line.Id, out var omissions)) audio = audio with { VoiceOmissions = audio.VoiceOmissions.Add(ids[line.Id], omissions) };
         }
         if (audio.SceneSounds.TryGetValue(source.Id, out var sound)) audio = audio with { SceneSounds = audio.SceneSounds.Add(copy.Id, sound) };
         EditProject(project with { Scenes = project.Scenes.Add(copy), Audio = audio }); OpenScreenLibrary(copy.Id);

@@ -38,6 +38,101 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task DialogueTableSupportsInlineKeyboardInsertionFilteringAndUndo() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
+        await session.NewProjectAsync(); session.AddCharacter(); session.SelectedCharacterName = "Лена"; var character = session.SelectedCharacter!.Id;
+        session.AddScene(); var doc = session.ActiveScene!; doc.SelectedSection = 0;
+        doc.InsertDialogue([new(character, "Ты тоже это слышал?"), new(null, "За дверью щёлкнул замок.")]);
+        Dispatcher.UIThread.RunJobs(); var text = SelectedRowText(window, doc); Assert.IsTrue(text.Focus()); text.SelectAll(); window.KeyTextInput("Исправлено в строке");
+        Assert.AreEqual("Исправлено в строке", doc.Lines[0].Text);
+        window.KeyPress(Key.Enter, RawInputModifiers.Control, PhysicalKey.Enter, "\r"); window.KeyRelease(Key.Enter, RawInputModifiers.Control, PhysicalKey.Enter, "\r"); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(3, doc.Lines.Count); Assert.AreEqual(doc.Lines[1].Id, doc.SelectedLine!.Id);
+        Assert.IsTrue(SelectedRowText(window, doc).IsFocused, "Ctrl+Enter must focus the inserted row.");
+        window.KeyTextInput("Новая реплика"); Assert.AreEqual("Новая реплика", doc.Lines[1].Text);
+        var picker = window.GetVisualDescendants().OfType<ComboBox>().Single(c => c.Name == "RowSpeakerPicker" && (c.DataContext as DialogueLineViewModel)?.Id == doc.SelectedLine.Id);
+        Assert.IsTrue(picker.Focus()); window.KeyPress(Key.F4, RawInputModifiers.None, PhysicalKey.F4, null); window.KeyRelease(Key.F4, RawInputModifiers.None, PhysicalKey.F4, null);
+        window.KeyPress(Key.Down, RawInputModifiers.None, PhysicalKey.ArrowDown, null); window.KeyRelease(Key.Down, RawInputModifiers.None, PhysicalKey.ArrowDown, null);
+        window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, "\r"); window.KeyRelease(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, "\r"); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(character, doc.Lines[1].Model.SpeakerId, "Speaker selection must work from the keyboard.");
+        window.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null); window.KeyRelease(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        Find<ListBox>(window, "DialogueLines").ScrollIntoView(doc.Lines[2]); Dispatcher.UIThread.RunJobs();
+        var check = window.GetVisualDescendants().OfType<CheckBox>().Single(c => c.Name == "RowVoiceOmitted" && (c.DataContext as DialogueLineViewModel)?.Id == doc.Lines[2].Id);
+        check.IsChecked = true; Find<CheckBox>(window, "MissingVoicesFilter").IsChecked = true; Dispatcher.UIThread.RunJobs(); Assert.AreEqual(2, doc.VisibleLines.Count);
+        session.Undo(); Dispatcher.UIThread.RunJobs(); Assert.AreEqual(3, doc.VisibleLines.Count);
+        doc.MissingVoicesOnly = false;
+        foreach (var size in new[] { 1280, 1600 }) { window.Width = size; Dispatcher.UIThread.RunJobs(); Capture(window, $"dialogue-table-{size}.png"); }
+        window.Close();
+    });
+
+    [TestMethod]
+    public Task WavDropBindsTheTargetRowAndLanguageAndCanBeUndoneThroughTable() => WithUi(async () =>
+    {
+        var root = Path.Combine(Path.GetTempPath(), "NovellMaker.WavDrop", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            using var session = CreateSession(out var dialogs, out _); dialogs.SavePath = Path.Combine(root, "scene.novell");
+            var wave = Path.Combine(root, "lena_whisper.wav"); await File.WriteAllBytesAsync(wave, NovellMaker.Testing.AudioFixture.Wave());
+            var owner = CreateWindow(session); owner.Show(); await session.NewProjectAsync(); session.AddScene(); var doc = session.ActiveScene!; doc.SelectedSection = 0;
+            doc.InsertDialogue([new(null, "Ты тоже это слышал?"), new(null, "За дверью щёлкнул замок.")]); await session.SaveAsync();
+            doc.Lines[1].VoiceOmitted = true; doc.SelectLine(doc.Lines[0].Id); Dispatcher.UIThread.RunJobs();
+            var target = SelectedRowText(owner, doc); var id = doc.SelectedLine!.Id;
+            using var data = new DataTransfer(); data.Add(DataTransferItem.CreateFile(LocalDropFile(wave)));
+            var over = new DragEventArgs(DragDrop.DragOverEvent, data, target, default, KeyModifiers.None); target.RaiseEvent(over); Assert.AreEqual(DragDropEffects.Copy, over.DragEffects);
+            target.RaiseEvent(new DragEventArgs(DragDrop.DropEvent, data, target, default, KeyModifiers.None));
+            while (session.IsBusy) await Task.Delay(10); Dispatcher.UIThread.RunJobs();
+            Assert.AreEqual(1, session.Project!.Audio.Voices.Count); Assert.IsTrue(session.Project.Audio.Voices[id].ContainsKey("ru"));
+            var voicePicker = owner.GetVisualDescendants().OfType<ComboBox>().Single(c => c.Name == "RowVoicePicker" && (c.DataContext as DialogueLineViewModel)?.Id == id);
+            Assert.AreEqual(session.Project.Audio.Voices[id]["ru"], (voicePicker.SelectedItem as AudioOption)?.Id, $"The row must show the assigned take. VM={doc.Lines[0].Voice?.Id}; options={string.Join(',', doc.Lines[0].AudioOptions.Select(a => a.Id))}; items={voicePicker.ItemCount}; selected={voicePicker.SelectedItem}");
+            Assert.IsTrue(doc.Lines[0].VoiceSummary.Contains("1,0") || doc.Lines[0].VoiceSummary.Contains("1.0"));
+            var play = owner.GetVisualDescendants().OfType<Button>().Single(c => c.Name == "PlayRowVoice" && (c.DataContext as DialogueLineViewModel)?.Id == id); Assert.IsTrue(play.IsEnabled);
+            Capture(owner, "dialogue-recording-states.png");
+            session.Undo(); Dispatcher.UIThread.RunJobs(); Assert.IsFalse(doc.Lines[0].HasVoice); session.Redo();
+            doc.EditingLanguage = "en"; Dispatcher.UIThread.RunJobs(); Assert.IsFalse(doc.Lines[0].HasVoice); doc.EditingLanguage = "ru";
+            doc.MissingVoicesOnly = true; Dispatcher.UIThread.RunJobs(); Assert.AreEqual(0, doc.VisibleLines.Count);
+            session.Undo(); Dispatcher.UIThread.RunJobs(); Assert.AreEqual(1, doc.VisibleLines.Count); owner.Close();
+        }
+        finally { Directory.Delete(root, true); }
+    });
+
+    private static Avalonia.Platform.Storage.IStorageItem LocalDropFile(string path)
+    {
+        // Avalonia seals IStorageItem to external implementations; use its filesystem item for a real file drop.
+        var type = typeof(Avalonia.Platform.Storage.IStorageItem).Assembly.GetType("Avalonia.Platform.Storage.FileIO.BclStorageFile", throwOnError: true)!;
+        return (Avalonia.Platform.Storage.IStorageItem)Activator.CreateInstance(type, new FileInfo(path))!;
+    }
+
+    [TestMethod]
+    public Task DialoguePastePreviewsAndMapsUnknownNameOnceForAllRows() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var owner = CreateWindow(session); owner.Show(); await session.NewProjectAsync();
+        session.AddCharacter(); session.SelectedCharacterName = "Лена"; var lena = session.SelectedCharacter!.Id;
+        session.AddScene(); var doc = session.ActiveScene!; doc.SelectedSection = 0; Dispatcher.UIThread.RunJobs();
+        Click(owner, Find<Button>(owner, "PasteDialogueButton")); Dispatcher.UIThread.RunJobs();
+        var dialog = owner.OwnedWindows.Single();
+        Find<TextBox>(dialog, "DialoguePasteInput").Text = "Лена: Знакомый персонаж\nНовое имя: Первая\nНовое имя: Вторая\nСтрока рассказчика";
+        Click(dialog, Find<Button>(dialog, "ParseDialoguePaste")); Dispatcher.UIThread.RunJobs();
+        Assert.IsFalse(Find<Button>(dialog, "ApplyDialoguePaste").IsEnabled);
+        var mappings = dialog.GetVisualDescendants().OfType<ComboBox>().ToArray(); Assert.AreEqual(2, mappings.Length);
+        mappings.Single(c => c.SelectedItem is null).SelectedIndex = 1; Dispatcher.UIThread.RunJobs();
+        Assert.IsTrue(Find<Button>(dialog, "ApplyDialoguePaste").IsEnabled); Capture(dialog, "dialogue-paste.png");
+        Click(dialog, Find<Button>(dialog, "ApplyDialoguePaste")); await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        Assert.AreEqual(4, doc.Lines.Count); Assert.AreEqual(3, doc.Lines.Count(l => l.Model.SpeakerId == lena)); Assert.IsNull(doc.Lines[3].Model.SpeakerId);
+        session.Undo(); Assert.AreEqual(0, doc.Lines.Count); session.Redo(); Assert.AreEqual(4, doc.Lines.Count); owner.Close();
+    });
+
+    [TestMethod]
+    public Task VoiceBatchPreviewCanBeCancelledAndListsMissingAndReplacementRows() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var owner = CreateWindow(session); owner.Show(); await session.NewProjectAsync();
+        var row = new RecordingRow(12, "Лена", "Ты тоже это слышал?", "ru", Guid.NewGuid(), "lena.wav", true);
+        var plan = new VoiceImportPlan(session.Project!.Id, Guid.NewGuid(), [new(row, "lena.wav", "hash", Guid.NewGuid(), "Заменить · 1,8 с"), new(row with { Number = 13, Wav = "anton.wav" }, null, null, null, "Файл отсутствует")], 0);
+        var result = new EditorDialogs(owner).ConfirmVoiceImportAsync(plan); Dispatcher.UIThread.RunJobs(); var dialog = owner.OwnedWindows.Single();
+        Capture(dialog, "dialogue-voice-batch.png"); dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        Assert.IsFalse(await result); Assert.AreEqual(0, session.Project.Audio.Assets.Length); owner.Close();
+    });
+
+    [TestMethod]
     public Task AudioSettingsControlsBindAndUndo() => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); await session.NewProjectAsync();
@@ -484,7 +579,7 @@ public sealed class EditorWindowTests
         Assert.IsNotNull(window.GetVisualDescendants().OfType<ScreenDesignSurface>().Single());
         session.AddScreenNodeAt(NovellMaker.Core.Screens.ScreenNodeKind.Button, 300, 200);
         document.SelectedSection = 0; Dispatcher.UIThread.RunJobs();
-        Click(window, Find<Button>(window, "AddLineButton")); TypeInto(window, Find<TextBox>(window, "LineTextBox"), "Одна сцена");
+        Click(window, Find<Button>(window, "AddLineButton")); TypeInto(window, SelectedRowText(window, session.ActiveScene!), "Одна сцена");
         document.SelectedSection = 6; Dispatcher.UIThread.RunJobs();
         Assert.AreSame(document, session.SelectedDocument); Assert.HasCount(2, session.Documents);
         Assert.HasCount(1, session.Project!.Scenes); Assert.HasCount(5, session.Project.Scenes[0].Canvas.Nodes);
@@ -1078,27 +1173,27 @@ public sealed class EditorWindowTests
         var document = session.ActiveScene;
         Click(window, Find<Button>(window, "AddLineButton"));
         var firstId = document.SelectedLine!.Id;
-        var text = Find<TextBox>(window, "LineTextBox");
+        var text = SelectedRowText(window, session.ActiveScene!);
         Assert.IsTrue(text.Focus());
         foreach (var character in "Первая реплика") window.KeyTextInput(character.ToString());
         Assert.AreEqual("Первая реплика", document.LineText);
 
         Click(window, Find<Button>(window, "AddLineButton"));
         var secondId = document.SelectedLine!.Id;
-        text = Find<TextBox>(window, "LineTextBox");
+        text = SelectedRowText(window, session.ActiveScene!);
         Assert.IsTrue(text.Focus());
         window.KeyTextInput("Вторая реплика");
         Assert.AreEqual("Вторая реплика", document.LineText);
 
         Click(window, Find<Button>(window, "PreviousLineButton"));
         Assert.AreEqual(firstId, document.SelectedLine!.Id);
-        Assert.AreEqual("Первая реплика", Find<TextBox>(window, "LineTextBox").Text);
+        Assert.AreEqual("Первая реплика", SelectedRowText(window, session.ActiveScene!).Text);
         Assert.IsFalse(Find<Button>(window, "PreviousLineButton").IsEffectivelyEnabled);
         Click(window, Find<Button>(window, "NextLineButton"));
         Assert.AreEqual(secondId, document.SelectedLine!.Id);
         Assert.IsFalse(Find<Button>(window, "NextLineButton").IsEffectivelyEnabled);
 
-        text = Find<TextBox>(window, "LineTextBox");
+        text = SelectedRowText(window, session.ActiveScene!);
         Assert.IsTrue(text.Focus());
         text.SelectAll();
         window.KeyTextInput("Исправленная реплика");
@@ -1373,7 +1468,7 @@ public sealed class EditorWindowTests
             Assert.AreEqual(normalId, document.SampleFrame!.Characters.Single().StateId);
             Find<ComboBox>(window, "CharacterStatePicker").SelectedIndex = 2;
             Dispatcher.UIThread.RunJobs();
-            TypeInto(window, Find<TextBox>(window, "LineTextBox"), "Привет, §#E08080я грущу§r.");
+            TypeInto(window, SelectedRowText(window, session.ActiveScene!), "Привет, §#E08080я грущу§r.");
             var sample = Find<DialogueStyleSample>(window, "DialogueSample");
             sample.BringIntoView();
             Dispatcher.UIThread.RunJobs();
@@ -1952,6 +2047,12 @@ public sealed class EditorWindowTests
         window.MouseDown(point, MouseButton.Left);
         window.MouseUp(point, MouseButton.Left);
         Dispatcher.UIThread.RunJobs();
+    }
+
+    private static TextBox SelectedRowText(Window window, SceneDocumentViewModel scene)
+    {
+        Dispatcher.UIThread.RunJobs();
+        return window.GetVisualDescendants().OfType<TextBox>().Single(c => c.Name == "RowTextBox" && (c.DataContext as DialogueLineViewModel)?.Id == scene.SelectedLine?.Id);
     }
 
     private static async Task WithUi(Func<Task> action)

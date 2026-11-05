@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Collections.ObjectModel;
 using NovellMaker.Core.Audio;
 
 namespace NovellMaker.Editor.ViewModels;
@@ -9,7 +10,7 @@ public sealed partial class SceneDocumentViewModel
 {
     private ImmutableArray<AudioAsset> audioCatalog;
     private bool refreshingAudio;
-    public AudioOption[] AudioOptions { get; private set; } = [new(null, "Нет")];
+    public ObservableCollection<AudioOption> AudioOptions { get; } = [new(null, "Нет")];
     private AudioProject Audio => Session.Project!.Audio;
     public AudioOption SceneSound
     {
@@ -29,7 +30,8 @@ public sealed partial class SceneDocumentViewModel
             if (refreshingAudio || value is null || SelectedLine is not { } l || !IsEditingLanguageValid) return;
             var voices = Audio.Voices.GetValueOrDefault(l.Id) ?? ImmutableDictionary<string, Guid>.Empty;
             voices = value.Id is { } id ? voices.SetItem(EditingLanguage, id) : voices.Remove(EditingLanguage);
-            Session.UpdateAudio(Audio with { Voices = voices.IsEmpty ? Audio.Voices.Remove(l.Id) : Audio.Voices.SetItem(l.Id, voices) });
+            Session.UpdateAudio(Audio with { Voices = voices.IsEmpty ? Audio.Voices.Remove(l.Id) : Audio.Voices.SetItem(l.Id, voices),
+                VoiceOmissions = value.Id.HasValue ? ClearOmission(Audio, l.Id, EditingLanguage) : Audio.VoiceOmissions });
         }
     }
     private AudioOption Option(Guid? id) => AudioOptions.FirstOrDefault(a => a.Id == id) ?? AudioOptions[0];
@@ -54,10 +56,23 @@ public sealed partial class SceneDocumentViewModel
             if (audioCatalog != Audio.Assets)
             {
                 audioCatalog = Audio.Assets;
-                AudioOptions = new[] { new AudioOption(null, "Нет") }.Concat(audioCatalog.Select(a => new AudioOption(a.Id, a.Name))).ToArray();
-                Changed(nameof(AudioOptions));
+                var wanted = new[] { AudioOptions[0] }.Concat(audioCatalog.Select(a => new AudioOption(a.Id, a.Name))).ToArray();
+                for (var i = AudioOptions.Count - 1; i > 0; i--)
+                    if (!wanted.Any(a => a.Id == AudioOptions[i].Id)) AudioOptions.RemoveAt(i);
+                for (var i = 1; i < wanted.Length; i++)
+                {
+                    var existing = AudioOptions.FirstOrDefault(a => a.Id == wanted[i].Id);
+                    if (existing is null) AudioOptions.Insert(i, wanted[i]);
+                    else
+                    {
+                        var at = AudioOptions.IndexOf(existing);
+                        if (at != i) AudioOptions.Move(at, i);
+                        if (existing.Name != wanted[i].Name) AudioOptions[i] = wanted[i];
+                    }
+                }
             }
             foreach (var name in new[] { nameof(SceneSound), nameof(LineEffect), nameof(LineVoice), nameof(MasterVolume), nameof(SoundVolume), nameof(EffectVolume), nameof(VoiceVolume), nameof(MasterMuted), nameof(SoundMuted), nameof(EffectMuted), nameof(VoiceMuted) }) Changed(name);
+            RefreshDialogueRows();
         }
         finally { refreshingAudio = false; }
     }

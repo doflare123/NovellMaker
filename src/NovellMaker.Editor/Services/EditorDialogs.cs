@@ -6,7 +6,7 @@ using Avalonia.Platform.Storage;
 
 namespace NovellMaker.Editor.Services;
 
-public sealed class EditorDialogs(Window owner) : IEditorDialogs
+public sealed partial class EditorDialogs(Window owner) : IEditorDialogs
 {
     public async Task<RecoveryDecision> ConfirmRecoveryAsync(RecoveryOffer offer)
     {

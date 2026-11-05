@@ -15,6 +15,10 @@ public interface IEditorDialogs
     Task ShowErrorAsync(string title, string message);
     Task ShowInformationAsync(string title, string message) => Task.CompletedTask;
     Task<string?> PickAudioAsync() => Task.FromResult<string?>(null);
+    Task<string?> PickSaveRecordingSheetAsync(string name) => Task.FromResult<string?>(null);
+    Task<string?> PickRecordingSheetAsync() => Task.FromResult<string?>(null);
+    Task<string?> PickVoiceFolderAsync() => Task.FromResult<string?>(null);
+    Task<bool> ConfirmVoiceImportAsync(VoiceImportPlan plan) => Task.FromResult(false);
     Task<string?> PickLuaScriptAsync() => Task.FromResult<string?>(null);
     Task<string?> PickCodeEditorAsync() => Task.FromResult<string?>(null);
     Task<string?> EditLuaNameAsync(string suggestedName) => Task.FromResult<string?>(suggestedName);

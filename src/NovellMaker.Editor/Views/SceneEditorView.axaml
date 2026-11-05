@@ -23,51 +23,76 @@
       <TabControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></TabControl.ItemsPanel>
       <TabItem>
         <TabItem.Header><TextBlock Text="Реплики" FontSize="12" /></TabItem.Header>
-        <Grid ColumnDefinitions="180,5,*" Margin="0,10,0,0">
-          <DockPanel>
-            <StackPanel DockPanel.Dock="Top" Spacing="5" Margin="0,0,8,8">
-              <Button Name="AddLineButton" Content="Добавить реплику" Command="{Binding AddLineCommand}" />
-              <StackPanel Orientation="Horizontal" Spacing="4">
-                <Button Content="Выше" Command="{Binding MoveUpCommand}" />
-                <Button Content="Ниже" Command="{Binding MoveDownCommand}" />
-              </StackPanel>
-              <StackPanel Orientation="Horizontal" Spacing="4">
-                <Button Content="Копия" Command="{Binding DuplicateLineCommand}" />
-                <Button Content="Удалить" Command="{Binding DeleteLineCommand}" />
-              </StackPanel>
+        <DockPanel Margin="0,10,0,0">
+          <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,8">
+            <WrapPanel>
+              <TextBlock Text="Язык" VerticalAlignment="Center" Margin="0,0,6,0" />
+              <TextBox Name="DialogueLanguageBox" Width="75" Text="{Binding EditingLanguage, Mode=TwoWay}" IsEnabled="{Binding Session.IsIdle}" Margin="0,0,8,4" />
+              <ComboBox Name="DialogueSpeakerFilter" Width="170" ItemsSource="{Binding SpeakerFilters}" SelectedItem="{Binding SpeakerFilter, Mode=TwoWay}" PlaceholderText="Все персонажи" Margin="0,0,8,4">
+                <ComboBox.ItemTemplate><DataTemplate DataType="vm:CharacterOption"><TextBlock Text="{Binding Name}" /></DataTemplate></ComboBox.ItemTemplate>
+              </ComboBox>
+              <CheckBox Name="MissingVoicesFilter" Content="Нужна запись" IsChecked="{Binding MissingVoicesOnly, Mode=TwoWay}" Margin="0,0,12,4" />
+              <CheckBox Content="Эффект фразы" IsChecked="{Binding ShowLineEffects, Mode=TwoWay}" Margin="0,0,8,4" />
+            </WrapPanel>
+            <WrapPanel>
+              <Button Name="AddLineButton" Content="Добавить" Command="{Binding AddLineCommand}" Margin="0,0,4,4" />
+              <Button Name="PasteDialogueButton" Content="Вставить диалог…" Click="PasteDialogue" IsEnabled="{Binding Session.CanEdit}" Margin="0,0,4,4" />
+              <Button Content="Выше" Command="{Binding MoveUpCommand}" Margin="0,0,4,4" />
+              <Button Content="Ниже" Command="{Binding MoveDownCommand}" Margin="0,0,4,4" />
+              <Button Content="Копия" Command="{Binding DuplicateLineCommand}" Margin="0,0,4,4" />
+              <Button Content="Удалить" Command="{Binding DeleteLineCommand}" Margin="0,0,12,4" />
+              <Button Name="ExportRecordingSheetButton" Content="Лист…" Click="ExportRecordingSheet" IsEnabled="{Binding Session.CanEdit}" Margin="0,0,4,4" />
+              <Button Name="ImportRecordingSheetButton" Content="Принять WAV…" Click="ImportRecordingSheet" IsEnabled="{Binding Session.CanEdit}" Margin="0,0,4,4" />
+            </WrapPanel>
+            <TextBlock Text="{Binding VoiceCoverage}" Classes="muted" />
+            <TextBlock Text="{Binding LanguageValidation}" IsVisible="{Binding !IsEditingLanguageValid}" Foreground="#D9B68C" />
+            <Grid ColumnDefinitions="28,120,*,235,Auto" Margin="8,0,8,0">
+              <TextBlock Text="№" /><TextBlock Grid.Column="1" Text="Персонаж" />
+              <TextBlock Grid.Column="2" Text="Текст (Ctrl+Enter)" TextTrimming="CharacterEllipsis" ToolTip.Tip="Ctrl+Enter — вставить реплику ниже и перейти к её тексту" />
+              <TextBlock Grid.Column="3" Text="Озвучка" ToolTip.Tip="Перетащите WAV на строку" />
+              <TextBlock Grid.Column="4" Text="Эффект" Width="140" IsVisible="{Binding ShowLineEffects}" />
+            </Grid>
+          </StackPanel>
+          <StackPanel DockPanel.Dock="Bottom" Spacing="5" Margin="0,8,0,0">
+            <TextBlock Name="VoiceAuditionStatus" TextWrapping="Wrap" Classes="muted" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Name="PreviousLineButton" Content="Назад" Command="{Binding PreviousLineCommand}" />
+              <TextBlock Text="{Binding NavigationPosition}" VerticalAlignment="Center" />
+              <Button Name="NextLineButton" Content="Вперёд" Command="{Binding NextLineCommand}" />
+              <Button Name="OpenPhraseScriptButton" Content="Свойства и события" Command="{Binding OpenPhraseScriptCommand}" />
+              <Button Name="StopVoiceAuditionButton" Content="Стоп" ToolTip.Tip="Остановить прослушивание" Click="StopVoiceAudition" />
             </StackPanel>
-            <ListBox Name="DialogueLines" ItemsSource="{Binding Lines}" SelectedItem="{Binding SelectedLine, Mode=TwoWay}" IsEnabled="{Binding Session.IsIdle}" Background="#24262B">
-        <ListBox.KeyBindings><KeyBinding Gesture="Delete" Command="{Binding DeleteLineCommand}" /></ListBox.KeyBindings>
-              <ListBox.ItemTemplate>
-                <DataTemplate DataType="vm:DialogueLineViewModel">
-                  <StackPanel Spacing="3">
-                    <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Label}" />
+          </StackPanel>
+          <ListBox Name="DialogueLines" ItemsSource="{Binding VisibleLines}" SelectedItem="{Binding SelectedLine, Mode=TwoWay}" IsEnabled="{Binding Session.IsIdle}" Background="#24262B">
+            <ListBox.Styles><Style Selector="ListBoxItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="6,5" /></Style></ListBox.Styles>
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="vm:DialogueLineViewModel">
+                <Grid ColumnDefinitions="28,120,*,235,Auto" IsEnabled="{Binding CanEdit}">
+                  <TextBlock Text="{Binding Number}" VerticalAlignment="Top" Margin="0,9,0,0" />
+                  <ComboBox Name="RowSpeakerPicker" Grid.Column="1" ItemsSource="{Binding Speakers}" SelectedItem="{Binding Speaker, Mode=TwoWay}" HorizontalAlignment="Stretch" Margin="0,0,6,0" VerticalAlignment="Top">
+                    <ComboBox.ItemTemplate><DataTemplate DataType="vm:CharacterOption"><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" /></DataTemplate></ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <StackPanel Grid.Column="2" Spacing="3" Margin="0,0,8,0">
+                    <TextBox Name="RowTextBox" Text="{Binding Text, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="38" IsUndoEnabled="False" GotFocus="DialogueRowFocused" />
                     <TextBlock Text="{Binding ScriptSummary}" IsVisible="{Binding HasScript}" FontSize="11" Classes="muted" />
                   </StackPanel>
-                </DataTemplate>
-              </ListBox.ItemTemplate>
-            </ListBox>
-          </DockPanel>
-          <GridSplitter Grid.Column="1" ResizeDirection="Columns" Background="#363A40" />
-          <ScrollViewer Grid.Column="2">
-            <StackPanel Margin="12,0,0,0" Spacing="8">
-              <Grid ColumnDefinitions="*,110">
-                <TextBlock Text="Текст реплики" Classes="section" VerticalAlignment="Center" />
-                <TextBox Grid.Column="1" Text="{Binding EditingLanguage, Mode=TwoWay}" IsEnabled="{Binding Session.IsIdle}" PlaceholderText="Язык" ToolTip.Tip="Язык редактируемого текста" />
-              </Grid>
-              <TextBlock Text="{Binding LanguageValidation}" IsVisible="{Binding !IsEditingLanguageValid}" Foreground="#D9B68C" />
-              <TextBox Name="LineTextBox" Text="{Binding LineText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" MaxHeight="180" IsEnabled="{Binding CanEditLine}" IsUndoEnabled="False" />
-              <Button Name="OpenPhraseScriptButton" Content="Свойства и события" Command="{Binding OpenPhraseScriptCommand}" HorizontalAlignment="Left" />
-              <TextBlock Text="{Binding SelectedPhraseScriptSummary}" Classes="muted" />
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Name="PreviousLineButton" Content="Назад" Command="{Binding PreviousLineCommand}" />
-                <TextBlock Text="{Binding NavigationPosition}" VerticalAlignment="Center" />
-                <Button Name="NextLineButton" Content="Вперёд" Command="{Binding NextLineCommand}" />
-              </StackPanel>
-              <views:HelpTip Explanation="Навигация автора меняет выбранную фразу и статический показ. F6 запускает игру; Enter в игре продолжает ожидание ввода, F8 восстанавливает сохранённое состояние." />
-            </StackPanel>
-          </ScrollViewer>
-        </Grid>
+                  <StackPanel Grid.Column="3" Spacing="3" Margin="0,0,6,0">
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                      <Button Name="PlayRowVoice" Content="▶" Click="PlayRowVoice" IsEnabled="{Binding HasVoice}" ToolTip.Tip="Прослушать дубль" Margin="0,0,4,0" />
+                      <ComboBox Grid.Column="1" Name="RowVoicePicker" ItemsSource="{Binding AudioOptions}" SelectedItem="{Binding Voice, Mode=TwoWay}" HorizontalAlignment="Stretch" />
+                      <Button Grid.Column="2" Name="AttachRowVoice" Content="WAV…" Click="AttachRowVoice" ToolTip.Tip="Прикрепить или заменить WAV" Margin="4,0,0,0" />
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Text="{Binding VoiceSummary}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding VoiceSummary}" />
+                      <CheckBox Grid.Column="1" Name="RowVoiceOmitted" Content="Без голоса" ToolTip.Tip="Автор оставил фразу без озвучки на этом языке" IsChecked="{Binding VoiceOmitted, Mode=TwoWay}" MinHeight="24" FontSize="11" Margin="4,0,0,0" />
+                    </Grid>
+                  </StackPanel>
+                  <ComboBox Grid.Column="4" Name="RowEffectPicker" Width="140" ItemsSource="{Binding AudioOptions}" SelectedItem="{Binding Effect, Mode=TwoWay}" IsVisible="{Binding ShowEffect}" VerticalAlignment="Top" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
       </TabItem>
       <TabItem Name="PlacementTab">
         <TabItem.Header><TextBlock Text="Размещение" FontSize="12" /></TabItem.Header>

@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup><Compile Include="../Shared/DialogueRasterizer.cs" Link="Rendering/DialogueRasterizer.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../NovellMaker.Runtime/Audio/MonoGameAudioBackend.cs" Link="Services/MonoGameAudioBackend.cs" /></ItemGroup>
   <ItemGroup><EmbeddedResource Include="LuaApi/*" /></ItemGroup>
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -12,6 +13,7 @@
     <ProjectReference Include="../NovellMaker.Core/NovellMaker.Core.csproj" />
     <ProjectReference Include="../NovellMaker.Runtime/NovellMaker.Runtime.csproj" ReferenceOutputAssembly="false" />
     <PackageReference Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.5.1" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="$(AvaloniaVersion)" />
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
   </ItemGroup>

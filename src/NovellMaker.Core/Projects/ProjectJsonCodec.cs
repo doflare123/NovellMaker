@@ -55,6 +55,7 @@ internal static partial class ProjectJsonCodec
             20 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             22 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             23 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
+            24 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             21 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
             8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
@@ -88,6 +89,8 @@ internal static partial class ProjectJsonCodec
             if (project.Scenes.SelectMany(s => s.Canvas.Buttons).Any(b => Window(b.Action)) || project.InputBindings.Any(b => Window(b.Action)))
                 project = NovellMaker.Core.Screens.ReadingScreenTemplates.Ensure(project);
         }
+        if (versionProbe.FormatVersion < 24 && project.Audio.VoiceOmissions.Count > 0)
+            throw new ProjectFormatException("Отметки «без озвучки» требуют формат проекта v24.");
         return project;
     }
     internal static Task WriteAsync(Stream stream, NovelProject project, CancellationToken cancellationToken) =>
