@@ -106,8 +106,8 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         {
             var step = remaining;
             if (State.Wait is { Mode: "timer" } timer) step = Math.Min(step, timer.Remaining);
-            if (State.Wait?.Mode == "actions" && !State.ActiveActions.IsEmpty)
-                step = Math.Min(step, State.ActiveActions.Max(a => a.Duration - a.Elapsed));
+            if (State.Wait?.Mode == "actions")
+                step = Math.Min(step, ScenarioActionTiming.Remaining(State, project));
             var placements = State.Placements;
             var active = ImmutableArray.CreateBuilder<ActiveMove>();
             foreach (var move in State.ActiveActions)
@@ -121,8 +121,10 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
             }
             var wait = State.Wait;
             if (wait?.Mode == "timer") wait = wait with { Remaining = Math.Max(0, wait.Remaining - step) };
-            if (wait is { Mode: "timer", Remaining: <= 0 } || wait?.Mode == "actions" && active.Count == 0) wait = null;
+            if (wait is { Mode: "timer", Remaining: <= 0 }) wait = null;
             State = State with { Time = State.Time + step, Placements = placements, ActiveActions = active.ToImmutable(), Wait = wait };
+            if (State.Wait?.Mode == "actions" && ScenarioActionTiming.Remaining(State, project) <= 0)
+                State = State with { Wait = null };
             remaining -= step;
             Pump();
             if (State.Error is not null || HasPendingLua) return;
@@ -244,7 +246,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
             case WaitAction a:
                 if (a.Mode is not ("input" or "timer" or "actions" or "interaction") || !ScenarioProgram.Duration(a.Seconds)) throw new InvalidOperationException("Некорректное ожидание.");
                 if (a.Mode == "interaction" && !State.Hotspots.Any(h => h.Enabled && (a.Token is null || h.ObjectId == a.Token))) throw new InvalidOperationException("Нет активного предмета для ожидания щелчка.");
-                if (a.Mode == "timer" && a.Seconds == 0 || a.Mode == "actions" && State.ActiveActions.IsEmpty) break;
+                if (a.Mode == "timer" && a.Seconds == 0 || a.Mode == "actions" && ScenarioActionTiming.Remaining(State, project) <= 0) break;
                 State = State with { Wait = new(a.Id, a.Mode, a.Seconds, a.Token) }; break;
             case ChoiceAction a:
                 if (a.Options.IsDefaultOrEmpty || a.Options.Length > 8 || a.Options.Any(o => o is null || o.Id == Guid.Empty || string.IsNullOrWhiteSpace(o.Text) ||

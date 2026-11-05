@@ -369,7 +369,7 @@ game.wait_input()
 <a id="game-wait-actions"></a>
 ## game.wait_actions
 
-Ожидать окончания движений сценария.
+Ожидать окончания движений сценария и явно запущенных конечных клипов персонажей.
 
 ```lua
 game.wait_actions() -> nil
@@ -381,7 +381,7 @@ game.wait_actions() -> nil
 
 **Возврат:** nil.
 
-**Эффект и ограничения:** Барьер очереди по ActiveActions. При отсутствии движений — no-op. Не ждёт анимации ui.animate, звук или сервисы. Общие [квоты](limits.md), [атомарность](execution-model.md#batch) и [lifecycle/сохранение](execution-model.md#lifetime) применяются, если здесь не указано исключение.
+**Эффект и ограничения:** Барьер очереди по движениям ActiveActions и явно запущенным PlayCharacterClipAction конечным клипам всех персонажей, включая скрытых. Конечный повтор ждётся целиком: длительность × (RepeatCount + 1). Бесконечные петли (Loop=true, RepeatCount=0) и клипы по умолчанию позы не задерживают очередь. Новый запуск заменяет прежний клип этого персонажа, назначение позы снимает явный запуск. Если ожидаемых действий нет или они уже завершены — no-op. Не ждёт анимации ui.animate, звук или сервисы; отдельных completion-событий ui не создаёт. Ожидание, фаза клипа и движения восстанавливаются из GameSave v4 без повторного запуска. Общие [квоты](limits.md), [атомарность](execution-model.md#batch) и [lifecycle/сохранение](execution-model.md#lifetime) применяются, если здесь не указано исключение.
 
 **Пример** (предусловия refs/ресурсов приведены в начале страницы; это фрагмент соответствующего обработчика, если не показан полный return):
 
@@ -390,7 +390,7 @@ game.move(refs.hero, 0.5, 0.95, 1, 0, 1)
 game.wait_actions()
 ```
 
-**Связи:** [game.move](scenario.md#game-move), [ui.animate](animations.md#ui-animate). [Регистрация и аргументы](../../src/NovellMaker.Core/Execution/LuaActionScript.cs), [тесты](../../tests/NovellMaker.Core.Tests/Execution/ScenarioPlayerTests.cs).
+**Связи:** [game.move](scenario.md#game-move), [клипы персонажей и GUI](characters.md), [ui.animate](animations.md#ui-animate). [Регистрация и аргументы](../../src/NovellMaker.Core/Execution/LuaActionScript.cs), [тесты ожидания клипов](../../tests/NovellMaker.Core.Tests/Characters/CharacterClipWaitTests.cs), [сценарные тесты](../../tests/NovellMaker.Core.Tests/Execution/ScenarioPlayerTests.cs).
 
 <a id="game-wait-click"></a>
 ## game.wait_click

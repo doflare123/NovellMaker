@@ -136,7 +136,8 @@ public static class GameSave
         if (state.CharacterClips is null || state.CharacterClips.Any(p => !state.ObjectStates.TryGetValue(p.Key, out var pose) ||
             !project.Characters.Any(c => c.Id == p.Key && c.States.Any(s => s.Id == pose && s.Visual?.Clips.Any(v => v.Id == p.Value) == true))))
             throw new ArgumentException("Некорректный клип персонажа.");
-        if (state.CharacterStartedAt is null || state.CharacterStartedAt.Any(p => !KnownObject(p.Key) || !double.IsFinite(p.Value) || p.Value < 0 || p.Value > state.Time))
+        if (state.CharacterStartedAt is null || state.CharacterClips.Keys.Any(id => !state.CharacterStartedAt.ContainsKey(id)) ||
+            state.CharacterStartedAt.Any(p => !KnownObject(p.Key) || !double.IsFinite(p.Value) || p.Value < 0 || p.Value > state.Time))
             throw new ArgumentException("Некорректное время анимации персонажа.");
         if (!LuaLimits.ValidVariables(state.Variables) || state.Diagnostics.Any(d => d is null) ||
             state.Placements.Any(p => !KnownObject(p.Key) || p.Value is not { IsValid: true }) ||
@@ -170,7 +171,7 @@ public static class GameSave
             outcome.Result.Validate(definition);
         }
         if (state.Wait is { } wait && (wait.ActionId == Guid.Empty || wait.Mode is not ("input" or "timer" or "interaction" or "actions" or "minigame") ||
-            wait.Mode == "actions" && state.ActiveActions.IsEmpty || wait.Mode == "timer" && wait.Remaining <= 0 ||
+            wait.Mode == "actions" && ScenarioActionTiming.Remaining(state, project) <= 0 || wait.Mode == "timer" && wait.Remaining <= 0 ||
             !ScenarioProgram.Duration(wait.Remaining) || wait.Mode == "interaction" && !state.Hotspots.Any(h => (wait.Token is null || h.ObjectId == wait.Token) && h.Enabled)) ||
             state.Choice is not null && state.Wait is not null || state.Completed && (state.NextActionId is not null || state.Wait is not null || state.Choice is not null || !state.QueuedActions.IsEmpty))
             throw new ArgumentException("Некорректное ожидание сохранения.");

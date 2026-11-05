@@ -55,6 +55,8 @@ function game.move(object, x, y, scale, layer, seconds) end
 ---@param seconds number Pauses the queue, not Lua computation.
 function game.wait(seconds) end
 function game.wait_input() end
+---Wait for scenario moves and explicitly launched finite character clips (including finite repeats).
+---Pose defaults, infinite loops, UI animations and audio do not block this barrier.
 function game.wait_actions() end
 ---@param token? string Interaction GUID.
 function game.wait_click(token) end

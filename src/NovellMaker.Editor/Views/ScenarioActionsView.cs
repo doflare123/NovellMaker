@@ -35,7 +35,7 @@ public sealed class ScenarioActionsView : UserControl
     private sealed record Reference(Guid? Id, string Label) { public override string ToString() => Label; }
     private sealed record WaitMode(string Value, string Label) { public override string ToString() => Label; }
     private static readonly Phase[] LinePhases = [new(ScriptPhase.BeforeLine, "До фразы"), new(ScriptPhase.DuringLine, "Во время фразы"), new(ScriptPhase.AfterLine, "После продолжения")];
-    private static readonly WaitMode[] WaitModes = [new("input", "Продолжение игроком"), new("timer", "Заданное время"), new("actions", "Завершение движений"), new("interaction", "Щелчок по предмету")];
+    private static readonly WaitMode[] WaitModes = [new("input", "Продолжение игроком"), new("timer", "Заданное время"), new("actions", "Завершение движений и клипов"), new("interaction", "Щелчок по предмету")];
 
     public ScenarioActionsView() : this(false) { }
     public ScenarioActionsView(bool propertiesOnly, bool actionOnly = false)
@@ -166,7 +166,7 @@ public sealed class ScenarioActionsView : UserControl
         phases.SelectedIndex = anchor?.LineId is not null ? 1 : 0;
         context.Text = scene?.HasLegacyActionScript == true
             ? "Импортированный сценарий: сохранён исходный порядок. Карточки показывают текст и смысл команд; новые сцены используют привязки к фразам."
-            : anchor?.LineId is not null ? "Говорящий и размещение → «До» → текст → блоки «Во время» по очереди → ожидание продолжения → «После». Ожидание в блоке задерживает следующие блоки; запущенные движения продолжаются параллельно."
+            : anchor?.LineId is not null ? "Говорящий и размещение → «До» → текст → блоки «Во время» по очереди → ожидание продолжения → «После». Ожидание в блоке задерживает следующие блоки; запущенные движения и клипы продолжаются параллельно."
             : anchor?.End == true ? "Блоки после последней фразы." : "Блоки перед первой фразой.";
         ToolTip.SetTip(anchors, context.Text);
         Row[] rows = scene is null ? [] : scene.HasLegacyActionScript
@@ -307,7 +307,8 @@ public sealed class ScenarioActionsView : UserControl
         }
         if (name == "Mode")
         {
-            var input = new ComboBox { ItemsSource = WaitModes, SelectedItem = WaitModes.FirstOrDefault(m => m.Value == value?.ToString()) }; parent.Children.Add(input);
+            var input = new ComboBox { Name = "ScriptWaitMode", ItemsSource = WaitModes, SelectedItem = WaitModes.FirstOrDefault(m => m.Value == value?.ToString()) }; parent.Children.Add(input);
+            ToolTip.SetTip(input, "Завершение движений и клипов: ждёт движения и явно запущенные конечные клипы всех персонажей, включая скрытых. Бесконечные петли и клипы по умолчанию не задерживают очередь. Звук не входит в это ожидание.");
             return () => JsonValue.Create((input.SelectedItem as WaitMode)?.Value);
         }
         if (value is JsonValue j && j.GetValueKind() == JsonValueKind.Number)

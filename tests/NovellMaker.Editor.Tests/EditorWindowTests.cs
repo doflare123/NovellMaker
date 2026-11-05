@@ -597,6 +597,14 @@ public sealed class EditorWindowTests
         properties.GetVisualDescendants().OfType<NumericUpDown>().Single().Value = 4;
         Click(window, Find<Button>(properties, "ApplyScriptBlock"));
         Assert.AreEqual(4d, ((NovellMaker.Core.Execution.WaitAction)session.Project!.Scenes[0].ScriptBlocks.Single().Action).Seconds);
+        properties = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => v.PropertiesOnly);
+        Find<ComboBox>(properties, "ScriptWaitMode").SelectedIndex = 2;
+        Click(window, Find<Button>(properties, "ApplyScriptBlock"));
+        Assert.AreEqual("actions", ((NovellMaker.Core.Execution.WaitAction)session.Project.Scenes[0].ScriptBlocks.Single().Action).Mode);
+        session.Undo();
+        Assert.AreEqual("timer", ((NovellMaker.Core.Execution.WaitAction)session.Project.Scenes[0].ScriptBlocks.Single().Action).Mode);
+        session.Redo(); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual("actions", ((NovellMaker.Core.Execution.WaitAction)session.Project.Scenes[0].ScriptBlocks.Single().Action).Mode);
         window.WorkspaceLayout.Hide("information"); Dispatcher.UIThread.RunJobs();
         view = window.GetVisualDescendants().OfType<ScenarioActionsView>().Single(v => !v.PropertiesOnly);
         Click(window, Find<ListBox>(view, "ScriptBlocks").GetVisualDescendants().OfType<ListBoxItem>().Single());

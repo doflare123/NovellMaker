@@ -127,6 +127,34 @@ public sealed class ReadingPlaybackTests
     }
 
     [TestMethod]
+    [DataRow(3)] [DataRow(4)]
+    public void HistoryRemainsRequiredInV4AndV3LoadsWithoutAnimationTables(int version)
+    {
+        var project = Project("one"); using var player = Play(project);
+        var visit = player.Execution.State.History.Single();
+        var save = JsonNode.Parse(GameSave.Serialize(player.Execution))!;
+        Assert.AreEqual(4, save["Version"]!.GetValue<int>());
+        save["Version"] = version;
+        if (version == 3)
+        {
+            save["State"]!.AsObject().Remove("CharacterClips");
+            save["State"]!.AsObject().Remove("CharacterStartedAt");
+        }
+        player.EnterScene(project.Scenes[0].Id);
+        player.LoadSave(save.ToJsonString());
+        Assert.AreEqual(visit, player.Execution.State.History.Single());
+        Assert.IsFalse(player.DrainAudioEvents().Any(e => e.Kind == NovellMaker.Core.Audio.AudioEventKind.Line));
+        var before = player.Execution.State;
+        var fields = version == 4 ? new[] { "History", "CharacterClips", "CharacterStartedAt" } : new[] { "History" };
+        foreach (var field in fields)
+        {
+            var invalid = save.DeepClone(); invalid["State"]!.AsObject().Remove(field);
+            Assert.ThrowsExactly<ArgumentException>(() => player.LoadSave(invalid.ToJsonString()));
+            Assert.AreSame(before, player.Execution.State);
+        }
+    }
+
+    [TestMethod]
     public async Task MinigameAndInteractionRequireExplicitReenableAndLuaNeverConsumesReadingTime()
     {
         var project = MinigameTests.Project(); var scene = project.Scenes[0]; var line = scene.Lines[0];
