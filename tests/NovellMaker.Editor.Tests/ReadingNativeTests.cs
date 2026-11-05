@@ -34,7 +34,8 @@ public sealed class ReadingNativeTests
         // Author edits are saved/exported as ordinary scene data, including localized labels and geometry.
         var labels = new Dictionary<string, string> { ["close"] = "Close", ["error"] = "Action failed. Try again.",
             ["empty"] = "No dialogue history yet.", ["previous"] = "Earlier", ["next"] = "Later", ["page_previous"] = "Previous page",
-            ["page_next"] = "Next page", ["replay"] = "Replay voice", ["speed_label"] = "Text speed (characters/s; 0 is instant)",
+            ["page_next"] = "Next page", ["replay"] = "Replay voice", ["speed_label"] = "Text speed (characters/s)",
+            ["instant_speed"] = "Instant display", ["gradual"] = "Gradual",
             ["slower"] = "Slower", ["faster"] = "Faster", ["instant"] = "Instant", ["delay_label"] = "Auto delay (seconds)",
             ["delay_down"] = "-0.5 s", ["delay_up"] = "+0.5 s", ["wait_voice"] = "Toggle voice wait",
             ["wait_on"] = "Wait for voice: yes", ["wait_off"] = "Wait for voice: no", ["hint"] = "Skip stops at unread dialogue and choices." };
@@ -58,7 +59,10 @@ public sealed class ReadingNativeTests
              {"Kind":"key","Key":"A"},{"Kind":"tick","Seconds":3},{"Kind":"continue_text"},
              {"Kind":"load"},{"Kind":"key","Key":"S"},{"Kind":"tick","Seconds":0.1},
              {"Kind":"tick","Seconds":0.1},{"Kind":"key","Key":"H"},
-             {"Kind":"click","X":700,"Y":610},{"Kind":"click","X":500,"Y":610}]
+             {"Kind":"click","X":700,"Y":610},{"Kind":"click","X":500,"Y":610},
+             {"Kind":"back"},{"Kind":"key","Key":"R"},
+             {"Kind":"click","X":100,"Y":200},{"Kind":"click","X":100,"Y":200},{"Kind":"click","X":100,"Y":200},
+             {"Kind":"click","X":600,"Y":200},{"Kind":"click","X":900,"Y":200},{"Kind":"click","X":400,"Y":200}]
             """);
         var report = Path.Combine(folder, "report.json");
         var start = new ProcessStartInfo(runtime) { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
@@ -95,5 +99,16 @@ public sealed class ReadingNativeTests
         string Body(int step) => trace[step].GetProperty("ScreenNodes").EnumerateArray().Single(n => n.GetProperty("Name").GetString() == "body").GetProperty("Text").GetString()!;
         Assert.AreNotEqual(Body(17), Body(18)); Assert.AreEqual(Body(17), Body(19));
         Assert.IsTrue(Body(17).Contains("日本語", StringComparison.Ordinal));
+        JsonElement Node(int step, string name) => trace[step].GetProperty("ScreenNodes").EnumerateArray().Single(n => n.GetProperty("Name").GetString() == name);
+        Assert.AreEqual("10", Node(24, "speed").GetProperty("Text").GetString());
+        Assert.IsFalse(Node(24, "slower").GetProperty("Enabled").GetBoolean());
+        Assert.IsFalse(Node(25, "speed").GetProperty("Visible").GetBoolean());
+        Assert.IsTrue(Node(25, "instant_speed").GetProperty("Visible").GetBoolean());
+        Assert.AreEqual("Instant display", Node(25, "instant_speed").GetProperty("Text").GetString());
+        Assert.IsFalse(Node(25, "slower").GetProperty("Enabled").GetBoolean());
+        Assert.IsFalse(Node(25, "faster").GetProperty("Enabled").GetBoolean());
+        Assert.AreEqual("10", Node(26, "speed").GetProperty("Text").GetString());
+        Assert.IsTrue(Node(26, "speed").GetProperty("Visible").GetBoolean());
+        Assert.AreEqual("20", Node(27, "speed").GetProperty("Text").GetString());
     }
 }

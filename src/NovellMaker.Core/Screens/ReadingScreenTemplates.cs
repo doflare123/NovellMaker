@@ -67,8 +67,10 @@ public static class ReadingScreenTemplates
         }
         else
         {
-            Text("speed_label", 100, "Скорость текста (знаков/с; 0 — мгновенно)"); Text("speed", 140, "");
+            Text("speed_label", 100, "Скорость текста (знаков/с)"); Text("speed", 140, "");
+            Text("instant_speed", 140, "Мгновенный показ", false);
             Button("slower", 80, 180, 220, "Медленнее"); Button("faster", 320, 180, 220, "Быстрее"); Button("instant", 560, 180, 220, "Мгновенно");
+            Button("gradual", 800, 180, 220, "Постепенно");
             Text("delay_label", 255, "Авточтение: задержка после текста (с)"); Text("delay", 290, "");
             Button("delay_down", 80, 335, 220, "−0,5 с"); Button("delay_up", 320, 335, 220, "+0,5 с");
             Button("wait_voice", 80, 430, 700, "Переключить ожидание озвучки");
@@ -129,9 +131,16 @@ public static class ReadingScreenTemplates
     public const string SettingsSource = """
         local request
         local values
-        local controls={'slower','faster','instant','delay_down','delay_up','wait_voice'}
+        local gradual_speed=40
+        local controls={'slower','faster','instant','gradual','delay_down','delay_up','wait_voice'}
         local function enabled(value)
           for i=1,#controls do ui.set_enabled(refs[controls[i]],value) end
+          if value then
+            ui.set_enabled(refs.slower,values.text_speed>10)
+            ui.set_enabled(refs.faster,values.text_speed>0 and values.text_speed<200)
+            ui.set_enabled(refs.instant,values.text_speed>0)
+            ui.set_enabled(refs.gradual,values.text_speed==0)
+          end
         end
         local function set(key,value)
           request=ui.set_setting(key,value); enabled(false); ui.set_visible(refs.error,false)
@@ -144,16 +153,20 @@ public static class ReadingScreenTemplates
               ui.set_visible(refs.error,not e.success or e.persisted==false)
               if e.settings then
                 values=e.settings
+                if values.text_speed>0 then gradual_speed=values.text_speed end
                 ui.set_text(refs.speed,values.text_speed..'')
+                ui.set_visible(refs.speed,values.text_speed>0)
+                ui.set_visible(refs.instant_speed,values.text_speed==0)
                 ui.set_text(refs.delay,values.auto_delay..'')
                 ui.set_visible(refs.wait_on,values.auto_wait_voice)
                 ui.set_visible(refs.wait_off,not values.auto_wait_voice)
               end
               enabled(values~=nil)
             elseif e.kind=='click' and not request and values then
-              if e.node==refs.slower then set('text_speed',math.max(0,values.text_speed-10))
-              elseif e.node==refs.faster then set('text_speed',math.min(200,values.text_speed+10))
+              if e.node==refs.slower and values.text_speed>10 then set('text_speed',math.max(10,values.text_speed-10))
+              elseif e.node==refs.faster and values.text_speed>0 then set('text_speed',math.min(200,values.text_speed+10))
               elseif e.node==refs.instant then set('text_speed',0)
+              elseif e.node==refs.gradual and values.text_speed==0 then set('text_speed',gradual_speed)
               elseif e.node==refs.delay_down then set('auto_delay',math.max(0,values.auto_delay-0.5))
               elseif e.node==refs.delay_up then set('auto_delay',math.min(30,values.auto_delay+0.5))
               elseif e.node==refs.wait_voice then set('auto_wait_voice',not values.auto_wait_voice) end

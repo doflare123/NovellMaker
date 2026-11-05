@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text.Json.Nodes;
 using NovellMaker.Core.Execution;
+using NovellMaker.Core.Profiles;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Scenes;
 using NovellMaker.Core.Screens;
@@ -11,6 +12,69 @@ namespace NovellMaker.Core.Tests.Screens;
 [TestClass]
 public sealed class HistoryLuaTests
 {
+    [TestMethod]
+    [DataRow(0d)] [DataRow(5d)] [DataRow(10d)] [DataRow(40d)] [DataRow(200d)]
+    public async Task ReadingSpeedButtonsKeepInstantSeparateFromGradualRange(double initialSpeed)
+    {
+        var project = ReadingScreenTemplates.Ensure(NovelProject.Create("Reading speed"));
+        var scene = project.Scenes.Single(s => s.Canvas.References.ContainsKey("speed"));
+        var stack = new ScreenStack(Guid.NewGuid());
+        var instance = stack.Open(Guid.NewGuid(), scene.AsScreen().Definition());
+        await using var scripts = new ScreenLuaSession(stack);
+        scripts.Attach(instance, project.Scripts.Single(s => s.Id == scene.Canvas.HandlerScriptId).Source, scene.Canvas.References);
+        await ScreenLuaSessionTests.Drain(scripts);
+        var settings = PlayerSettings.Defaults(project.Audio) with { TextSpeed = initialSpeed };
+        ScreenNode Node(string name) => instance.Definition.Nodes.Single(n => n.Name == name);
+        async Task Reply(GameServiceCommand command)
+        {
+            var result = new GameServiceResult(command.RequestId, command.Action, true, "ok", null, []) { Settings = settings, ProfileSaved = true };
+            Assert.AreEqual(ScreenEventAdmission.Accepted, scripts.Enqueue(instance, new("service_result") { Result = result }, ImmutableDictionary<string, string>.Empty));
+            await ScreenLuaSessionTests.Drain(scripts);
+            Assert.IsEmpty(scripts.Diagnostics);
+        }
+        async Task Click(string name, double? expectedSpeed)
+        {
+            if (expectedSpeed is null)
+            {
+                Assert.Throws<ArgumentException>(() => scripts.Enqueue(instance, new("click", Node(name).Id), ImmutableDictionary<string, string>.Empty));
+                Assert.IsEmpty(scripts.DrainServices());
+                return;
+            }
+            Assert.AreEqual(ScreenEventAdmission.Accepted, scripts.Enqueue(instance, new("click", Node(name).Id), ImmutableDictionary<string, string>.Empty));
+            await ScreenLuaSessionTests.Drain(scripts);
+            var services = scripts.DrainServices();
+            var command = services.Single().Command;
+            Assert.AreEqual(GameServiceAction.SetSetting, command.Action);
+            Assert.AreEqual("text_speed", command.Setting!.Key);
+            Assert.AreEqual(expectedSpeed, command.Setting.Number);
+            settings = settings.Apply(command.Setting);
+            await Reply(command);
+        }
+        await Reply(scripts.DrainServices().Single().Command);
+        var gradualSpeed = initialSpeed > 0 ? initialSpeed : 40;
+        if (initialSpeed == 0)
+        {
+            Assert.IsFalse(Node("slower").Enabled); Assert.IsFalse(Node("faster").Enabled);
+            Assert.IsTrue(Node("instant_speed").Visible); Assert.IsFalse(Node("speed").Visible);
+            await Click("slower", null); await Click("faster", null);
+            await Click("gradual", gradualSpeed);
+        }
+        Assert.IsTrue(Node("speed").Visible); Assert.IsFalse(Node("instant_speed").Visible);
+        while (settings.TextSpeed > 10) await Click("slower", Math.Max(10, settings.TextSpeed - 10));
+        gradualSpeed = settings.TextSpeed;
+        Assert.IsFalse(Node("slower").Enabled);
+        await Click("slower", null);
+        await Click("instant", 0);
+        Assert.IsFalse(Node("slower").Enabled); Assert.IsFalse(Node("faster").Enabled);
+        Assert.IsTrue(Node("instant_speed").Visible); Assert.IsFalse(Node("speed").Visible);
+        await Click("slower", null); await Click("faster", null);
+        await Click("gradual", gradualSpeed);
+        while (settings.TextSpeed < 200) await Click("faster", Math.Min(200, settings.TextSpeed + 10));
+        Assert.IsFalse(Node("faster").Enabled);
+        await Click("instant", 0); await Click("gradual", 200);
+        Assert.IsEmpty(scripts.Diagnostics);
+    }
+
     [TestMethod]
     public void ReaddingDeletedTemplateKeepsItsEditedExternalHandlerWithoutDuplicateIds()
     {
