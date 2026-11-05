@@ -34,3 +34,42 @@ jobs:
         with:
           name: test-results-${{ matrix.os }}
           path: TestResults/
+
+  native-portability:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      AVALONIA_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      LIBGL_ALWAYS_SOFTWARE: '1'
+      ALSOFT_DRIVERS: 'null'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - name: Install Linux native graphics and audio dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgl1-mesa-dri libsdl2-2.0-0 libopenal1 libfontconfig1 fonts-dejavu-core
+      - name: Check self-contained Linux runtime under Xvfb
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pwsh -NoProfile -File ./scripts/check-native-portability.ps1
+      - name: Check self-contained macOS runtime
+        if: runner.os == 'macOS'
+        shell: pwsh
+        run: ./scripts/check-native-portability.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-portability-${{ matrix.os }}
+          path: |
+            artifacts/native-portability/**/TestResults/
+            artifacts/native-portability/**/evidence/
+            artifacts/native-portability/**/portability.json

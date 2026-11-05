@@ -93,6 +93,7 @@ public sealed class CharacterAnimationTests
     }
 
     [TestMethod]
+    [TestCategory("Delivery")]
     [DataRow(false, false)] [DataRow(true, false)] [DataRow(false, true)] [DataRow(true, true)]
     public async Task LayeredAndFlipbookRenderAndRestoreInPreviewAndSelfContainedGame(bool packaged, bool flipbook)
     {
@@ -100,17 +101,17 @@ public sealed class CharacterAnimationTests
             Assert.Inconclusive("Enable NativeRuntime and WindowsExport smoke.");
         var repo = new DirectoryInfo(AppContext.BaseDirectory);
         while (repo is not null && !File.Exists(Path.Combine(repo.FullName, "NovellMaker.slnx"))) repo = repo.Parent;
-        var directory = Path.Combine(repo!.FullName, "artifacts", "screenshots", "character-animation", (packaged ? "export" : "preview") + (flipbook ? "-frames" : "-parts"), Guid.NewGuid().ToString("N"));
+        var directory = NativeDelivery.Evidence(repo!.FullName, "character-animation", (packaged ? "export" : "preview") + (flipbook ? "-frames" : "-parts"));
         Directory.CreateDirectory(directory);
         var project = ExampleCharacterAnimationModule.AddTo(NovelProject.Create("Персонаж из частей"), directory);
         var scene = project.Scenes[0];
         var path = Path.Combine(directory, "example.novell"); await new JsonProjectStore().SaveAsync(path, project);
         var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
-        var runtime = Path.Combine(repo.FullName, "src", "NovellMaker.Editor", "bin", configuration, "net10.0", "Runtime", "NovellMaker.Runtime.exe");
+        var runtime = NativeDelivery.Preview(Path.Combine(repo.FullName, "src", "NovellMaker.Editor", "bin", configuration, "net10.0", "Runtime", "NovellMaker.Runtime.exe"));
         if (packaged)
         {
             var game = Path.Combine(directory, "game");
-            await new WindowsExportService(Path.Combine(repo.FullName, "artifacts", "export-templates", "win-x64"), new ImageAssetService()).ExportAsync(project, directory, scene.Id, game);
+            await new WindowsExportService(NativeDelivery.Template(repo.FullName), new ImageAssetService()).ExportAsync(project, directory, scene.Id, game);
             runtime = Path.Combine(game, "NovellMaker.Runtime.exe");
         }
         var plan = Path.Combine(directory, "plan.json");
@@ -121,7 +122,7 @@ public sealed class CharacterAnimationTests
         var start = new ProcessStartInfo(runtime) { UseShellExecute = false, WorkingDirectory = directory, CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardError = true, RedirectStandardOutput = true };
         if (!packaged) foreach (var arg in new[] { "--project", path, "--assets-root", directory, "--scene", scene.Id.ToString(), "--language", "ru" }) start.ArgumentList.Add(arg);
-        else { start.Environment["DOTNET_ROOT"] = Path.Combine(directory, "absent"); start.Environment["DOTNET_ROOT_X64"] = Path.Combine(directory, "absent"); start.Environment["PATH"] = Environment.GetFolderPath(Environment.SpecialFolder.System); }
+        NativeDelivery.Isolate(start, directory, packaged);
         foreach (var arg in new[] { "--smoke-output", screenshot, "--smoke-report", report, "--smoke-plan", plan }) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
         var stderr = process.StandardError.ReadToEndAsync(); var stdout = process.StandardOutput.ReadToEndAsync();

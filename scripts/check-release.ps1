@@ -10,7 +10,8 @@ $run = Join-Path $repository ('artifacts/release/' + [guid]::NewGuid().ToString(
 $candidate = Join-Path $run 'editor'
 $results = Join-Path $run 'TestResults'
 $names = @('AVALONIA_TELEMETRY_OPTOUT', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'NOVELLMAKER_NATIVE_SMOKE',
-    'NOVELLMAKER_EXPORT_SMOKE', 'NOVELLMAKER_INSTALLER_SMOKE', 'NOVELLMAKER_DELIVERY_EDITOR_DIR', 'NOVELLMAKER_DELIVERY_EVIDENCE_DIR')
+    'NOVELLMAKER_EXPORT_SMOKE', 'NOVELLMAKER_INSTALLER_SMOKE', 'NOVELLMAKER_DELIVERY_EDITOR_DIR', 'NOVELLMAKER_DELIVERY_EVIDENCE_DIR',
+    'NOVELLMAKER_NATIVE_RUNTIME_DIR', 'NOVELLMAKER_NATIVE_EVIDENCE_DIR')
 $previous = @{}
 foreach ($name in $names) { $previous[$name] = [Environment]::GetEnvironmentVariable($name) }
 New-Item -ItemType Directory -Path $run | Out-Null
@@ -18,6 +19,8 @@ Push-Location $repository
 try {
     $env:AVALONIA_TELEMETRY_OPTOUT = '1'
     $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+    Remove-Item Env:NOVELLMAKER_NATIVE_RUNTIME_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:NOVELLMAKER_NATIVE_EVIDENCE_DIR -ErrorAction SilentlyContinue
     & (Join-Path $PSScriptRoot 'prepare-windows-installer.ps1') -Configuration $Configuration -NsisArchive $NsisArchive
     dotnet restore NovellMaker.slnx --locked-mode
     if ($LASTEXITCODE -ne 0) { throw 'Solution restore failed.' }
@@ -65,7 +68,8 @@ try {
     $evidence = [ordered]@{
         commit = $commit; worktreeDirty = $dirty; rid = 'win-x64'; checkedAtUtc = [DateTime]::UtcNow.ToString('O')
         archive = [IO.Path]::GetFileName($archive); sha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
-        stages = @('unpack-editor', 'editor-launch', 'create-project', 'preview', 'export', 'install', 'launch', 'save-load', 'uninstall-preserves-data', 'reinstall-load')
+        stages = @('unpack-editor', 'editor-launch', 'create-project', 'preview', 'export', 'install', 'launch', 'save-load', 'uninstall-preserves-data', 'reinstall-load',
+            'reading-controls-history', 'character-layered-flipbook-restore', 'voice-cursor-pause-resume-completion')
     }
     $evidence | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $run 'qualification.json') -Encoding utf8
     if ($env:GITHUB_OUTPUT) { "directory=$run" | Add-Content -LiteralPath $env:GITHUB_OUTPUT }
@@ -73,5 +77,8 @@ try {
 }
 finally {
     Pop-Location
-    foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }
+    foreach ($name in $names) {
+        if ($null -eq $previous[$name]) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
+        else { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }
+    }
 }

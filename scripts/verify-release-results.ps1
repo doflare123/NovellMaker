@@ -1,10 +1,28 @@
-param([Parameter(Mandatory)][string]$ResultsDirectory)
+param([Parameter(Mandatory)][string]$ResultsDirectory,
+      [ValidateSet('Delivery', 'NativePortability')][string]$Profile = 'Delivery')
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $expected = @{
     'Runtime.trx' = @{ 'Runtime_RendersSceneAndUsesSharedNextPreviousStateTransitions' = 2 }
-    'Editor.trx' = @{ 'NativeInstallerInstallsRunsGameAndUninstallsWithoutRemovingSavesOrForeignFiles' = 1 }
+    'Editor.trx' = @{
+        'NativeInstallerInstallsRunsGameAndUninstallsWithoutRemovingSavesOrForeignFiles' = 1
+        'ReadingControlsHistoryVoiceAndOldSlotWorkInPreviewAndExport' = 2
+        'LayeredAndFlipbookRenderAndRestoreInPreviewAndSelfContainedGame' = 4
+        'VoiceCursorPauseResumeCompletionAndNavigationUseNativePlayback' = 2
+    }
+}
+if ($Profile -eq 'NativePortability') {
+    $expected = @{
+        'Runtime.trx' = @{
+            'Runtime_RendersSceneAndUsesSharedNextPreviousStateTransitions' = 2
+            'NativeScreenStackPausesTimerMovementAndEveryAudioGroupWithoutReplayingCommands' = 2
+        }
+        'Core.trx' = @{
+            'RealWorkerHandlesAsyncSyntaxRequestAndCancellationKillsActualChild' = 1
+            'PublishedWorkerExecutesCommandsAndRecoversAfterInstructionBudgetFailure' = 1
+        }
+    }
 }
 foreach ($file in $expected.Keys) {
     $path = Join-Path $ResultsDirectory $file
@@ -26,4 +44,4 @@ foreach ($file in $expected.Keys) {
         }
     }
 }
-Write-Output 'All required delivery cases passed without skips.'
+Write-Output "All required $Profile cases passed without skips."

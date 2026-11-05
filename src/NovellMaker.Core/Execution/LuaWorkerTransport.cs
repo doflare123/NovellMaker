@@ -93,7 +93,8 @@ internal sealed class LuaWorkerTransport
         var pending = new List<Task>();
         try
         {
-            // No project code is written until the OS memory limit has been installed.
+            // Apply platform limits before sending code. The full process-memory cap is Windows-only;
+            // Unix currently has the managed heap limit configured at process startup and this RPC deadline.
             process.ApplyLimits();
             CheckDeadline(submittedAt, token);
             var output = LuaWorkerClient.ReadBoundedAsync(process.Output, LuaWorkerClient.MaximumResponseBytes, io.Token);

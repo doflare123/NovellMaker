@@ -386,18 +386,22 @@ public sealed class LuaWorkerTransportTests
     }
 
     [TestMethod]
+    [TestCategory("NativePortability")]
     public async Task RealWorkerHandlesAsyncSyntaxRequestAndCancellationKillsActualChild()
     {
-        var success = await Guard(LuaWorkerClient.InvokeAsync(Request));
+        var host = Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_RUNTIME_DIR")
+            ?? Path.Combine(AppContext.BaseDirectory, "LuaWorker");
+        host = Path.Combine(host, OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
+        var requests = new LuaWorkerTransport(() => new LuaWorkerProcess(host));
+        var success = await Guard(requests.InvokeAsync(Request));
         Assert.IsNull(success.Error, success.Error);
-        var syntax = await Guard(LuaWorkerClient.InvokeAsync(Request with { Source = "if then" }));
+        var syntax = await Guard(requests.InvokeAsync(Request with { Source = "if then" }));
         Assert.IsNotNull(syntax.Error);
         using var cancellation = new CancellationTokenSource();
         var started = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var transport = new LuaWorkerTransport(() =>
         {
-            var process = new LuaWorkerProcess(Path.Combine(AppContext.BaseDirectory, "LuaWorker",
-                OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime"));
+            var process = new LuaWorkerProcess(host);
             return new HeldRealProcess(process, started);
         });
         var task = transport.InvokeAsync(Request, cancellation.Token);

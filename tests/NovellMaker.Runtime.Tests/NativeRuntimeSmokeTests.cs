@@ -116,6 +116,7 @@ public sealed class NativeRuntimeSmokeTests
     [TestMethod]
     [TestCategory("NativeSmoke")]
     [TestCategory("Delivery")]
+    [TestCategory("NativePortability")]
     [DataRow(false)]
     [DataRow(true)]
     public async Task Runtime_RendersSceneAndUsesSharedNextPreviousStateTransitions(bool manualPlacement)
@@ -129,7 +130,7 @@ public sealed class NativeRuntimeSmokeTests
         }
 
         var repositoryRoot = FindRepositoryRoot();
-        var evidence = Environment.GetEnvironmentVariable("NOVELLMAKER_DELIVERY_EVIDENCE_DIR");
+        var evidence = EvidenceDirectory;
         var artifactDirectory = evidence is null ? Path.Combine(repositoryRoot, "artifacts", "screenshots") : Path.Combine(evidence, "runtime");
         var fixtureDirectory = Path.Combine(artifactDirectory, "runtime-fixture");
         var imageDirectory = Path.Combine(fixtureDirectory, "Assets", "Images");
@@ -141,7 +142,7 @@ public sealed class NativeRuntimeSmokeTests
         var reportPath = Path.Combine(artifactDirectory, manualPlacement ? "runtime-placement-report.json" : "runtime-scene-report.json");
         var delivery = Environment.GetEnvironmentVariable("NOVELLMAKER_DELIVERY_EDITOR_DIR");
         var runtimePath = Path.Combine(
-            delivery is null ? AppContext.BaseDirectory : Path.Combine(delivery, "Runtime"),
+            Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_RUNTIME_DIR") ?? (delivery is null ? AppContext.BaseDirectory : Path.Combine(delivery, "Runtime")),
             OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
         Assert.IsTrue(File.Exists(runtimePath), $"Runtime apphost not found: {runtimePath}");
 
@@ -244,10 +245,11 @@ public sealed class NativeRuntimeSmokeTests
     [TestMethod]
     [DataRow(false)]
     [DataRow(true)]
+    [TestCategory("NativePortability")]
     public async Task NativeScreenStackPausesTimerMovementAndEveryAudioGroupWithoutReplayingCommands(bool authorMenu)
     {
         if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_SMOKE") != "1") Assert.Inconclusive("Set NOVELLMAKER_NATIVE_SMOKE=1.");
-        var artifacts = Path.Combine(FindRepositoryRoot(), "artifacts", "screenshots");
+        var artifacts = EvidenceDirectory is { } evidence ? Path.Combine(evidence, "screens") : Path.Combine(FindRepositoryRoot(), "artifacts", "screenshots");
         var directory = Path.Combine(artifacts, "screens-fixture");
         var images = Path.Combine(directory, "Assets", "Images"); Directory.CreateDirectory(images);
         var fixture = await CreateFixtureAsync(directory, images, false);
@@ -284,7 +286,8 @@ public sealed class NativeRuntimeSmokeTests
              {"Kind":"tick","Seconds":20},{"Kind":"click","X":450,"Y":320},{"Kind":"tick","Seconds":1},
              {"Kind":"key","Key":"P"},{"Kind":"activate"},{"Kind":"tick","Seconds":1},{"Kind":"key","Key":"P"}]
             """);
-        var runtime = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
+        var runtime = Path.Combine(Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_RUNTIME_DIR") ?? AppContext.BaseDirectory,
+            OperatingSystem.IsWindows() ? "NovellMaker.Runtime.exe" : "NovellMaker.Runtime");
         var start = CreateStartInfo(runtime, fixture.ProjectPath, directory, fixture.SceneId, fixture.StartLineId, png, report);
         start.ArgumentList.Add("--smoke-plan"); start.ArgumentList.Add(plan);
         using var process = Process.Start(start)!;
@@ -328,6 +331,9 @@ public sealed class NativeRuntimeSmokeTests
         }
     }
 
+    private static string? EvidenceDirectory => Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_EVIDENCE_DIR")
+        ?? Environment.GetEnvironmentVariable("NOVELLMAKER_DELIVERY_EVIDENCE_DIR");
+
     private static ProcessStartInfo CreateStartInfo(
         string runtimePath,
         string projectPath,
@@ -349,6 +355,14 @@ public sealed class NativeRuntimeSmokeTests
         if (OperatingSystem.IsWindows())
         {
             startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+        }
+        if (Environment.GetEnvironmentVariable("NOVELLMAKER_NATIVE_RUNTIME_DIR") is not null ||
+            Environment.GetEnvironmentVariable("NOVELLMAKER_DELIVERY_EDITOR_DIR") is not null)
+        {
+            startInfo.Environment["DOTNET_ROOT"] = Path.Combine(assetsRoot, "absent");
+            startInfo.Environment["DOTNET_ROOT_X64"] = startInfo.Environment["DOTNET_ROOT"];
+            startInfo.Environment["DOTNET_ROOT_ARM64"] = startInfo.Environment["DOTNET_ROOT"];
+            startInfo.Environment["PATH"] = OperatingSystem.IsWindows() ? Environment.GetFolderPath(Environment.SpecialFolder.System) : "/usr/bin:/bin";
         }
 
         foreach (var argument in new[]

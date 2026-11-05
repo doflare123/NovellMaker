@@ -16,6 +16,7 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ReadingNativeTests
 {
     [TestMethod]
+    [TestCategory("Delivery")]
     [DataRow(false)] [DataRow(true)]
     public async Task ReadingControlsHistoryVoiceAndOldSlotWorkInPreviewAndExport(bool packaged)
     {
@@ -23,7 +24,7 @@ public sealed class ReadingNativeTests
             Assert.Inconclusive("Enable native/export smoke.");
         var repo = new DirectoryInfo(AppContext.BaseDirectory);
         while (repo is not null && !File.Exists(Path.Combine(repo.FullName, "NovellMaker.slnx"))) repo = repo.Parent;
-        var folder = Path.Combine(repo!.FullName, "artifacts", "screenshots", "reading", (packaged ? "export-" : "preview-") + Guid.NewGuid().ToString("N"));
+        var folder = NativeDelivery.Evidence(repo!.FullName, "reading", packaged ? "export" : "preview");
         Directory.CreateDirectory(folder);
         var story = NovelScene.Create("Чтение") with { Lines = [DialogueLine.Create("ru", "Первая реплика с постепенным появлением текста."),
             DialogueLine.Create("ru", "Вторая прочитанная реплика."), DialogueLine.Create("ru", "Новая непрочитанная реплика.\n" +
@@ -44,11 +45,11 @@ public sealed class ReadingNativeTests
             : labels.TryGetValue(n.Name, out var label) ? n with { Text = label } : n)] } })] };
         var file = Path.Combine(folder, "reading.novell"); await new JsonProjectStore().SaveAsync(file, project);
         var config = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
-        var runtime = Path.Combine(repo.FullName, "src", "NovellMaker.Runtime", "bin", config, "net10.0", "NovellMaker.Runtime.exe");
+        var runtime = NativeDelivery.Preview(Path.Combine(repo.FullName, "src", "NovellMaker.Runtime", "bin", config, "net10.0", "NovellMaker.Runtime.exe"));
         if (packaged)
         {
             var output = Path.Combine(folder, "game");
-            await new WindowsExportService(Path.Combine(repo.FullName, "artifacts", "export-templates", "win-x64"), new ImageAssetService()).ExportAsync(project, folder, story.Id, output);
+            await new WindowsExportService(NativeDelivery.Template(repo.FullName), new ImageAssetService()).ExportAsync(project, folder, story.Id, output);
             runtime = Path.Combine(output, "NovellMaker.Runtime.exe");
         }
         var plan = Path.Combine(folder, "plan.json");
@@ -68,7 +69,7 @@ public sealed class ReadingNativeTests
         var start = new ProcessStartInfo(runtime) { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
             RedirectStandardError = true, RedirectStandardOutput = true, WorkingDirectory = folder };
         if (!packaged) foreach (var argument in new[] { "--project", file, "--assets-root", folder, "--scene", story.Id.ToString(), "--language", "ru" }) start.ArgumentList.Add(argument);
-        else { start.Environment["DOTNET_ROOT"] = Path.Combine(folder, "absent"); start.Environment["DOTNET_ROOT_X64"] = Path.Combine(folder, "absent"); start.Environment["PATH"] = Environment.GetFolderPath(Environment.SpecialFolder.System); }
+        NativeDelivery.Isolate(start, folder, packaged);
         foreach (var argument in new[] { "--smoke-output", Path.Combine(folder, "history.png"), "--smoke-report", report, "--smoke-plan", plan }) start.ArgumentList.Add(argument);
         using var process = Process.Start(start)!; var stderr = process.StandardError.ReadToEndAsync(); var stdout = process.StandardOutput.ReadToEndAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));

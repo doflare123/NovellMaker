@@ -18,6 +18,7 @@ namespace NovellMaker.Editor.Tests;
 public sealed class ScriptAudioNativeTests
 {
     [TestMethod]
+    [TestCategory("Delivery")]
     [DataRow(false)] [DataRow(true)]
     public async Task VoiceCursorPauseResumeCompletionAndNavigationUseNativePlayback(bool packaged)
     {
@@ -25,7 +26,7 @@ public sealed class ScriptAudioNativeTests
             Assert.Inconclusive("Enable NativeRuntime and WindowsExport smoke.");
         var repo = new DirectoryInfo(AppContext.BaseDirectory);
         while (repo is not null && !File.Exists(Path.Combine(repo.FullName, "NovellMaker.slnx"))) repo = repo.Parent;
-        var directory = Path.Combine(repo!.FullName, "artifacts", "screenshots", "voice-playback", packaged ? "export" : "preview", Guid.NewGuid().ToString("N"));
+        var directory = NativeDelivery.Evidence(repo!.FullName, "voice-playback", packaged ? "export" : "preview");
         Directory.CreateDirectory(directory);
         var scene = NovelScene.Create("Озвучка") with { Lines = [DialogueLine.Create("ru", "Проверка позиции и паузы озвучки"), DialogueLine.Create("ru", "Озвучка следующей реплики")] };
         scene = scene with { Canvas = scene.Canvas with { Nodes = DialogueCanvas.Add(scene.Canvas.Nodes, scene.Id,
@@ -44,18 +45,19 @@ public sealed class ScriptAudioNativeTests
              {"Kind":"next"}, {"Kind":"previous"}, {"Kind":"wait_now","Seconds":0.4},
              {"Kind":"click","X":800,"Y":688}, {"Kind":"tick","Seconds":1}]
             """);
-        var runtime = Path.Combine(repo.FullName, "src", "NovellMaker.Runtime", "bin", "Release", "net10.0", "NovellMaker.Runtime.exe");
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
+        var runtime = NativeDelivery.Preview(Path.Combine(repo.FullName, "src", "NovellMaker.Runtime", "bin", configuration, "net10.0", "NovellMaker.Runtime.exe"));
         if (packaged)
         {
             var output = Path.Combine(directory, "game");
-            await new WindowsExportService(Path.Combine(repo.FullName, "artifacts", "export-templates", "win-x64"), new ImageAssetService()).ExportAsync(p, directory, scene.Id, output);
+            await new WindowsExportService(NativeDelivery.Template(repo.FullName), new ImageAssetService()).ExportAsync(p, directory, scene.Id, output);
             runtime = Path.Combine(output, "NovellMaker.Runtime.exe");
         }
         var reportPath = Path.Combine(directory, "voice.json");
         var start = new ProcessStartInfo(runtime) { WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardError = true, RedirectStandardOutput = true, WindowStyle = ProcessWindowStyle.Hidden };
         if (!packaged) foreach (var arg in new[] { "--project", file, "--assets-root", directory, "--scene", scene.Id.ToString(), "--language", "ru" }) start.ArgumentList.Add(arg);
-        else { start.Environment["DOTNET_ROOT"] = Path.Combine(directory, "absent"); start.Environment["DOTNET_ROOT_X64"] = Path.Combine(directory, "absent"); start.Environment["PATH"] = Environment.GetFolderPath(Environment.SpecialFolder.System); }
+        NativeDelivery.Isolate(start, directory, packaged);
         foreach (var arg in new[] { "--smoke-output", Path.Combine(directory, "voice.png"), "--smoke-report", reportPath, "--smoke-plan", plan }) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!; var stderr = process.StandardError.ReadToEndAsync(); var stdout = process.StandardOutput.ReadToEndAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(40));
