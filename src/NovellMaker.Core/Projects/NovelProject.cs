@@ -10,7 +10,9 @@ namespace NovellMaker.Core.Projects;
 /// </summary>
 public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
 {
-    public const int CurrentFormatVersion = 24;
+    public const int CurrentFormatVersion = 25;
+    public AuthoringImports Imports { get; init; } = new();
+    public void Validate() => ValidateForPersistence(this);
 
     public int FormatVersion { get; init; } = ValidateFormatVersion(FormatVersion);
 
@@ -65,6 +67,7 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
         ValidateName(project.Name);
         _ = project.ReleaseCheck?.ToConfiguration();
         ValidateGraph(project);
+        (project.Imports ?? throw new ArgumentException("Нет данных импорта.")).Validate(project);
         NovellMaker.Core.Audio.AudioProject.Validate(project);
         NovellMaker.Core.Execution.ScenarioProgram.Validate(project);
         NovellMaker.Core.Screens.ScreenAsset.ValidateProject(project);
@@ -74,6 +77,7 @@ public sealed record NovelProject(int FormatVersion, Guid Id, string Name)
     {
         if (other is null ||
             FormatVersion != other.FormatVersion ||
+            !Imports.ContentEquals(other.Imports) ||
             StartScreenSceneId != other.StartScreenSceneId ||
             ReleaseCheck != other.ReleaseCheck ||
             !NovellMaker.Core.Audio.AudioContent.Equals(Audio, other.Audio) ||

@@ -37,6 +37,7 @@
             <WrapPanel>
               <Button Name="AddLineButton" Content="Добавить" Command="{Binding AddLineCommand}" Margin="0,0,4,4" />
               <Button Name="PasteDialogueButton" Content="Вставить диалог…" Click="PasteDialogue" IsEnabled="{Binding Session.CanEdit}" Margin="0,0,4,4" />
+              <Button Name="ImportDialogueButton" Content="Импорт…" Command="{Binding Session.ImportDialogueCommand}" Margin="0,0,4,4" />
               <Button Content="Выше" Command="{Binding MoveUpCommand}" Margin="0,0,4,4" />
               <Button Content="Ниже" Command="{Binding MoveDownCommand}" Margin="0,0,4,4" />
               <Button Content="Копия" Command="{Binding DuplicateLineCommand}" Margin="0,0,4,4" />

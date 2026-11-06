@@ -145,14 +145,33 @@ public sealed partial class EditorSession
         return (loaded, before);
     }
 
-    public Task CheckExternalProjectAsync() => RunAsync(CheckExternalProjectCoreAsync);
+    public async Task CheckExternalProjectAsync()
+    {
+        if (IsBusy || sessionDisposed || projectPath is null || savedProject is null || store is not JsonProjectStore) return;
+        var path = projectPath;
+        var saved = savedProject;
+        var expectedRevision = fileRevision;
+        var revision = await ReadExternalRevisionAsync(path);
+        // Polling must not disable controls, reset focus or cancel a canvas gesture.
+        // The user can save, close or replace the project while the file is being read.
+        if (IsBusy || sessionDisposed || path != projectPath || !ReferenceEquals(saved, savedProject) || expectedRevision != fileRevision) return;
+        if (revision == fileRevision) { observedExternalRevision = null; return; }
+        if (revision == observedExternalRevision) return;
+        // Only an actual new change needs an exclusive operation/dialog. Recheck under that guard.
+        await RunAsync(CheckExternalProjectCoreAsync);
+    }
+
+    private static async Task<string> ReadExternalRevisionAsync(string path)
+    {
+        // A background probe must not hold up an author's save or atomic file replacement.
+        try { return await ProjectFileRevision.ReadAsync(path, FileShare.ReadWrite | FileShare.Delete); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return "unreadable"; }
+    }
 
     private async Task CheckExternalProjectCoreAsync()
     {
         if (projectPath is null || savedProject is null || store is not JsonProjectStore) return;
-        string revision;
-        try { revision = await ProjectFileRevision.ReadAsync(projectPath); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { revision = "unreadable"; }
+        var revision = await ReadExternalRevisionAsync(projectPath);
         if (revision == fileRevision) { observedExternalRevision = null; return; }
         if (revision == observedExternalRevision) return;
         NovelProject? onDisk = null;

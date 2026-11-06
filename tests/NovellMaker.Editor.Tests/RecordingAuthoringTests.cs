@@ -181,7 +181,7 @@ public sealed class RecordingAuthoringTests
         var legacy = System.Text.Json.Nodes.JsonNode.Parse(json)!; legacy["formatVersion"] = 23; legacy["audio"]!.AsObject().Remove("voiceOmissions");
         await File.WriteAllTextAsync(fixture.Dialogs.Path, legacy.ToJsonString());
         var project = await new JsonProjectStore().LoadAsync(fixture.Dialogs.Path);
-        Assert.AreEqual(24, project.FormatVersion); Assert.AreEqual(0, project.Audio.VoiceOmissions.Count);
+        Assert.AreEqual(NovelProject.CurrentFormatVersion, project.FormatVersion); Assert.AreEqual(0, project.Audio.VoiceOmissions.Count);
         var id = project.Scenes.Single().Lines.Single().Id;
         var invalid = project with { Audio = project.Audio with { VoiceOmissions = ImmutableDictionary<Guid, ImmutableHashSet<string>>.Empty.Add(Guid.NewGuid(), ["ru"]) } };
         Assert.Throws<ArgumentException>(() => AudioProject.Validate(invalid));

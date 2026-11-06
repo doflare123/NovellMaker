@@ -174,6 +174,7 @@ public sealed partial class EditorSession
     private void EditProject(NovelProject updated, string? group = null)
     {
         updated = updated with { Audio = updated.Audio.Prune(updated) };
+        updated = updated with { Imports = updated.Imports.Prune(updated) };
         if (project is null || project.ContentEquals(updated)) return;
         RecordEdit(group);
         project = updated;

@@ -56,6 +56,7 @@ internal static partial class ProjectJsonCodec
             22 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             23 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             24 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
+            25 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             21 => MapVersion20(await DeserializeRequiredAsync<Version20ProjectDocument>(stream, cancellationToken, CurrentSerializerOptions).ConfigureAwait(false)),
             10 => MapVersion10(await DeserializeRequiredAsync<Version10ProjectDocument>(stream, cancellationToken).ConfigureAwait(false)),
             8 => MapVersion8(await DeserializeRequiredAsync<Version8ProjectDocument>(stream, cancellationToken, PreVersion10SerializerOptions).ConfigureAwait(false)),
@@ -91,11 +92,13 @@ internal static partial class ProjectJsonCodec
         }
         if (versionProbe.FormatVersion < 24 && project.Audio.VoiceOmissions.Count > 0)
             throw new ProjectFormatException("Отметки «без озвучки» требуют формат проекта v24.");
+        if (versionProbe.FormatVersion < 25 && (!project.Imports.Bindings.IsEmpty || !project.Imports.Profiles.IsEmpty))
+            throw new ProjectFormatException("Внешние ключи и профили импорта требуют формат проекта v25.");
         return project;
     }
     internal static Task WriteAsync(Stream stream, NovelProject project, CancellationToken cancellationToken) =>
         JsonSerializer.SerializeAsync(stream, MapForSave(project), CurrentSerializerOptions, cancellationToken);
 
     private static NovelProject MapVersion20(Version20ProjectDocument document) =>
-        MapVersion17(document, allowSlots: true) with { ReleaseCheck = document.ReleaseCheck };
+        MapVersion17(document, allowSlots: true) with { ReleaseCheck = document.ReleaseCheck, Imports = document.Imports ?? throw new ArgumentException("Нет данных импорта.") };
 }

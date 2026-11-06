@@ -5,6 +5,12 @@ namespace NovellMaker.Editor.Services.Assets;
 
 public sealed class ImageAssetService : IImageAssetService
 {
+    internal static async Task<ImageAsset> InspectImportAsync(string path)
+    {
+        var inspection = await InspectAsync(path, CancellationToken.None);
+        var id = Guid.NewGuid();
+        return new(id, Path.GetFileName(path), $"Assets/Images/{id:N}" + (inspection.Format == SKEncodedImageFormat.Png ? ".png" : ".jpg"), inspection.Width, inspection.Height);
+    }
     internal const long MaximumCompressedBytes = 64L * 1024 * 1024;
     internal const int MaximumDimension = 8192;
     internal const long MaximumPixels = 32_000_000;

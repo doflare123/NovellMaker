@@ -360,6 +360,35 @@ public sealed class EditorRecoveryTests
     }
 
     [TestMethod]
+    [DataRow(false, false)]
+    [DataRow(true, false)]
+    [DataRow(false, true)]
+    [DataRow(true, true)]
+    public async Task UnchangedProjectPollingDoesNotDisableEditing(bool dirty, bool openForWriting)
+    {
+        using var fixture = new Fixture(); using var session = fixture.Session();
+        await session.NewProjectAsync(); await session.SaveAsync();
+        if (dirty) session.ProjectName = "Несохранённый черновик";
+        using var writer = openForWriting
+            ? new FileStream(fixture.Dialogs.SavePath!, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete)
+            : null;
+        var notifications = new List<string?>();
+        session.PropertyChanged += (_, e) => notifications.Add(e.PropertyName);
+        for (var i = 0; i < 3; i++)
+        {
+            await session.AutosaveAsync();
+            await session.CheckExternalProjectAsync();
+        }
+        Assert.DoesNotContain(nameof(EditorSession.IsBusy), notifications);
+        Assert.DoesNotContain(nameof(EditorSession.IsIdle), notifications);
+        Assert.DoesNotContain(nameof(EditorSession.CanEdit), notifications);
+        Assert.IsTrue(session.CanEdit);
+        Assert.AreEqual(dirty, session.IsDirty);
+        Assert.AreEqual(0, fixture.Dialogs.ExternalPrompts);
+        Assert.IsEmpty(fixture.Dialogs.Errors);
+    }
+
+    [TestMethod]
     [DataRow(false)]
     [DataRow(true)]
     public async Task ExternalNotificationKeepsDraftAndCanReloadExplicitly(bool dirty)
@@ -369,7 +398,11 @@ public sealed class EditorRecoveryTests
         if (dirty) { session.ProjectName = "Моя версия"; await session.AutosaveAsync(); }
         await new JsonProjectStore().SaveAsync(fixture.Dialogs.SavePath!, NovelProject.Create("Внешняя версия"));
         fixture.Dialogs.External = ExternalProjectDecision.Keep;
-        await session.CheckExternalProjectAsync(); await session.CheckExternalProjectAsync();
+        await session.CheckExternalProjectAsync();
+        var notifications = new List<string?>();
+        session.PropertyChanged += (_, e) => notifications.Add(e.PropertyName);
+        await session.CheckExternalProjectAsync();
+        Assert.IsEmpty(notifications, "An already acknowledged external revision must not disable editing again.");
         Assert.AreEqual(1, fixture.Dialogs.ExternalPrompts);
         Assert.AreEqual(dirty, session.IsDirty);
         Assert.AreNotEqual("Внешняя версия", session.ProjectName);

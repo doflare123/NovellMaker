@@ -19,6 +19,7 @@ public interface IEditorDialogs
     Task<string?> PickRecordingSheetAsync() => Task.FromResult<string?>(null);
     Task<string?> PickVoiceFolderAsync() => Task.FromResult<string?>(null);
     Task<bool> ConfirmVoiceImportAsync(VoiceImportPlan plan) => Task.FromResult(false);
+    Task<DialogueImportPlan?> ConfigureDialogueImportAsync(NovellMaker.Core.Projects.NovelProject project, Guid? sceneId, Guid? lineId, string language, string? projectDirectory) => Task.FromResult<DialogueImportPlan?>(null);
     Task<string?> PickLuaScriptAsync() => Task.FromResult<string?>(null);
     Task<string?> PickCodeEditorAsync() => Task.FromResult<string?>(null);
     Task<string?> EditLuaNameAsync(string suggestedName) => Task.FromResult<string?>(suggestedName);

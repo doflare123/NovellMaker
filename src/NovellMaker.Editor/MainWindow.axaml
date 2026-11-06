@@ -57,6 +57,7 @@
         <Separator />
         <MenuItem Header="Изображения проекта" Command="{Binding OpenAssetLibraryCommand}" />
         <MenuItem Header="Импортировать изображение…" Command="{Binding ImportImageCommand}" />
+        <MenuItem Name="ImportDialogueMenu" Header="Импорт персонажей и диалога…" Command="{Binding ImportDialogueCommand}" />
         <MenuItem Name="OpenScriptLibraryMenu" Header="Lua-файлы проекта" Command="{Binding OpenScriptLibraryCommand}" />
       </MenuItem>
       <MenuItem Header="_Вид">

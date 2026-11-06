@@ -46,7 +46,7 @@ public static class RecordingSheet
     {
         content = content.TrimStart('\uFEFF');
         var separator = content.TakeWhile(c => c is not ('\r' or '\n')).Contains('\t') ? '\t' : ',';
-        var records = Parse(content, separator);
+        var records = DelimitedText.Read(content, separator);
         if (records.Count == 0 || !records[0].SequenceEqual(Headers)) throw new InvalidDataException("Неверный заголовок листа записи. Используйте экспорт CSV/TSV из редактора.");
         var result = new List<RecordingRow>();
         var keys = new HashSet<(Guid, string)>(); var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -62,44 +62,6 @@ public static class RecordingSheet
             result.Add(new(number, values[1], values[2], values[3], id, name, required));
         }
         return result;
-    }
-    private static List<string[]> Parse(string text, char separator)
-    {
-        var rows = new List<string[]>(); var row = new List<string>(); var field = new StringBuilder();
-        var quoted = false; var closed = false;
-        for (var i = 0; i < text.Length; i++)
-        {
-            var c = text[i];
-            if (quoted)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < text.Length && text[i + 1] == '"') { field.Append('"'); i++; }
-                    else { quoted = false; closed = true; }
-                }
-                else field.Append(c);
-                continue;
-            }
-            if (c == '"' && field.Length == 0 && !closed) { quoted = true; continue; }
-            if (c == separator || c is '\r' or '\n')
-            {
-                row.Add(field.ToString()); field.Clear(); closed = false;
-                if (c != separator)
-                {
-                    if (row.Count != 1 || row[0].Length > 0) rows.Add(row.ToArray());
-                    row.Clear();
-                    if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
-                }
-            }
-            else
-            {
-                if (closed || c == '"') throw new InvalidDataException("Некорректные кавычки CSV/TSV.");
-                field.Append(c);
-            }
-        }
-        if (quoted) throw new InvalidDataException("Незакрытые кавычки CSV/TSV.");
-        if (field.Length > 0 || row.Count > 0 || closed) { row.Add(field.ToString()); rows.Add(row.ToArray()); }
-        return rows;
     }
     public static async Task<VoiceImportPlan> PreviewAsync(NovelProject project, Guid sceneId, IReadOnlyList<RecordingRow> rows, string folder)
     {

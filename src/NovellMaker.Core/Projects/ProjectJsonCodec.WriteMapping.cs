@@ -9,6 +9,7 @@ internal static partial class ProjectJsonCodec
 {
     private static Version20ProjectDocument MapForSave(NovelProject project) => new()
     {
+        Imports = project.Imports.Bindings.IsEmpty && project.Imports.Profiles.IsEmpty ? null : project.Imports,
         ReleaseCheck = project.ReleaseCheck,
         StartScreenSceneId = project.StartScreenSceneId,
         InputBindings = project.InputBindings,

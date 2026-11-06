@@ -180,6 +180,8 @@ internal static partial class ProjectJsonCodec
 
     private sealed class Version20ProjectDocument : Version17ProjectDocument
     {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public AuthoringImports? Imports { get; init; } = new();
         [JsonRequired] public NovellMaker.Core.ExternalServices.ReleaseCheckSettings? ReleaseCheck { get; init; }
     }
 

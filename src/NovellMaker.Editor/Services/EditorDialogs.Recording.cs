@@ -8,6 +8,15 @@ namespace NovellMaker.Editor.Services;
 
 public sealed partial class EditorDialogs
 {
+    public async Task<DialogueImportPlan?> ConfigureDialogueImportAsync(NovellMaker.Core.Projects.NovelProject project, Guid? sceneId, Guid? lineId, string language, string? projectDirectory)
+    {
+        var file = (await owner.StorageProvider.OpenFilePickerAsync(new() { Title = "Импорт персонажей и диалога", AllowMultiple = false,
+            FileTypeFilter = [new("JSON, CSV, TSV") { Patterns = ["*.json", "*.csv", "*.tsv"] }] })).FirstOrDefault()?.TryGetLocalPath();
+        if (file is null) return null;
+        if (new FileInfo(file).Length > 32 * 1024 * 1024) throw new InvalidDataException("Файл импорта больше 32 МиБ.");
+        var content = await File.ReadAllTextAsync(file);
+        return await new Views.DialogueImportWindow(project, file, content, sceneId, lineId, language, projectDirectory).ShowDialog<DialogueImportPlan?>(owner);
+    }
     private static readonly FilePickerFileType RecordingFiles = new("Лист записи CSV/TSV") { Patterns = ["*.csv", "*.tsv"] };
     public async Task<string?> PickSaveRecordingSheetAsync(string name) => (await owner.StorageProvider.SaveFilePickerAsync(new()
         { Title = "Экспорт листа записи", SuggestedFileName = name, FileTypeChoices = [RecordingFiles] }))?.TryGetLocalPath();

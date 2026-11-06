@@ -44,6 +44,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
         CloseProjectCommand = new(() => CloseProjectAsync(), () => !IsBusy && HasProject);
         RefreshGitCommand = new(RefreshGitAsync, () => !IsBusy && ProjectPath is not null);
         InitializeAuthoring();
+        ImportDialogueCommand = new(() => ImportDialogueAsync(), () => CanEdit);
         InitializeScripts();
         OpenScreenLibraryCommand = Command(() => OpenScreenLibrary(), () => CanEdit);
         InitializeAssets();
@@ -364,7 +365,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
 
     private void NotifyCommands()
     {
-        foreach (var command in new[] { NewCommand, OpenCommand, SaveCommand, SaveAsCommand, CloseProjectCommand, RefreshGitCommand, OpenExampleCommand, ExportWindowsCommand, ExportWindowsInstallerCommand, OpenScriptLibraryCommand, OpenScreenLibraryCommand })
+        foreach (var command in new[] { NewCommand, OpenCommand, SaveCommand, SaveAsCommand, CloseProjectCommand, RefreshGitCommand, OpenExampleCommand, ExportWindowsCommand, ExportWindowsInstallerCommand, OpenScriptLibraryCommand, OpenScreenLibraryCommand, ImportDialogueCommand })
             command.NotifyCanExecuteChanged();
     }
 

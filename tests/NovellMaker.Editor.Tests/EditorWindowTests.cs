@@ -38,6 +38,87 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task DialogueImportWizardMapsCustomColumnsCharactersAndProfilesBeforeOneAtomicApply() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var owner = CreateWindow(session); owner.Show(); await session.NewProjectAsync();
+        session.AddCharacter(); session.SelectedCharacterName = "Лена"; var lena = session.SelectedCharacter!.Id; session.AddScene();
+        var scene = session.ActiveScene!; scene.SelectedSection = 0;
+        var before = session.Project!;
+        const string csv = "Who;Words;Code\nAlias;Первая реплика;a\nAlias;Вторая реплика;b";
+        var dialog = new DialogueImportWindow(before, "C:/fixture/script.csv", csv, scene.Id, null, "ru");
+        var result = dialog.ShowDialog<Services.DialogueImportPlan?>(owner); Dispatcher.UIThread.RunJobs();
+        Find<ComboBox>(dialog, "ImportColumn_text").SelectedIndex = 2;
+        Find<ComboBox>(dialog, "ImportColumn_speaker").SelectedIndex = 1;
+        Find<ComboBox>(dialog, "ImportColumn_lineKey").SelectedIndex = 3;
+        Click(dialog, Find<Button>(dialog, "ParseDialogueImport")); Dispatcher.UIThread.RunJobs();
+        var picker = Find<ComboBox>(dialog, "ImportCharacter_Alias"); picker.SelectedIndex = 2;
+        Find<CheckBox>(dialog, "SaveDialogueImportProfile").IsChecked = true; Find<TextBox>(dialog, "DialogueImportProfileName").Text = "Сценарист";
+        Click(dialog, Find<Button>(dialog, "PreviewDialogueImport")); Dispatcher.UIThread.RunJobs();
+        Assert.IsTrue(Find<Button>(dialog, "ApplyDialogueImport").IsEnabled, Find<TextBlock>(dialog, "DialogueImportStatus").Text);
+        Assert.AreSame(before, session.Project); Capture(dialog, "dialogue-import-csv.png");
+        Click(dialog, Find<Button>(dialog, "ApplyDialogueImport")); var plan = await result; Assert.IsNotNull(plan);
+        await session.ApplyDialogueImportAsync(plan); Dispatcher.UIThread.RunJobs();
+        Assert.AreEqual(2, scene.Lines.Count); Assert.IsTrue(scene.Lines.All(l => l.Model.SpeakerId == lena)); Assert.AreEqual(1, session.Project!.Imports.Profiles.Length);
+        session.Undo(); Dispatcher.UIThread.RunJobs(); Assert.AreEqual(0, scene.Lines.Count); Assert.AreEqual(0, session.Project.Imports.Profiles.Length); session.Redo();
+        var second = new DialogueImportWindow(session.Project!, "C:/fixture/script.csv", csv, scene.Id, null, "en");
+        var cancelled = second.ShowDialog<Services.DialogueImportPlan?>(owner); Dispatcher.UIThread.RunJobs();
+        Find<ComboBox>(second, "DialogueImportProfilePicker").SelectedIndex = 0; Click(second, Find<Button>(second, "LoadDialogueImportProfile"));
+        Assert.AreEqual("Words", Find<ComboBox>(second, "ImportColumn_text").SelectedItem?.ToString()); Assert.AreEqual("ru", Find<TextBox>(second, "DialogueImportLanguage").Text);
+        second.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null); Assert.IsNull(await cancelled); owner.Close();
+    });
+
+    [TestMethod]
+    public Task DialogueImportWizardShowsMissingWavAndSupportsImportingOnlyTheDialogue() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var owner = CreateWindow(session); owner.Show(); await session.NewProjectAsync();
+        var original = session.Project!;
+        var dialog = new DialogueImportWindow(original, "C:/fixture/story.json", """{"version":1,"lines":[{"text":"Только текст","voice":"missing.wav"}]}""", null, null, "ru");
+        var result = dialog.ShowDialog<Services.DialogueImportPlan?>(owner); Dispatcher.UIThread.RunJobs();
+        Click(dialog, Find<Button>(dialog, "PreviewDialogueImport")); Dispatcher.UIThread.RunJobs();
+        Assert.IsFalse(Find<Button>(dialog, "ApplyDialogueImport").IsEnabled); StringAssert.Contains(Find<TextBlock>(dialog, "DialogueImportStatus").Text!, "Ошибок: 1"); Capture(dialog, "dialogue-import-errors.png");
+        Find<CheckBox>(dialog, "DialogueImportVoices").IsChecked = false;
+        Click(dialog, Find<Button>(dialog, "PreviewDialogueImport")); Dispatcher.UIThread.RunJobs(); Assert.IsTrue(Find<Button>(dialog, "ApplyDialogueImport").IsEnabled);
+        Find<TextBox>(dialog, "DialogueImportLanguage").Text = "en"; Dispatcher.UIThread.RunJobs(); Assert.IsFalse(Find<Button>(dialog, "ApplyDialogueImport").IsEnabled, "Changing parameters invalidates the previous plan.");
+        dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null); Assert.IsNull(await result); Assert.AreSame(original, session.Project); owner.Close();
+    });
+
+    [TestMethod]
+    public Task ProjectPollingPreservesDialogueFocusAndSelection() => WithUi(async () =>
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "NovellMaker.Polling", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var dialogs = new UiDialogs { SavePath = Path.Combine(directory, "project.novell"), Decision = UnsavedChangesDecision.Discard };
+            using var session = new EditorSession(new JsonProjectStore(), dialogs, new UiGit());
+            var window = CreateWindow(session); window.Show();
+            await session.NewProjectAsync(); session.AddScene();
+            var doc = session.ActiveScene!; doc.SelectedSection = 0;
+            doc.InsertDialogue([new(null, "Исходная реплика")]);
+            await session.SaveAsync();
+            var text = SelectedRowText(window, doc);
+            Assert.IsTrue(text.Focus()); text.SelectAll();
+            var disabled = false;
+            session.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(EditorSession.CanEdit) && !session.CanEdit) disabled = true;
+            };
+            for (var i = 0; i < 3; i++)
+            {
+                await session.CheckExternalProjectAsync(); Dispatcher.UIThread.RunJobs();
+                Assert.IsTrue(text.IsFocused, "Polling must leave keyboard focus in the dialogue row.");
+                Assert.AreEqual("Исходная реплика", text.SelectedText);
+                Assert.AreSame(text, SelectedRowText(window, doc));
+            }
+            Assert.IsFalse(disabled, "An unchanged project must never disable the editor during polling.");
+            window.KeyTextInput("Продолжаем редактировать");
+            Assert.AreEqual("Продолжаем редактировать", doc.Lines[0].Text);
+            window.Close();
+        }
+        finally { Directory.Delete(directory, true); }
+    });
+
+    [TestMethod]
     public Task DialogueTableSupportsInlineKeyboardInsertionFilteringAndUndo() => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var window = CreateWindow(session); window.Show();
