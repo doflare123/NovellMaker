@@ -36,12 +36,19 @@ public sealed partial class EditorSession
             VoiceOmissions = SceneDocumentViewModel.ClearOmission(project.Audio, lineId, language) } });
         Log($"Озвучка «{asset.Name}» прикреплена ({language})."); await UpdateGitAsync();
     });
-    public Task ExportRecordingSheetAsync(Guid sceneId, string language) => RunAsync(async () =>
+    public Task ExportRecordingSheetAsync(Guid sceneId, string language, IReadOnlyCollection<Guid>? filteredLineIds = null) => RunAsync(async () =>
     {
         if (project is null || string.IsNullOrWhiteSpace(language)) return;
         var scene = project.Scenes.FirstOrDefault(s => s.Id == sceneId); if (scene is null) return;
+        var rows = RecordingSheet.Rows(project, scene, language).ToArray();
+        var ids = filteredLineIds?.ToHashSet();
+        var filtered = ids is null ? rows : rows.Where(r => ids.Contains(r.LineId)).ToArray();
+        var scope = await dialogs.PickRecordingSheetScopeAsync(rows.Length, filtered.Length);
+        if (scope is null) return;
+        var selected = scope == RecordingSheetScope.Filtered ? filtered : rows;
+        if (selected.Length == 0) { Log("Нет реплик для выгрузки листа записи."); return; }
         var path = await dialogs.PickSaveRecordingSheetAsync($"voice-{scene.Id:N}-{language}.tsv"); if (path is null) return;
-        await File.WriteAllTextAsync(path, RecordingSheet.Write(RecordingSheet.Rows(project, scene, language), Path.GetExtension(path).Equals(".csv", StringComparison.OrdinalIgnoreCase) ? ',' : '\t'), new UTF8Encoding(true));
+        await File.WriteAllTextAsync(path, RecordingSheet.Write(selected, Path.GetExtension(path).Equals(".csv", StringComparison.OrdinalIgnoreCase) ? ',' : '\t'), new UTF8Encoding(true));
         Log("Лист записи экспортирован: " + path);
     });
     public Task ImportRecordingSheetAsync(Guid sceneId) => RunAsync(async () =>
@@ -50,14 +57,14 @@ public sealed partial class EditorSession
         var sheet = await dialogs.PickRecordingSheetAsync(); if (sheet is null) return;
         var rows = RecordingSheet.Read(await File.ReadAllTextAsync(sheet));
         var folder = await dialogs.PickVoiceFolderAsync(); if (folder is null) return;
-        var plan = await RecordingSheet.PreviewAsync(project, sceneId, rows, folder);
-        if (!await dialogs.ConfirmVoiceImportAsync(plan) || plan.Matches == 0) return;
+        var plan = await RecordingSheet.PreviewAsync(project, sceneId, rows, folder, ProjectDirectory);
+        if (!await dialogs.ConfirmVoiceImportAsync(plan) || plan.ImportCount == 0) return;
         if (projectPath is null && !await SaveCoreAsync(false)) return;
         await ApplyVoiceImportCoreAsync(plan);
     });
     public Task ApplyVoiceImportAsync(VoiceImportPlan plan) => RunAsync(async () =>
     {
-        if (project is null || project.Id != plan.ProjectId) return;
+        if (project is null || project.Id != plan.ProjectId || plan.ImportCount == 0) return;
         if (projectPath is null && !await SaveCoreAsync(false)) return;
         await ApplyVoiceImportCoreAsync(plan);
     });
@@ -67,13 +74,21 @@ public sealed partial class EditorSession
         var imported = new List<AudioAsset>(); var audio = project.Audio;
         try
         {
-            foreach (var item in plan.Items.Where(i => i.CanImport))
+            foreach (var item in plan.Items.Where(i => i.Source is not null))
             {
                 var row = item.Row;
                 var line = project.Scenes.Single(s => s.Id == plan.SceneId).Lines.FirstOrDefault(l => l.Id == row.LineId);
                 if (line is null || !line.Texts.ContainsKey(row.Language) || audio.VoiceOmissions.GetValueOrDefault(row.LineId)?.Contains(row.Language) == true ||
                     (audio.Voices.GetValueOrDefault(row.LineId)?.TryGetValue(row.Language, out var current) == true ? current : (Guid?)null) != item.PreviousAssetId)
                     throw new InvalidOperationException("Привязки изменились. Повторите предпросмотр импорта.");
+                var same = await RecordingSheet.AssetMatchesAsync(audio, item.PreviousAssetId, ProjectDirectory, item.Hash);
+                if (same || item.Unchanged)
+                {
+                    using var source = File.OpenRead(item.Source!);
+                    if (Convert.ToHexString(await SHA256.HashDataAsync(source)) != item.Hash || !same)
+                        throw new IOException("WAV изменён после предпросмотра: " + row.Wav);
+                    continue;
+                }
                 var asset = await AudioAssetService.ImportAsync(ProjectDirectory!, item.Source!); imported.Add(asset);
                 using (var input = File.OpenRead(AudioAssetPath.Resolve(ProjectDirectory!, asset.RelativePath)))
                     if (Convert.ToHexString(await SHA256.HashDataAsync(input)) != item.Hash) throw new IOException("WAV изменён после предпросмотра: " + row.Wav);

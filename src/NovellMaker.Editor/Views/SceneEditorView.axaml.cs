@@ -106,7 +106,7 @@ public sealed partial class SceneEditorView : UserControl
         StopAudition(); vm.SelectedLine = row;
         await vm.Session.AttachLineVoiceAsync(vm.Id, row.Id, vm.EditingLanguage);
     }
-    private async void ExportRecordingSheet(object? sender, RoutedEventArgs e) { if (DataContext is SceneDocumentViewModel vm) await vm.Session.ExportRecordingSheetAsync(vm.Id, vm.EditingLanguage); }
+    private async void ExportRecordingSheet(object? sender, RoutedEventArgs e) { if (DataContext is SceneDocumentViewModel vm) await vm.Session.ExportRecordingSheetAsync(vm.Id, vm.EditingLanguage, vm.VisibleLines.Select(l => l.Id).ToArray()); }
     private async void ImportRecordingSheet(object? sender, RoutedEventArgs e) { if (DataContext is SceneDocumentViewModel vm) { StopAudition(); await vm.Session.ImportRecordingSheetAsync(vm.Id); } }
     private void PlayRowVoice(object? sender, RoutedEventArgs e)
     {

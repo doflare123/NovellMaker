@@ -14,6 +14,83 @@ namespace NovellMaker.Editor.Tests;
 public sealed class RecordingAuthoringTests
 {
     [TestMethod]
+    public async Task ReturningThirtyWavsWithOneChangedTakeCreatesOnlyOneAssetAndExportsThirtyOne()
+    {
+        using var f = new Fixture(); var session = f.Session; await session.NewProjectAsync(); session.AddScene(); var doc = session.ActiveScene!;
+        doc.InsertDialogue(Enumerable.Range(1, 30).Select(i => new DialoguePasteLine(null, "Реплика " + i)).ToArray());
+        await session.SaveAsync(); await session.ExportRecordingSheetAsync(doc.Id, "ru");
+        var rows = RecordingSheet.Read(await File.ReadAllTextAsync(f.Dialogs.Sheet));
+        foreach (var row in rows) await File.WriteAllBytesAsync(Path.Combine(f.Dialogs.Folder, row.Wav), AudioFixture.Wave());
+        await session.ImportRecordingSheetAsync(doc.Id); Assert.AreEqual(0, f.Dialogs.Errors.Count);
+        await session.SaveAsync(); var baseline = session.Project!; var ids = baseline.Audio.Voices.ToDictionary(p => p.Key, p => p.Value["ru"]);
+        doc.LineText = "Временная правка"; session.EndEditGroup(); session.Undo(); Assert.IsTrue(session.CanRedo);
+        var beforeRepeat = session.Project;
+        await session.ImportRecordingSheetAsync(doc.Id);
+        Assert.AreEqual(30, f.Dialogs.Plan!.Matches); Assert.AreEqual(30, f.Dialogs.Plan.UnchangedCount); Assert.AreEqual(0, f.Dialogs.Plan.ImportCount); Assert.AreEqual(0, f.Dialogs.Plan.Replacements);
+        Assert.AreSame(beforeRepeat, session.Project); Assert.IsFalse(session.IsDirty); Assert.IsTrue(session.CanRedo); Assert.AreEqual(30, Directory.GetFiles(Path.Combine(f.Root, "Assets", "Audio")).Length);
+        var changed = rows[12]; var bytes = AudioFixture.Wave(); bytes[^1] ^= 1; // Same WAV size and duration, different PCM bytes.
+        await File.WriteAllBytesAsync(Path.Combine(f.Dialogs.Folder, changed.Wav), bytes);
+        await session.ImportRecordingSheetAsync(doc.Id); Assert.AreEqual(0, f.Dialogs.Errors.Count, string.Join('\n', f.Dialogs.Errors));
+        Assert.AreEqual(30, f.Dialogs.Plan.Matches); Assert.AreEqual(29, f.Dialogs.Plan.UnchangedCount); Assert.AreEqual(1, f.Dialogs.Plan.ImportCount); Assert.AreEqual(1, f.Dialogs.Plan.Replacements);
+        Assert.AreEqual(31, session.Project!.Audio.Assets.Length);
+        foreach (var pair in ids)
+            if (pair.Key == changed.LineId) Assert.AreNotEqual(pair.Value, session.Project.Audio.Voices[pair.Key]["ru"]);
+            else Assert.AreEqual(pair.Value, session.Project.Audio.Voices[pair.Key]["ru"]);
+        var replacement = session.Project.Audio.Voices[changed.LineId]["ru"];
+        session.Undo(); Assert.IsTrue(baseline.ContentEquals(session.Project)); session.Redo(); Assert.AreEqual(replacement, session.Project!.Audio.Voices[changed.LineId]["ru"]);
+        await session.SaveAsync(); var saved = session.Project; await session.ImportRecordingSheetAsync(doc.Id); Assert.AreSame(saved, session.Project); Assert.IsFalse(session.IsDirty);
+        Assert.AreEqual(31, Directory.GetFiles(Path.Combine(f.Root, "Assets", "Audio")).Length);
+        var template = Path.Combine(f.Root, "template"); Directory.CreateDirectory(template); RuntimeTemplateFixture.Create(template);
+        var export = Path.Combine(f.Root, "export");
+        await new Services.Export.WindowsExportService(template, new Services.Assets.ImageAssetService()).ExportAsync(session.Project!, f.Root, doc.Id, export);
+        Assert.AreEqual(31, Directory.GetFiles(Path.Combine(export, "Assets", "Audio")).Length);
+    }
+
+    [TestMethod]
+    public async Task MixedBatchRejectsAnUnchangedWavModifiedAfterPreviewAndRetainsAllBindings()
+    {
+        using var f = new Fixture(); await f.Session.NewProjectAsync(); f.Session.AddScene(); var doc = f.Session.ActiveScene!;
+        doc.InsertDialogue([new(null, "А"), new(null, "Б")]); await f.Session.SaveAsync(); await f.Session.ExportRecordingSheetAsync(doc.Id, "ru");
+        var rows = RecordingSheet.Read(await File.ReadAllTextAsync(f.Dialogs.Sheet));
+        foreach (var row in rows) await File.WriteAllBytesAsync(Path.Combine(f.Dialogs.Folder, row.Wav), AudioFixture.Wave());
+        await f.Session.ImportRecordingSheetAsync(doc.Id);
+        await File.WriteAllBytesAsync(Path.Combine(f.Dialogs.Folder, rows[0].Wav), AudioFixture.Wave(4800));
+        var plan = await RecordingSheet.PreviewAsync(f.Session.Project!, doc.Id, rows, f.Dialogs.Folder, f.Root);
+        Assert.AreEqual(1, plan.UnchangedCount); Assert.AreEqual(1, plan.ImportCount);
+        await File.WriteAllBytesAsync(Path.Combine(f.Dialogs.Folder, rows[1].Wav), AudioFixture.Wave(7200));
+        var before = f.Session.Project!; await f.Session.ApplyVoiceImportAsync(plan);
+        Assert.AreEqual(1, f.Dialogs.Errors.Count); Assert.IsTrue(before.ContentEquals(f.Session.Project));
+        Assert.AreEqual(2, Directory.GetFiles(Path.Combine(f.Root, "Assets", "Audio")).Length);
+    }
+
+    [TestMethod]
+    [DataRow(".csv")] [DataRow(".tsv")]
+    public async Task RecordingSheetScopeUsesTheFilterAndPreservesOriginalNumbersAndCancelDoesNotWrite(string extension)
+    {
+        using var f = new Fixture(); var session = f.Session; await session.NewProjectAsync();
+        session.AddCharacter(); session.SelectedCharacterName = "Лена"; var lena = session.SelectedCharacter!.Id;
+        session.AddCharacter(); session.SelectedCharacterName = "Антон"; var anton = session.SelectedCharacter!.Id;
+        session.AddScene(); var doc = session.ActiveScene!;
+        doc.InsertDialogue([new(lena, "Записано"), new(anton, "Нужно"), new(lena, "Нужно 1"), new(lena, "Без голоса"), new(lena, "Нужно 2"), new(null, "Рассказчик")]);
+        var path = Path.Combine(f.Root, "voice.wav"); await File.WriteAllBytesAsync(path, AudioFixture.Wave());
+        await session.AttachLineVoiceAsync(doc.Id, doc.Lines[0].Id, "ru", path); doc.Lines[3].VoiceOmitted = true;
+        doc.SpeakerFilter = doc.SpeakerFilters.Single(c => c.Id == lena); doc.MissingVoicesOnly = true;
+        Assert.AreEqual(2, doc.VisibleLines.Count); await session.SaveAsync();
+        f.Dialogs.Sheet = Path.ChangeExtension(f.Dialogs.Sheet, extension); f.Dialogs.Scope = RecordingSheetScope.Filtered;
+        var visible = doc.VisibleLines.Select(l => l.Id).ToArray();
+        await session.ExportRecordingSheetAsync(doc.Id, "ru", visible);
+        var filtered = RecordingSheet.Read(await File.ReadAllTextAsync(f.Dialogs.Sheet));
+        CollectionAssert.AreEqual(new[] { 3, 5 }, filtered.Select(r => r.Number).ToArray()); CollectionAssert.AreEqual(visible, filtered.Select(r => r.LineId).ToArray());
+        Assert.IsTrue(filtered.All(r => r.Speaker == "Лена" && r.Language == "ru" && r.Required)); Assert.AreEqual((6, 2), f.Dialogs.ScopeCounts);
+        f.Dialogs.Scope = RecordingSheetScope.Scene; await session.ExportRecordingSheetAsync(doc.Id, "ru", visible);
+        var all = RecordingSheet.Read(await File.ReadAllTextAsync(f.Dialogs.Sheet)); Assert.AreEqual(6, all.Count); Assert.IsFalse(all[3].Required);
+        var previous = await File.ReadAllBytesAsync(f.Dialogs.Sheet); var calls = f.Dialogs.SheetPickerCalls;
+        f.Dialogs.Scope = RecordingSheetScope.Filtered; await session.ExportRecordingSheetAsync(doc.Id, "ru", Array.Empty<Guid>()); Assert.AreEqual(calls, f.Dialogs.SheetPickerCalls);
+        f.Dialogs.Scope = null; await session.ExportRecordingSheetAsync(doc.Id, "ru", visible); Assert.AreEqual(calls, f.Dialogs.SheetPickerCalls);
+        f.Dialogs.Scope = RecordingSheetScope.Scene; f.Dialogs.CancelSheetSave = true; await session.ExportRecordingSheetAsync(doc.Id, "ru", visible);
+        CollectionAssert.AreEqual(previous, await File.ReadAllBytesAsync(f.Dialogs.Sheet)); Assert.IsFalse(session.IsDirty); Assert.AreEqual(0, f.Dialogs.Errors.Count);
+    }
+    [TestMethod]
     [TestCategory("NativeRuntime")]
     [DataRow(false)] [DataRow(true)]
     public async Task ImportedThirtyLineScenePlaysThroughEditorBackendAndNativeF6Runtime(bool packaged)
@@ -243,11 +320,16 @@ public sealed class RecordingAuthoringTests
         public Task<string?> PickImageAsync() => Task.FromResult(ImagePath);
         internal List<string> Errors = [];
         internal VoiceImportPlan? Plan;
+        internal RecordingSheetScope? Scope = RecordingSheetScope.Scene;
+        internal (int, int) ScopeCounts;
+        internal int SheetPickerCalls;
+        internal bool CancelSheetSave;
         public Task<string?> PickOpenProjectAsync() => Task.FromResult<string?>(Path);
         public Task<string?> PickSaveProjectAsync(string suggestedName) => Task.FromResult<string?>(Path);
         public Task<UnsavedChangesDecision> ConfirmUnsavedChangesAsync(string projectName) => Task.FromResult(UnsavedChangesDecision.Discard);
         public Task ShowErrorAsync(string title, string message) { Errors.Add(message); return Task.CompletedTask; }
-        public Task<string?> PickSaveRecordingSheetAsync(string name) => Task.FromResult<string?>(Sheet);
+        public Task<RecordingSheetScope?> PickRecordingSheetScopeAsync(int sceneCount, int filteredCount) { ScopeCounts = (sceneCount, filteredCount); return Task.FromResult(Scope); }
+        public Task<string?> PickSaveRecordingSheetAsync(string name) { SheetPickerCalls++; return Task.FromResult<string?>(CancelSheetSave ? null : Sheet); }
         public Task<string?> PickRecordingSheetAsync() => Task.FromResult<string?>(Sheet);
         public Task<string?> PickVoiceFolderAsync() => Task.FromResult<string?>(Folder);
         public Task<bool> ConfirmVoiceImportAsync(VoiceImportPlan plan) { Plan = plan; return Task.FromResult(true); }

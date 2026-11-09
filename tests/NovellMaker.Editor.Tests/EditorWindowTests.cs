@@ -38,6 +38,56 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task RecordingSheetScopeDialogSelectsFilteredRowsAndDisablesAnEmptyFilter() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var owner = CreateWindow(session); owner.Show(); await session.NewProjectAsync();
+        var dialogs = new EditorDialogs(owner); var choice = dialogs.PickRecordingSheetScopeAsync(30, 7); Dispatcher.UIThread.RunJobs();
+        var dialog = owner.OwnedWindows.Single(); Assert.IsTrue(Find<RadioButton>(dialog, "RecordingSheetAll").IsChecked);
+        Click(dialog, Find<RadioButton>(dialog, "RecordingSheetFiltered")); Capture(dialog, "recording-sheet-scope.png");
+        Click(dialog, Find<Button>(dialog, "ContinueRecordingSheetExport")); Assert.AreEqual(RecordingSheetScope.Filtered, await choice);
+        choice = dialogs.PickRecordingSheetScopeAsync(30, 0); Dispatcher.UIThread.RunJobs(); dialog = owner.OwnedWindows.Single();
+        Assert.IsFalse(Find<RadioButton>(dialog, "RecordingSheetFiltered").IsEnabled);
+        dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null); Assert.IsNull(await choice);
+        choice = dialogs.PickRecordingSheetScopeAsync(0, 0); Dispatcher.UIThread.RunJobs(); dialog = owner.OwnedWindows.Single();
+        Assert.IsFalse(Find<Button>(dialog, "ContinueRecordingSheetExport").IsEnabled); dialog.Close(); Assert.IsNull(await choice); owner.Close();
+    });
+
+    [TestMethod]
+    public Task RecordingSheetButtonPassesTheVisibleSpeakerAndMissingVoiceFiltersToExport() => WithUi(async () =>
+    {
+        var root = Path.Combine(Path.GetTempPath(), "NovellMaker.RecordingFilterUi", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            using var session = CreateSession(out var dialogs, out _); dialogs.RecordingSheetPath = Path.Combine(root, "filtered.tsv"); dialogs.RecordingScope = RecordingSheetScope.Filtered;
+            var owner = CreateWindow(session); owner.Show(); await session.NewProjectAsync();
+            session.AddCharacter(); session.SelectedCharacterName = "Лена"; var lena = session.SelectedCharacter!.Id;
+            session.AddCharacter(); session.SelectedCharacterName = "Антон"; var anton = session.SelectedCharacter!.Id;
+            session.AddScene(); var doc = session.ActiveScene!; doc.SelectedSection = 0;
+            doc.InsertDialogue([new(anton, "Контекст"), new(lena, "Нужно записать"), new(lena, "Намеренно без голоса")]); doc.Lines[2].VoiceOmitted = true;
+            doc.SpeakerFilter = doc.SpeakerFilters.Single(c => c.Id == lena); doc.MissingVoicesOnly = true; Dispatcher.UIThread.RunJobs();
+            Assert.AreEqual(1, doc.VisibleLines.Count); var expected = doc.VisibleLines.Single().Id; var before = session.Project;
+            Click(owner, Find<Button>(owner, "ExportRecordingSheetButton")); while (session.IsBusy) await Task.Delay(10); Dispatcher.UIThread.RunJobs();
+            var sheet = RecordingSheet.Read(await File.ReadAllTextAsync(dialogs.RecordingSheetPath)); Assert.AreEqual(1, sheet.Count); Assert.AreEqual(expected, sheet[0].LineId); Assert.AreEqual(2, sheet[0].Number);
+            Assert.AreEqual((3, 1), dialogs.RecordingScopeCounts); Assert.AreSame(before, session.Project); owner.Close();
+        }
+        finally { Directory.Delete(root, true); }
+    });
+
+    [TestMethod]
+    public Task VoiceBatchPreviewShowsUnchangedCountAndOnlyAppliesChangedTakes() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _); var owner = CreateWindow(session); owner.Show(); await session.NewProjectAsync();
+        var row = new RecordingRow(1, "Лена", "Реплика", "ru", Guid.NewGuid(), "lena.wav", true);
+        var unchanged = Enumerable.Range(1, 29).Select(i => new VoiceImportItem(row with { Number = i }, "lena.wav", "hash", Guid.NewGuid(), "Без изменений · 1,0 с", true));
+        var plan = new VoiceImportPlan(session.Project!.Id, Guid.NewGuid(), unchanged.Append(new(row with { Number = 30 }, "changed.wav", "hash", Guid.NewGuid(), "Заменить · 1,0 с")).ToArray(), 0);
+        Assert.AreEqual(30, plan.Matches); Assert.AreEqual(29, plan.UnchangedCount); Assert.AreEqual(1, plan.Replacements);
+        var choice = new EditorDialogs(owner).ConfirmVoiceImportAsync(plan); Dispatcher.UIThread.RunJobs(); var dialog = owner.OwnedWindows.Single();
+        Assert.AreEqual("Применить записи: 1", Find<Button>(dialog, "ApplyVoiceBatch").Content); Capture(dialog, "recording-batch-unchanged.png"); dialog.Close(); Assert.IsFalse(await choice);
+        choice = new EditorDialogs(owner).ConfirmVoiceImportAsync(plan with { Items = unchanged.ToArray() }); Dispatcher.UIThread.RunJobs(); dialog = owner.OwnedWindows.Single();
+        Assert.IsFalse(Find<Button>(dialog, "ApplyVoiceBatch").IsEnabled); dialog.Close(); Assert.IsFalse(await choice); owner.Close();
+    });
+
+    [TestMethod]
     public Task DialogueImportWizardMapsCustomColumnsCharactersAndProfilesBeforeOneAtomicApply() => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var owner = CreateWindow(session); owner.Show(); await session.NewProjectAsync();
@@ -2181,6 +2231,11 @@ public sealed class EditorWindowTests
 
     private sealed class UiDialogs : IEditorDialogs
     {
+        public string? RecordingSheetPath { get; set; }
+        public RecordingSheetScope? RecordingScope { get; set; } = RecordingSheetScope.Scene;
+        public (int, int) RecordingScopeCounts { get; private set; }
+        public Task<RecordingSheetScope?> PickRecordingSheetScopeAsync(int sceneCount, int filteredCount) { RecordingScopeCounts = (sceneCount, filteredCount); return Task.FromResult(RecordingScope); }
+        public Task<string?> PickSaveRecordingSheetAsync(string name) => Task.FromResult(RecordingSheetPath);
         public Guid? ScriptChoice { get; set; }
         public bool CancelScriptChoice { get; set; }
         public Task<Guid?> PickScriptAsync(IReadOnlyList<NovellMaker.Core.Execution.LuaScriptAsset> scripts) => Task.FromResult(CancelScriptChoice ? null : ScriptChoice ?? scripts.FirstOrDefault()?.Id);

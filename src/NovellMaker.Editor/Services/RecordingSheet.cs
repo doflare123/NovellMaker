@@ -8,18 +8,21 @@ using NovellMaker.Core.Scenes;
 namespace NovellMaker.Editor.Services;
 
 public sealed record RecordingRow(int Number, string Speaker, string Text, string Language, Guid LineId, string Wav, bool Required);
-public sealed record VoiceImportItem(RecordingRow Row, string? Source, string? Hash, Guid? PreviousAssetId, string Status)
+public enum RecordingSheetScope { Scene, Filtered }
+public sealed record VoiceImportItem(RecordingRow Row, string? Source, string? Hash, Guid? PreviousAssetId, string Status, bool Unchanged = false)
 {
     public bool Replaces => PreviousAssetId.HasValue;
-    public bool CanImport => Source is not null;
+    public bool CanImport => Source is not null && !Unchanged;
     public string Label => $"{Row.Number}. {Row.Speaker} · {Row.Language} · {Row.Wav} — {Status}";
 }
 public sealed record VoiceImportPlan(Guid ProjectId, Guid SceneId, IReadOnlyList<VoiceImportItem> Items, int ExtraFiles)
 {
-    public int Matches => Items.Count(i => i.CanImport);
+    public int Matches => Items.Count(i => i.Source is not null);
+    public int ImportCount => Items.Count(i => i.CanImport);
+    public int UnchangedCount => Items.Count(i => i.Unchanged);
     public int Replacements => Items.Count(i => i.CanImport && i.Replaces);
     public int Missing => Items.Count(i => i.Status == "Файл отсутствует");
-    public string Summary => $"{Matches} совпадений, {Missing} файлов отсутствуют, {Replacements} записей будут заменены. " +
+    public string Summary => $"{Matches} совпадений, {UnchangedCount} без изменений, {Missing} файлов отсутствуют, {Replacements} записей будут заменены. " +
         $"Пропущено строк: {Items.Count - Matches - Missing}; файлов вне листа: {ExtraFiles}.";
 }
 
@@ -63,7 +66,7 @@ public static class RecordingSheet
         }
         return result;
     }
-    public static async Task<VoiceImportPlan> PreviewAsync(NovelProject project, Guid sceneId, IReadOnlyList<RecordingRow> rows, string folder)
+    public static async Task<VoiceImportPlan> PreviewAsync(NovelProject project, Guid sceneId, IReadOnlyList<RecordingRow> rows, string folder, string? projectDirectory = null)
     {
         var scene = project.Scenes.Single(s => s.Id == sceneId);
         var files = Directory.EnumerateFiles(folder).Where(f => Path.GetExtension(f).Equals(".wav", StringComparison.OrdinalIgnoreCase))
@@ -73,7 +76,7 @@ public static class RecordingSheet
         {
             var line = scene.Lines.FirstOrDefault(l => l.Id == row.LineId);
             Guid? previous = project.Audio.Voices.GetValueOrDefault(row.LineId)?.TryGetValue(row.Language, out var existing) == true ? existing : null;
-            string? source = null, hash = null; string status;
+            string? source = null, hash = null; string status; var unchanged = false;
             if (line is null) status = "ID фразы отсутствует в этой сцене";
             else if (!line.Texts.ContainsKey(row.Language)) status = "У фразы нет текста на этом языке";
             else if (!row.Required || project.Audio.VoiceOmissions.GetValueOrDefault(row.LineId)?.Contains(row.Language) == true) status = "Без озвучки — пропущено";
@@ -85,14 +88,26 @@ public static class RecordingSheet
                 {
                     using var input = File.OpenRead(candidates[0]); var wave = PcmWave.Inspect(input);
                     input.Position = 0; hash = Convert.ToHexString(await SHA256.HashDataAsync(input)); source = candidates[0];
-                    status = (previous.HasValue ? "Заменить" : "Прикрепить") + $" · {wave.Length / (double)(wave.SampleRate * wave.Channels * 2):0.0} с" +
+                    unchanged = await AssetMatchesAsync(project.Audio, previous, projectDirectory, hash);
+                    status = (unchanged ? "Без изменений" : previous.HasValue ? "Заменить" : "Прикрепить") + $" · {wave.Length / (double)(wave.SampleRate * wave.Channels * 2):0.0} с" +
                         (line.Texts[row.Language] != row.Text ? " · текст изменён после экспорта" : "");
                 }
                 catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException) { status = "Ошибка WAV: " + error.Message; }
             }
-            items.Add(new(row, source, hash, previous, status));
+            items.Add(new(row, source, hash, previous, status, unchanged));
         }
         var expected = rows.Select(r => r.Wav).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return new(project.Id, sceneId, items, files.Where(p => !expected.Contains(p.Key)).Sum(p => p.Value.Length));
+    }
+
+    internal static async Task<bool> AssetMatchesAsync(AudioProject audio, Guid? assetId, string? projectDirectory, string? hash)
+    {
+        if (projectDirectory is null || hash is null || audio.Assets.FirstOrDefault(a => a.Id == assetId) is not { } asset) return false;
+        try
+        {
+            using var stored = File.OpenRead(AudioAssetPath.Resolve(projectDirectory, asset.RelativePath));
+            return Convert.ToHexString(await SHA256.HashDataAsync(stored)) == hash;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { return false; }
     }
 }

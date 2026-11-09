@@ -16,6 +16,7 @@ public interface IEditorDialogs
     Task ShowInformationAsync(string title, string message) => Task.CompletedTask;
     Task<string?> PickAudioAsync() => Task.FromResult<string?>(null);
     Task<string?> PickSaveRecordingSheetAsync(string name) => Task.FromResult<string?>(null);
+    Task<RecordingSheetScope?> PickRecordingSheetScopeAsync(int sceneCount, int filteredCount) => Task.FromResult<RecordingSheetScope?>(RecordingSheetScope.Scene);
     Task<string?> PickRecordingSheetAsync() => Task.FromResult<string?>(null);
     Task<string?> PickVoiceFolderAsync() => Task.FromResult<string?>(null);
     Task<bool> ConfirmVoiceImportAsync(VoiceImportPlan plan) => Task.FromResult(false);

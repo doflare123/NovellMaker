@@ -18,6 +18,19 @@ public sealed partial class EditorDialogs
         return await new Views.DialogueImportWindow(project, file, content, sceneId, lineId, language, projectDirectory).ShowDialog<DialogueImportPlan?>(owner);
     }
     private static readonly FilePickerFileType RecordingFiles = new("Лист записи CSV/TSV") { Patterns = ["*.csv", "*.tsv"] };
+    public async Task<RecordingSheetScope?> PickRecordingSheetScopeAsync(int sceneCount, int filteredCount)
+    {
+        var dialog = CreateDialog("Лист записи: какие реплики выгрузить?");
+        var all = new RadioButton { Name = "RecordingSheetAll", GroupName = "RecordingSheetScope", Content = $"Вся сцена ({sceneCount})", IsChecked = true };
+        var filtered = new RadioButton { Name = "RecordingSheetFiltered", GroupName = "RecordingSheetScope", Content = $"Строки по фильтру ({filteredCount})", IsEnabled = filteredCount > 0 };
+        var save = new Button { Name = "ContinueRecordingSheetExport", Content = "Продолжить", IsDefault = true, IsEnabled = sceneCount > 0 };
+        save.Click += (_, _) => dialog.Close((RecordingSheetScope?)(filtered.IsChecked == true ? RecordingSheetScope.Filtered : RecordingSheetScope.Scene));
+        var cancel = new Button { Content = "Отмена", IsCancel = true }; cancel.Click += (_, _) => dialog.Close();
+        dialog.Content = new StackPanel { Margin = new Thickness(24), Spacing = 12, Children = {
+            new TextBlock { Text = "Язык и фильтры берутся из вкладки «Реплики». Номера строк остаются номерами полной сцены.", TextWrapping = Avalonia.Media.TextWrapping.Wrap }, all, filtered,
+            new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8, Children = { cancel, save } } } };
+        return await dialog.ShowDialog<RecordingSheetScope?>(owner);
+    }
     public async Task<string?> PickSaveRecordingSheetAsync(string name) => (await owner.StorageProvider.SaveFilePickerAsync(new()
         { Title = "Экспорт листа записи", SuggestedFileName = name, FileTypeChoices = [RecordingFiles] }))?.TryGetLocalPath();
     public async Task<string?> PickRecordingSheetAsync() => (await owner.StorageProvider.OpenFilePickerAsync(new()
@@ -27,7 +40,7 @@ public sealed partial class EditorDialogs
     public async Task<bool> ConfirmVoiceImportAsync(VoiceImportPlan plan)
     {
         var dialog = CreateDialog("Импорт озвучки"); dialog.Width = 860; dialog.Height = 570; dialog.CanResize = true;
-        var apply = new Button { Name = "ApplyVoiceBatch", Content = $"Применить {plan.Matches} записей", IsEnabled = plan.Matches > 0 };
+        var apply = new Button { Name = "ApplyVoiceBatch", Content = $"Применить записи: {plan.ImportCount}", IsEnabled = plan.ImportCount > 0 };
         apply.Click += (_, _) => dialog.Close(true);
         var cancel = new Button { Content = "Отмена", IsCancel = true }; cancel.Click += (_, _) => dialog.Close(false);
         var panel = new DockPanel { Margin = new Thickness(20) };
