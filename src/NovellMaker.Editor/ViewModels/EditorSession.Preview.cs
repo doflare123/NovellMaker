@@ -1,4 +1,7 @@
 using NovellMaker.Editor.Services.Preview;
+using NovellMaker.Core.Execution;
+using System.Collections.Immutable;
+using System.Collections.ObjectModel;
 
 namespace NovellMaker.Editor.ViewModels;
 
@@ -32,7 +35,21 @@ public sealed partial class EditorSession
         Log("Открыта отдельная копия примера во временной папке. F6 — запуск; F7/F8 в игре — сохранить/загрузить. Используйте «Сохранить как…» для постоянной копии.");
     });
 
-    public Task PreviewSceneAsync() => RunAsync(async () =>
+    public ObservableCollection<string> PreviewJournal { get; } = [];
+    public ImmutableDictionary<string, string> PreviewVariables { get; private set; } = ImmutableDictionary<string, string>.Empty;
+    internal NovellMaker.Core.Minigames.MinigameOutcome? PreviewOutcome { get; private set; }
+    private long debugGeneration;
+    private void ResetPreviewDebug()
+    {
+        debugGeneration++;
+        PreviewOutcome = null;
+        PreviewJournal.Clear();
+        PreviewVariables = ImmutableDictionary<string, string>.Empty;
+        Changed(nameof(PreviewVariables));
+    }
+    public Task PreviewSceneAsync() => PreviewSceneAsync(null);
+
+    internal Task PreviewSceneAsync(PreviewStart? start) => RunAsync(async () =>
     {
         if (project is null) return;
         _ = project.ReleaseCheck?.ToConfiguration();
@@ -43,8 +60,31 @@ public sealed partial class EditorSession
         await ValidateExternalScriptsForRunAsync();
         if (!IsNameValid || !AreDocumentsValid || document is { IsEditingLanguageValid: false })
             throw new InvalidOperationException("Исправьте названия и язык перед запуском предпросмотра.");
+        var scene = project.Scenes.First(s => s.Id == sceneId);
+        var line = document?.SelectedLine?.Id;
+        if (start is null && !scene.ScriptBlocks.IsEmpty && line.HasValue && scene.Lines[0].Id != line)
+            start = new(ScenarioProgram.LineEntryId(line.Value), ImmutableDictionary<string, string>.Empty);
+        ResetPreviewDebug();
+        var generation = debugGeneration;
         var request = new PreviewRequest(project, ProjectDirectory ?? Path.GetTempPath(), sceneId.Value,
-            project.Scenes.First(s => s.Id == sceneId).HasActionScript ? null : document?.SelectedLine?.Id, document?.EditingLanguage ?? project.DefaultLanguage);
+            scene.HasActionScript || start is not null ? null : line, document?.EditingLanguage ?? project.DefaultLanguage)
+        {
+            Start = start,
+            Trace = entry =>
+            {
+                if (generation != debugGeneration) return;
+                if (entry.Snapshot is not null)
+                {
+                    PreviewVariables = entry.Snapshot;
+                    PreviewOutcome = entry.Outcome;
+                }
+                if (entry.Variable is not null && entry.Value is not null)
+                    PreviewVariables = PreviewVariables.SetItem(entry.Variable, entry.Value);
+                if (entry.Snapshot is not null || entry.Variable is not null) Changed(nameof(PreviewVariables));
+                if (PreviewJournal.Count >= 2000) PreviewJournal.RemoveAt(0);
+                PreviewJournal.Add(entry.Message);
+            }
+        };
         await previewService.StartAsync(request, Log);
         Log("Запущен игровой предпросмотр снимка сцены. Повторный запуск применит текущие изменения.");
     });

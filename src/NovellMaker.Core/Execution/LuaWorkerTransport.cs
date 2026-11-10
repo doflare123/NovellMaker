@@ -116,6 +116,8 @@ internal sealed class LuaWorkerTransport
                 return new($"Изолированный Lua завершён аварийно (код {process.ExitCode}). Команды отклонены. " + Encoding.UTF8.GetString(await errors.ConfigureAwait(false)), []);
             var response = JsonSerializer.Deserialize<LuaWorkerResponse>(await output.ConfigureAwait(false), ResponseOptions);
             if (response is null || response.Commands.IsDefault || response.Commands.Length > LuaActionScript.MaximumCommands ||
+                response.Branches is { Length: > LuaBranchDebugger.MaximumEntries } ||
+                response.Branches?.Any(entry => entry is null || entry.Length > 2048) == true ||
                 response.Commands.Any(a => a is null) || response.Error is { Length: > 4096 } || response.Error is not null && !response.Commands.IsEmpty)
                 throw new IOException("Некорректный ответ Lua worker.");
             CheckDeadline(submittedAt, token);

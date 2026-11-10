@@ -13,6 +13,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
     private readonly string language;
     private readonly Dictionary<Guid, ImmutableArray<ScenarioAction>> programs;
     private int variableCharacters;
+    internal Action<PreviewTrace>? Trace { get; set; }
     public GameState State { get; private set; }
     public NovelProject Project => project;
     public string Language => language;
@@ -33,7 +34,8 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         : this(project, sceneId, language, LuaActionScript.RequestCommandsAsync) { }
 
     internal ScenarioPlayer(NovelProject project, Guid sceneId, string language,
-        Func<ScriptAction, GameState, NovelProject, CancellationToken, Task<ImmutableArray<ScenarioAction>>> runLua, bool startImmediately = true)
+        Func<ScriptAction, GameState, NovelProject, CancellationToken, Task<ImmutableArray<ScenarioAction>>> runLua, bool startImmediately = true,
+        PreviewStart? start = null, Action<PreviewTrace>? trace = null)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentException.ThrowIfNullOrWhiteSpace(language);
@@ -43,6 +45,18 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         programs = project.Scenes.ToDictionary(s => s.Id, ScenarioProgram.Compile);
         if (!programs.TryGetValue(sceneId, out var actions)) throw new ArgumentException($"Сцена {sceneId} отсутствует.", nameof(sceneId));
         State = new GameState { ProjectId = project.Id, Revision = ScenarioProgram.Fingerprint(project), SceneId = sceneId, NextActionId = actions.FirstOrDefault()?.Id };
+        Trace = trace;
+        if (start is not null)
+        {
+            if (start.Variables is null || !LuaLimits.ValidVariables(start.Variables))
+                throw new ArgumentException("Некорректные переменные тестовой точки.");
+            if (start.ActionId is { } target && Find(actions, target) < 0)
+                throw new ArgumentException($"Действие тестовой точки {target} отсутствует в сцене.");
+            start.Outcome?.Validate(project);
+            State = State with { MinigameOutcome = start.Outcome, NextActionId = start.ActionId ?? State.NextActionId, Variables = start.Variables };
+            variableCharacters = State.Variables.Sum(v => v.Key.Length + v.Value.Length);
+        }
+        if (startImmediately) Trace?.Invoke(new($"Старт сцены {sceneId}, действие {State.NextActionId}", Snapshot: State.Variables, Outcome: State.MinigameOutcome));
         if (startImmediately) { Audio(AudioEventKind.Scene); Pump(); }
         else { State = State with { NextActionId = null }; IsPaused = true; }
     }
@@ -68,6 +82,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
             ProjectId = project.Id, Revision = State.Revision, SceneId = sceneId,
             NextActionId = actions.FirstOrDefault()?.Id, Variables = State.Variables, Time = State.Time, History = State.History
         };
+        Trace?.Invoke(new($"Вход в сцену {sceneId}", Snapshot: State.Variables, Outcome: State.MinigameOutcome));
         Audio(AudioEventKind.Scene);
         Pump();
         return true;
@@ -76,6 +91,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
     public bool Choose(Guid optionId)
     {
         if (disposed || IsPaused || HasPendingLua || State.Error is not null || State.Choice?.Options.FirstOrDefault(o => o.Id == optionId) is not { } option) return false;
+        Trace?.Invoke(new($"Выбор «{option.Text}» ({option.Id})"));
         State = State with { Choice = null };
         Jump(option.TargetSceneId, option.TargetActionId);
         Pump();
@@ -177,7 +193,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
                 { action = State.QueuedActions[0]; State = State with { QueuedActions = State.QueuedActions.RemoveAt(0) }; }
                 else
                 {
-                    if (State.NextActionId is not { } next) { State = State with { Completed = true }; ResetPass(); Audio(AudioEventKind.Stop); return; }
+                    if (State.NextActionId is not { } next) { Trace?.Invoke(new("Прохождение завершено.")); State = State with { Completed = true }; ResetPass(); Audio(AudioEventKind.Stop); return; }
                     var actions = programs[State.SceneId];
                     var index = Find(actions, next);
                     if (index < 0) throw new InvalidOperationException($"Действие {next} отсутствует.");
@@ -207,7 +223,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
     {
         switch (action)
         {
-            case LineEntryAction: break;
+            case LineEntryAction a: Trace?.Invoke(new($"Вход в реплику {a.LineId}")); break;
             case StartMinigameAction a: StartMinigame(a); break;
             case BranchMinigameAction a: if (MatchesMinigame(a)) Jump(a.SceneId, a.ActionId); break;
             case TextAction a:
@@ -247,14 +263,21 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
                 if (a.Mode is not ("input" or "timer" or "actions" or "interaction") || !ScenarioProgram.Duration(a.Seconds)) throw new InvalidOperationException("Некорректное ожидание.");
                 if (a.Mode == "interaction" && !State.Hotspots.Any(h => h.Enabled && (a.Token is null || h.ObjectId == a.Token))) throw new InvalidOperationException("Нет активного предмета для ожидания щелчка.");
                 if (a.Mode == "timer" && a.Seconds == 0 || a.Mode == "actions" && ScenarioActionTiming.Remaining(State, project) <= 0) break;
+                Trace?.Invoke(new($"Ожидание {a.Mode} ({a.Id})"));
                 State = State with { Wait = new(a.Id, a.Mode, a.Seconds, a.Token) }; break;
             case ChoiceAction a:
                 if (a.Options.IsDefaultOrEmpty || a.Options.Length > 8 || a.Options.Any(o => o is null || o.Id == Guid.Empty || string.IsNullOrWhiteSpace(o.Text) ||
                     !programs.TryGetValue(o.TargetSceneId, out var choices) || Find(choices, o.TargetActionId) < 0) || a.Options.Select(o => o.Id).Distinct().Count() != a.Options.Length)
                     throw new InvalidOperationException("Некорректные варианты выбора или их переходы.");
+                Trace?.Invoke(new($"Ожидание выбора {a.Id}"));
                 State = State with { Choice = a }; break;
             case JumpAction a: Jump(a.SceneId, a.ActionId); break;
-            case BranchAction a: if (State.Variables.GetValueOrDefault(a.Variable) == a.EqualsValue) Jump(a.SceneId, a.ActionId); break;
+            case BranchAction a:
+                var actual = State.Variables.GetValueOrDefault(a.Variable);
+                var matches = actual == a.EqualsValue;
+                Trace?.Invoke(new($"Условие {a.Id}: {a.Variable} = {DescribeValue(actual)}, ожидается {DescribeValue(a.EqualsValue)} → {(matches ? "переход" : "далее")}"));
+                if (matches) Jump(a.SceneId, a.ActionId);
+                break;
             case SetAction a:
                 if (string.IsNullOrWhiteSpace(a.Variable) || a.Value is null) throw new InvalidOperationException("Некорректная переменная.");
                 SetVariable(a.Variable, a.Value); break;
@@ -280,10 +303,13 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
             VisibleObjects = State.VisibleObjects.Contains(id) ? State.VisibleObjects : State.VisibleObjects.Add(id) };
     }
 
+    private static string DescribeValue(string? value) => value is null ? "отсутствует" : $"«{value}»";
+
     private void SetVariable(string name, string value)
     {
         var variables = LuaLimits.SetVariable(State.Variables, ref variableCharacters, name, value);
         State = State with { Variables = variables };
+        Trace?.Invoke(new($"Переменная {name} = {value}", name, value));
     }
 
     private CharacterPlacement Placement(Guid id)
@@ -303,9 +329,22 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         return new CharacterPlacement(x, 1, scale, 0);
     }
 
+    private string DescribeTarget(Guid sceneId, ScenarioAction action)
+    {
+        var targetScene = project.Scenes.First(s => s.Id == sceneId);
+        Guid? lineId = action switch { LineEntryAction e => e.LineId, TextAction t => t.LineId, _ => null };
+        var line = lineId.HasValue ? targetScene.Lines.FirstOrDefault(l => l.Id == lineId) : null;
+        if (line is null) return $"«{targetScene.Name}», {action.GetType().Name} ({action.Id})";
+        var text = line.Texts.GetValueOrDefault(language, line.Texts.GetValueOrDefault(project.DefaultLanguage, ""));
+        var excerpt = text.Length > 80 ? text[..80] + "…" : text;
+        return $"«{targetScene.Name}», реплика «{excerpt}» ({action.Id})";
+    }
+
     private void Jump(Guid sceneId, Guid actionId)
     {
-        if (!programs.TryGetValue(sceneId, out var actions) || Find(actions, actionId) < 0) throw new InvalidOperationException($"Переход {sceneId}/{actionId} отсутствует.");
+        var index = programs.TryGetValue(sceneId, out var actions) ? Find(actions, actionId) : -1;
+        if (index < 0) throw new InvalidOperationException($"Переход {sceneId}/{actionId} отсутствует.");
+        Trace?.Invoke(new($"Переход → {DescribeTarget(sceneId, actions[index])}"));
         Audio(AudioEventKind.Jump);
         var changedScene = sceneId != State.SceneId;
         State = State with { SceneId = sceneId, NextActionId = actionId, QueuedActions = [], LineId = sceneId == State.SceneId ? State.LineId : null, Hotspots = [], Completed = false };
@@ -319,6 +358,7 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
         CancelPendingLua();
         ResetPass();
         State = state;
+        Trace?.Invoke(new($"Загрузка сцены {state.SceneId}", Snapshot: state.Variables, Outcome: state.MinigameOutcome));
         RestoreGeneration++;
         MinigameRestored = state.Minigame is not null;
         variableCharacters = state.Variables.Sum(v => v.Key.Length + v.Value.Length);
@@ -329,6 +369,6 @@ public sealed partial class ScenarioPlayer : IDisposable, IAsyncDisposable
     private static int Find(ImmutableArray<ScenarioAction> actions, Guid id)
     { for (var i = 0; i < actions.Length; i++) if (actions[i].Id == id) return i; return -1; }
     private void Diagnostic(string message) => State = State with { Diagnostics = State.Diagnostics.Add(message) };
-    private void Fail(string message) { State = State with { Error = message, Diagnostics = State.Diagnostics.Add(message) }; Audio(AudioEventKind.Stop); }
+    private void Fail(string message) { Trace?.Invoke(new(message)); State = State with { Error = message, Diagnostics = State.Diagnostics.Add(message) }; Audio(AudioEventKind.Stop); }
     private static double Lerp(double a, double b, double t) => a + (b - a) * t;
 }

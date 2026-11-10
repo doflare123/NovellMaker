@@ -7,7 +7,8 @@ public sealed partial class ScenarioPlayer
 {
     private readonly Func<ScriptAction, GameState, Projects.NovelProject, CancellationToken, Task<ImmutableArray<ScenarioAction>>> runLua;
     private sealed record PendingLua(long Generation, GameState Before, GameState After,
-        CancellationTokenSource Cancellation, Task<ImmutableArray<ScenarioAction>> Task);
+        CancellationTokenSource Cancellation, Task<LuaBatch> Task);
+    private sealed record LuaBatch(ImmutableArray<ScenarioAction> Queue, string[]? Branches);
     private PendingLua? pendingLua;
     private readonly List<Task> retiringLua = [];
     private long generation;
@@ -35,13 +36,17 @@ public sealed partial class ScenarioPlayer
                 ?? throw new InvalidOperationException($"Ресурс Lua {call.ScriptId} отсутствует.");
             script = new(call.Id, resource.Source, resource.Name) { References = resource.References };
         }
+        Trace?.Invoke(new($"Вызов Lua {script!.Name} ({action.Id})"));
         var cancellation = new CancellationTokenSource();
         pendingLua = new(generation, before, after, cancellation, PrepareLuaAsync(script!, before, after, cancellation.Token));
     }
 
-    private async Task<ImmutableArray<ScenarioAction>> PrepareLuaAsync(ScriptAction script, GameState before, GameState after, CancellationToken token)
+    private async Task<LuaBatch> PrepareLuaAsync(ScriptAction script, GameState before, GameState after, CancellationToken token)
     {
-        var result = await runLua(script, before, project, token).ConfigureAwait(false);
+        var traced = Trace is not null && runLua == LuaActionScript.RequestCommandsAsync
+            ? await LuaActionScript.RequestBatchAsync(script, before, project, true, token).ConfigureAwait(false)
+            : null;
+        var result = traced?.Commands ?? await runLua(script, before, project, token).ConfigureAwait(false);
         return await Task.Run(() =>
         {
             var commands = LuaActionScript.ValidateCommands(result, before, project);
@@ -49,7 +54,7 @@ public sealed partial class ScenarioPlayer
                 throw new InvalidOperationException("Превышен лимит очереди Lua (4096 команд).");
             if (!LuaLimits.ValidQueue(commands.Concat(after.QueuedActions))) throw new InvalidOperationException("Превышен размер очереди Lua.");
             token.ThrowIfCancellationRequested();
-            return commands.AddRange(after.QueuedActions);
+            return new LuaBatch(commands.AddRange(after.QueuedActions), traced?.Branches);
         }, token).ConfigureAwait(false);
     }
 
@@ -62,8 +67,10 @@ public sealed partial class ScenarioPlayer
         try
         {
             // IsCompleted was checked above; this never waits on a worker.
-            var queue = pending.Task.GetAwaiter().GetResult();
-            State = pending.After with { QueuedActions = queue };
+            var batch = pending.Task.GetAwaiter().GetResult();
+            State = pending.After with { QueuedActions = batch.Queue };
+            if (batch.Branches is not null)
+                foreach (var branch in batch.Branches) Trace?.Invoke(new(branch));
             Pump();
         }
         catch (Exception error) when (error is InvalidOperationException or ArgumentException or OperationCanceledException)

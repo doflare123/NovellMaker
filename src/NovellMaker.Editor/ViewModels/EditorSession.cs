@@ -250,6 +250,7 @@ public sealed partial class EditorSession : INotifyPropertyChanged, IDisposable
 
     private void SetProject(NovelProject? value, string? path, bool saved)
     {
+        ResetPreviewDebug();
         project = value;
         draftName = value?.Name ?? "";
         savedProject = saved ? value : null;

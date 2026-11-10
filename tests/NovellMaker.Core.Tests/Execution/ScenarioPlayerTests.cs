@@ -12,6 +12,60 @@ namespace NovellMaker.Core.Tests.Execution;
 public sealed class ScenarioPlayerTests
 {
     [TestMethod]
+    [DataRow("yes", "true")]
+    [DataRow("no", "false")]
+    public void PreviewReportsExecutedLuaConditionFromWorker(string trust, string expected)
+    {
+        var action = new ScriptAction(Id(), """
+            local route = "no"
+            if game.get("trust") == "yes" then
+                route = "yes"
+            end
+            game.set("route", route)
+            """, "route.lua");
+        var scene = NovelScene.Create("Развилка") with { Actions = [action] };
+        var project = NovelProject.Create("Сюжет") with { Scenes = [scene] };
+        var journal = new List<PreviewTrace>();
+        using var session = new GameSession(project, scene.Id, "ru", playbackMode: PlaybackMode.AuthorPreview,
+            previewStart: new(null, ImmutableDictionary<string, string>.Empty.Add("trust", trust)), trace: journal.Add);
+        var player = session.Player.Execution.Settled();
+        Assert.IsNull(player.State.Error, player.State.Error);
+        Assert.AreEqual(trust, player.State.Variables["route"]);
+        var branch = journal.Single(entry => entry.Message.Contains("route.lua:2")).Message;
+        StringAssert.Contains(branch, """game.get("trust") == "yes" """.TrimEnd());
+        StringAssert.Contains(branch, "→ " + expected);
+    }
+
+    [TestMethod]
+    [DataRow("yes", true)]
+    [DataRow("no", false)]
+    public void DebugPointRunsLateBranchWithSeededVariables(string decision, bool taken)
+    {
+        var intro = DialogueLine.Create("ru", "Начало");
+        var fork = DialogueLine.Create("ru", "Развилка");
+        var ending = DialogueLine.Create("ru", "Концовка");
+        var scene = NovelScene.Create("Разговор");
+        var branch = new BranchAction(Id(), "trust", "yes", scene.Id, ScenarioProgram.LineEntryId(ending.Id));
+        scene = scene with { Lines = [intro, fork, ending], ScriptBlocks = [
+            new(null, ScriptPhase.SceneStart, new SetAction(Id(), "trust", "overwritten")),
+            new(fork.Id, ScriptPhase.BeforeLine, branch)] };
+        var project = NovelProject.Create("Отладка") with { Scenes = [scene], StartScreenSceneId = scene.Id };
+        var start = new PreviewStart(ScenarioProgram.LineEntryId(fork.Id), ImmutableDictionary<string, string>.Empty.Add("trust", decision));
+        var journal = new List<PreviewTrace>();
+        using var session = new GameSession(project, scene.Id, "ru", playbackMode: PlaybackMode.AuthorPreview,
+            previewStart: start, trace: journal.Add);
+        Assert.AreEqual(GameSessionPhase.Playing, session.Phase);
+        Assert.AreEqual(taken ? ending.Id : fork.Id, session.Player.Frame.LineId);
+        Assert.AreEqual(1, session.Player.Execution.State.History.Length);
+        Assert.AreEqual(decision, session.Player.Execution.State.Variables["trust"]);
+        Assert.AreEqual(decision, journal[0].Snapshot!["trust"]);
+        var condition = journal.Single(entry => entry.Message.Contains(branch.Id.ToString())).Message;
+        StringAssert.Contains(condition, $"«{decision}»");
+        StringAssert.Contains(condition, taken ? "→ переход" : "→ далее");
+        Assert.AreEqual(taken, journal.Any(entry => entry.Message.StartsWith("Переход ")));
+    }
+
+    [TestMethod]
     public void NonSpeakerMovesWhileTextWaits_AndStateChangesDoNotShowObjects()
     {
         var (project, scene, actor, line) = Fixture();

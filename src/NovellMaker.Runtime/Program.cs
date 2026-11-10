@@ -40,8 +40,11 @@ internal static class Program
             packageId = arguments.Package?.ProjectId;
             var project = new JsonProjectStore().LoadAsync(arguments.ProjectPath).GetAwaiter().GetResult();
             arguments.Package?.ValidateProject(project);
+            var debugPath = arguments.PreviewDebugPath;
+            var start = debugPath is null ? null : System.Text.Json.JsonSerializer.Deserialize<PreviewStart>(File.ReadAllText(debugPath));
             using var session = new GameSession(project, arguments.SceneId, arguments.Language, arguments.LineId,
-                arguments.Package is null ? PlaybackMode.AuthorPreview : PlaybackMode.Game);
+                arguments.Package is null ? PlaybackMode.AuthorPreview : PlaybackMode.Game, start,
+                debugPath is null ? null : entry => Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(entry)));
             var profile = new PlayerProfileStore(project.Id, RuntimeStorage.ProfilePath(project.Id, arguments.Package is not null));
             var settings = new PlayerSettingsSession(profile, profile.ReadAsync(PlayerSettings.Defaults(project.Audio)).GetAwaiter().GetResult());
             using var game = new RuntimeGame(arguments, session, project.DialogueUi.ShowNavigationControls, settings);

@@ -28,7 +28,16 @@ public sealed record MinigameSnapshot([property: JsonRequired] Guid RunId, [prop
         definition.ParametersSchema.Validate(Parameters); definition.StateSchema.Validate(State);
     }
 }
-public sealed record MinigameOutcome([property: JsonRequired] Guid SceneId, [property: JsonRequired] MinigameResult Result);
+public sealed record MinigameOutcome([property: JsonRequired] Guid SceneId, [property: JsonRequired] MinigameResult Result)
+{
+    public void Validate(Projects.NovelProject project)
+    {
+        var definition = project.Scenes.FirstOrDefault(s => s.Id == SceneId)?.Canvas.Minigame
+            ?? throw new ArgumentException("Ресурс результата мини-игры отсутствует.");
+        if (Result is null) throw new ArgumentException("Нет результата мини-игры.");
+        Result.Validate(definition);
+    }
+}
 
 /// <summary>Host-owned lifecycle. Cleanup executes exactly once, including failure/cancellation/disposal.</summary>
 public sealed class MinigameRun : IDisposable

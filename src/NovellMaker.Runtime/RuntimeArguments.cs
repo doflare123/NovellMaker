@@ -12,6 +12,7 @@ internal sealed record RuntimeArguments(
     string? SmokeOutputPath,
     string? SmokeReportPath)
 {
+    public string? PreviewDebugPath { get; init; }
     public string? SmokePlanPath { get; init; }
     public TimeSpan? SmokeRealtimeDuration { get; init; }
     public GamePackage? Package { get; init; }
@@ -28,7 +29,7 @@ internal sealed record RuntimeArguments(
                 throw new ArgumentException($"Ожидалась пара --параметр значение около «{option}».\n{Usage}");
             }
 
-            if (option is not ("--project" or "--assets-root" or "--scene" or "--line" or
+            if (option is not ("--project" or "--assets-root" or "--scene" or "--line" or "--preview-debug" or
                 "--language" or "--smoke-output" or "--smoke-report" or "--smoke-plan" or "--smoke-realtime-seconds"))
             {
                 throw new ArgumentException($"Неизвестный параметр «{option}».\n{Usage}");
@@ -86,7 +87,7 @@ internal sealed record RuntimeArguments(
             lineId,
             language,
             smokeOutput,
-            smokeReport) { Package = package, SmokePlanPath = values.ContainsKey("--smoke-plan") ? RequiredPath(values, "--smoke-plan", true) : null,
+            smokeReport) { Package = package, PreviewDebugPath = values.ContainsKey("--preview-debug") ? RequiredPath(values, "--preview-debug", true) : null, SmokePlanPath = values.ContainsKey("--smoke-plan") ? RequiredPath(values, "--smoke-plan", true) : null,
                 SmokeRealtimeDuration = realtime };
     }
 

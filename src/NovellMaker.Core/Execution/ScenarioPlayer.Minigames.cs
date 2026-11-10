@@ -23,6 +23,7 @@ public sealed partial class ScenarioPlayer
         if (disposed || State.Minigame is not { } active || active.RunId != runId || State.Wait?.Mode != "minigame") return false;
         result.Validate(project.Scenes.Single(s => s.Id == active.SceneId).Canvas.Minigame!);
         State = State with { Minigame = null, MinigameOutcome = new(active.SceneId, result), Wait = null };
+        Trace?.Invoke(new($"Результат мини-игры {active.SceneId}: {result.Phase}", Snapshot: State.Variables, Outcome: State.MinigameOutcome));
         // Host overlays may still pause the scenario. The next unpaused Tick pumps normally.
         Pump(); return true;
     }
@@ -35,13 +36,20 @@ public sealed partial class ScenarioPlayer
         definition.Validate(); definition.ParametersSchema.Validate(action.Parameters);
         State = State with { Minigame = new(Guid.NewGuid(), action.Id, action.SceneId, action.Parameters, definition.InitialState, LuaRandomState.Initial),
             MinigameOutcome = null, Wait = new(action.Id, "minigame") };
+        Trace?.Invoke(new($"Начало мини-игры {action.SceneId}", Snapshot: State.Variables));
     }
 
     private bool MatchesMinigame(BranchMinigameAction action)
     {
-        if (State.MinigameOutcome is not { } outcome) return false;
+        if (State.MinigameOutcome is not { } outcome)
+        {
+            Trace?.Invoke(new($"Условие {action.Id}: результат мини-игры отсутствует → далее"));
+            return false;
+        }
         var value = action.Field == "$status" ? LuaValue.FromString(outcome.Result.Phase.ToString().ToLowerInvariant()) :
             outcome.Result.Data.Kind == LuaValueKind.Object ? outcome.Result.Data.Properties!.GetValueOrDefault(action.Field) : null;
-        return value?.ToJson() == action.EqualsValue.ToJson();
+        var matches = value?.ToJson() == action.EqualsValue.ToJson();
+        Trace?.Invoke(new($"Условие {action.Id}: {action.Field} = {value?.ToJson() ?? "отсутствует"}, ожидается {action.EqualsValue.ToJson()} → {(matches ? "переход" : "далее")}"));
+        return matches;
     }
 }

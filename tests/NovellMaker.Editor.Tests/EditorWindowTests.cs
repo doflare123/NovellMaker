@@ -38,6 +38,62 @@ public sealed class UiAppBuilder
 public sealed class EditorWindowTests
 {
     [TestMethod]
+    public Task DebugPointReopensWithSavedLineAndDecisions() => WithUi(async () =>
+    {
+        using var session = CreateSession(out _, out _);
+        var owner = CreateWindow(session);
+        owner.Show();
+        await session.NewProjectAsync();
+        session.AddMinigameExample();
+        var resource = session.Project!.Scenes.First(scene => scene.Canvas.Minigame is not null);
+        session.AddScene();
+        var document = session.ActiveScene!;
+        document.InsertDialogue([new(null, "Раньше"), new(null, "Развилка")]);
+        document.SelectLine(document.Lines.Last().Id);
+        var store = new DebugPointStore(session.Project!.Id, document.Id);
+        try
+        {
+            Dispatcher.UIThread.RunJobs();
+            Click(owner, Find<Button>(owner, "OpenPreviewDebugger"));
+            var window = owner.OwnedWindows.Single();
+            var index = Find<ComboBox>(window, "DebugStartTarget").SelectedIndex;
+            Assert.IsTrue(index > 1);
+            Find<TextBox>(window, "DebugPointName").Text = "Доверие";
+            Find<TextBox>(window, "DebugInputs").Text = """{"trusted":"да"}""";
+            Find<TextBox>(window, "DebugOutcome").Text = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                SceneId = resource.Id, Result = new { Phase = "Cancelled", Data = (string?)null, Message = "test" }
+            });
+            Click(window, Find<Button>(window, "SaveDebugPoint"));
+            window.Close();
+
+            var broken = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "NovellMaker", "DebugPoints", session.Project.Id.ToString("N"), document.Id.ToString("N"), "broken.json");
+            File.WriteAllText(broken, "{");
+            document.SelectLine(document.Lines.First().Id);
+            Click(owner, Find<Button>(owner, "OpenPreviewDebugger"));
+            window = owner.OwnedWindows.Single();
+            Find<ComboBox>(window, "SavedDebugPoints").SelectedIndex = 0;
+            Assert.AreEqual(index, Find<ComboBox>(window, "DebugStartTarget").SelectedIndex);
+            StringAssert.Contains(Find<TextBox>(window, "DebugInputs").Text!, "да");
+            StringAssert.Contains(Find<TextBox>(window, "DebugOutcome").Text!, "Cancelled");
+            var picker = Find<ComboBox>(window, "SavedDebugPoints");
+            Assert.AreEqual(2, picker.ItemCount);
+            picker.SelectedIndex = 1;
+            Assert.AreEqual(-1, Find<ComboBox>(window, "DebugStartTarget").SelectedIndex);
+            Click(window, Find<Button>(window, "DeleteDebugPoint"));
+            Assert.IsFalse(File.Exists(broken));
+            Assert.AreEqual(1, picker.ItemCount);
+            window.Close();
+        }
+        finally
+        {
+            foreach (var entry in store.Read()) store.Delete(entry);
+            owner.Close();
+        }
+    });
+
+    [TestMethod]
     public Task RecordingSheetScopeDialogSelectsFilteredRowsAndDisablesAnEmptyFilter() => WithUi(async () =>
     {
         using var session = CreateSession(out _, out _); var owner = CreateWindow(session); owner.Show(); await session.NewProjectAsync();

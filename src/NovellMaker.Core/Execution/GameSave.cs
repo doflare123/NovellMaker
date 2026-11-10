@@ -165,10 +165,7 @@ public static class GameSave
         else if (state.Wait?.Mode == "minigame") throw new ArgumentException("Нет снимка ожидаемой мини-игры.");
         if (state.MinigameOutcome is { } outcome)
         {
-            var definition = project.Scenes.FirstOrDefault(s => s.Id == outcome.SceneId)?.Canvas.Minigame
-                ?? throw new ArgumentException("Ресурс результата мини-игры отсутствует.");
-            if (outcome.Result is null) throw new ArgumentException("Нет результата мини-игры.");
-            outcome.Result.Validate(definition);
+            outcome.Validate(project);
         }
         if (state.Wait is { } wait && (wait.ActionId == Guid.Empty || wait.Mode is not ("input" or "timer" or "interaction" or "actions" or "minigame") ||
             wait.Mode == "actions" && ScenarioActionTiming.Remaining(state, project) <= 0 || wait.Mode == "timer" && wait.Remaining <= 0 ||

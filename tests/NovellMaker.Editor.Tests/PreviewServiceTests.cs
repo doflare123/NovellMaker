@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Collections.Immutable;
+using NovellMaker.Core.Execution;
 using NovellMaker.Core.Projects;
 using NovellMaker.Core.Scenes;
 using NovellMaker.Editor.Services.Preview;
@@ -43,8 +45,15 @@ public sealed class PreviewServiceTests
             var scene = NovelScene.Create("Сцена") with { Lines = [DialogueLine.Create("ru", "Проверка")] };
             var project = NovelProject.Create("Снимок") with { Scenes = [scene] };
             var messages = new System.Collections.Concurrent.ConcurrentQueue<string>();
-            var request = new PreviewRequest(project, root, scene.Id, scene.Lines[0].Id, "ru");
+            var firstEvent = new TaskCompletionSource<PreviewTrace>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var request = new PreviewRequest(project, root, scene.Id, null, "ru")
+            {
+                Start = new(ScenarioProgram.LineEntryId(scene.Lines[0].Id), ImmutableDictionary<string, string>.Empty.Add("решение", "да")),
+                Trace = entry => firstEvent.TrySetResult(entry)
+            };
             await service.StartAsync(request, messages.Enqueue);
+            var entry = await firstEvent.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.AreEqual("да", entry.Snapshot!["решение"]);
             var firstId = service.ActiveProcessId;
             Assert.IsNotNull(firstId);
             Assert.IsTrue(IsAlive(firstId.Value));

@@ -12,7 +12,8 @@
       </StackPanel>
       <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Margin="8,16,0,0" Spacing="4">
         <Button Name="DuplicateScene" Content="Копия сцены" Click="DuplicateSceneClicked" IsEnabled="{Binding Session.CanEdit}" />
-        <Button Name="PreviewSceneButton" Content="Запустить" Command="{Binding Session.PreviewSceneCommand}" ToolTip.Tip="F6: с выбранной реплики; сцена с самостоятельными действиями — с начала" />
+        <Button Name="PreviewSceneButton" Content="Запустить" Command="{Binding Session.PreviewSceneCommand}" ToolTip.Tip="F6: с выбранной реплики; импортированный поток — с начала" />
+        <Button Name="OpenPreviewDebugger" Content="Отладка…" Click="OpenPreviewDebug" IsEnabled="{Binding Session.CanEdit}" />
         <Button Content="Удалить сцену" Command="{Binding Session.DeleteSceneCommand}" />
       </StackPanel>
     </Grid>

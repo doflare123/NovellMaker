@@ -1,12 +1,14 @@
 using System.Collections.Immutable;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace NovellMaker.Core.Execution;
 
 public sealed record LuaWorkerRequest(string Mode, string Source, string Name, ScriptAction? Action = null,
-    LuaStateSnapshot? State = null, LuaCommandCatalog? Catalog = null);
-public sealed record LuaWorkerResponse(string? Error, ImmutableArray<ScenarioAction> Commands);
+    LuaStateSnapshot? State = null, LuaCommandCatalog? Catalog = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool TraceBranches = false);
+public sealed record LuaWorkerResponse(string? Error, ImmutableArray<ScenarioAction> Commands,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string[]? Branches = null);
 
 /// <summary>No MoonSharp parser or VM executes in the editor/game process.</summary>
 public static class LuaWorkerClient
@@ -79,12 +81,18 @@ public static class LuaWorkerEntry
                 LuaLimits.CheckSource(request.Source);
                 if (request.Mode == "syntax") { LuaActionScript.ValidateInWorker(request.Source, request.Name); result = new(null, []); }
                 else if (request.Mode == "run" && request.Action is { } action && request.State is { } state && request.Catalog is { } catalog)
-                    result = new(null, LuaActionScript.RunInWorker(action, state, catalog));
+                {
+                    var debugger = request.TraceBranches ? new LuaBranchDebugger() : null;
+                    var commands = LuaActionScript.RunInWorker(action, state, catalog, debugger);
+                    result = new(null, commands, debugger?.Entries);
+                }
                 else throw new ArgumentException("Неизвестный запрос Lua.");
             }
             catch (Exception error) when (error is ArgumentException or InvalidOperationException)
             { result = new(error.Message.Length > 4096 ? error.Message[..4096] : error.Message, []); }
             var output = JsonSerializer.SerializeToUtf8Bytes(result);
+            if (output.Length > LuaWorkerClient.MaximumResponseBytes && result.Branches is { Length: > 0 })
+                output = JsonSerializer.SerializeToUtf8Bytes(result with { Branches = null });
             if (output.Length > LuaWorkerClient.MaximumResponseBytes) output = JsonSerializer.SerializeToUtf8Bytes(new LuaWorkerResponse("Превышен размер результата Lua.", []));
             Console.OpenStandardOutput().Write(output);
             return 0;

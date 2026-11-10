@@ -32,6 +32,25 @@ public sealed class MinigameTests
     }
 
     [TestMethod]
+    public void CapturedOutcomeReproducesWinningBranchWithoutRestartingMinigame()
+    {
+        var project = Project();
+        var scene = project.Scenes[0];
+        var journal = new List<PreviewTrace>();
+        using var original = new GameSession(project, scene.Id, "ru", playbackMode: PlaybackMode.AuthorPreview, trace: journal.Add);
+        var player = original.Player.Execution;
+        Assert.IsTrue(player.FinishMinigame(player.State.Minigame!.RunId, new(MinigamePhase.Completed, Data, "")));
+        var capture = journal.Single(entry => entry.Outcome is not null);
+        var start = new PreviewStart(scene.ScriptBlocks[1].Action.Id, capture.Snapshot!, capture.Outcome);
+        var saved = JsonSerializer.Deserialize<PreviewStart>(JsonSerializer.Serialize(start))!;
+        using var replay = new GameSession(project, scene.Id, "ru", playbackMode: PlaybackMode.AuthorPreview, previewStart: saved);
+        Assert.AreEqual(scene.Lines[1].Id, replay.Player.Frame.LineId);
+        Assert.IsNull(replay.Player.Execution.State.Minigame);
+        Assert.Throws<ArgumentException>(() => new GameSession(project, scene.Id, "ru", playbackMode: PlaybackMode.AuthorPreview,
+            previewStart: saved with { Outcome = saved.Outcome! with { SceneId = Guid.NewGuid() } }));
+    }
+
+    [TestMethod]
     public void DirectScenarioWorkerProjectsResultAndChecksLaunchPermissionAndParameterSchema()
     {
         var project=Project();using var player=new ScenarioPlayer(project,project.Scenes[0].Id,"ru");

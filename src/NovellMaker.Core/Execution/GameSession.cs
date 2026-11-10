@@ -9,6 +9,7 @@ public enum GameSessionPhase { Menu, Playing, Ended }
 public sealed class GameSession : IDisposable, IAsyncDisposable
 {
     private readonly NovelProject project;
+    private readonly Action<PreviewTrace>? trace;
     private readonly Guid startSceneId;
     private readonly string language;
     private readonly PlaybackMode playbackMode;
@@ -26,23 +27,27 @@ public sealed class GameSession : IDisposable, IAsyncDisposable
     public event Action? Resetting;
 
     public GameSession(NovelProject project, Guid startSceneId, string language,
-        Guid? startLineId = null, PlaybackMode playbackMode = PlaybackMode.Game)
-        : this(project, startSceneId, language, startLineId, playbackMode, LuaActionScript.RequestCommandsAsync) { }
+        Guid? startLineId = null, PlaybackMode playbackMode = PlaybackMode.Game, PreviewStart? previewStart = null, Action<PreviewTrace>? trace = null)
+        : this(project, startSceneId, language, startLineId, playbackMode, LuaActionScript.RequestCommandsAsync, previewStart, trace) { }
 
     internal GameSession(NovelProject project, Guid startSceneId, string language, Guid? startLineId, PlaybackMode playbackMode,
-        Func<ScriptAction, GameState, NovelProject, CancellationToken, Task<ImmutableArray<ScenarioAction>>> runLua)
+        Func<ScriptAction, GameState, NovelProject, CancellationToken, Task<ImmutableArray<ScenarioAction>>> runLua,
+        PreviewStart? previewStart = null, Action<PreviewTrace>? trace = null)
     {
         this.project = project ?? throw new ArgumentNullException(nameof(project));
         this.startSceneId = startSceneId; this.language = language; this.playbackMode = playbackMode; this.runLua = runLua;
         if (!project.Scenes.Any(s => s.Id == startSceneId)) throw new ArgumentException("Стартовая сцена отсутствует.");
         if (project.StartScreenSceneId is { } menu && !project.Scenes.Any(s => s.Id == menu)) throw new ArgumentException("Стартовый экран отсутствует.");
-        Phase = project.StartScreenSceneId is null ? GameSessionPhase.Playing : GameSessionPhase.Menu;
-        Player = CreatePlayer(project.StartScreenSceneId ?? startSceneId, Phase == GameSessionPhase.Playing,
-            Phase == GameSessionPhase.Playing ? startLineId : null);
+        if (previewStart is not null && playbackMode != PlaybackMode.AuthorPreview) throw new ArgumentException("Тестовая точка доступна только в предпросмотре.");
+        this.trace = trace;
+        var initialMenu = previewStart is null ? project.StartScreenSceneId : null;
+        Phase = initialMenu is null ? GameSessionPhase.Playing : GameSessionPhase.Menu;
+        Player = CreatePlayer(initialMenu ?? startSceneId, Phase == GameSessionPhase.Playing,
+            Phase == GameSessionPhase.Playing ? startLineId : null, previewStart);
     }
 
-    private ScenePlayer CreatePlayer(Guid scene, bool start, Guid? line = null) =>
-        new(project, scene, language, line, playbackMode, start, runLua);
+    private ScenePlayer CreatePlayer(Guid scene, bool start, Guid? line = null, PreviewStart? previewStart = null) =>
+        new(project, scene, language, line, playbackMode, start, runLua, previewStart, start ? trace : null);
 
     // The expected generation belongs to the input/operation that requested the transition.
     public bool NewGame(long expectedGeneration, Guid? sceneId = null)
@@ -124,6 +129,8 @@ public sealed class GameSession : IDisposable, IAsyncDisposable
             Retire(Player);
             ResetHost();
             Player = next; Phase = phase;
+            next.Execution.Trace = trace;
+            trace?.Invoke(new($"Смена сеанса: {phase}, сцена {next.Execution.State.SceneId}", Snapshot: next.Execution.State.Variables, Outcome: next.Execution.State.MinigameOutcome));
         }
         finally { changing = false; }
     }

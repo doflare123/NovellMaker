@@ -46,15 +46,18 @@ public static class LuaActionScript
 
     // Only consumers that validate the complete batch before use may call this raw producer.
     internal static async Task<ImmutableArray<ScenarioAction>> RequestCommandsAsync(ScriptAction action, GameState state, NovelProject project, CancellationToken cancellationToken)
+        => (await RequestBatchAsync(action, state, project, false, cancellationToken).ConfigureAwait(false)).Commands;
+
+    internal static async Task<LuaWorkerResponse> RequestBatchAsync(ScriptAction action, GameState state, NovelProject project, bool traceBranches, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         try { LuaLimits.CheckSource(action.Source); }
         catch (ArgumentException error) { throw new InvalidOperationException(error.Message, error); }
         // Construction runs after admission, off-host and inside the transport's original deadline.
         var result = await LuaWorkerClient.InvokePreparedAsync(preparation => new LuaWorkerRequest("run", action.Source, action.Name, action,
-            LuaStateSnapshot.Capture(state), LuaCommandCatalog.Capture(project, state.SceneId, preparation)), cancellationToken).ConfigureAwait(false);
+            LuaStateSnapshot.Capture(state), LuaCommandCatalog.Capture(project, state.SceneId, preparation), traceBranches), cancellationToken).ConfigureAwait(false);
         if (result.Error is not null) throw new InvalidOperationException($"Lua «{action.Name}» ({action.Id}): {result.Error}");
-        return result.Commands;
+        return result;
     }
 
     internal static ImmutableArray<ScenarioAction> ValidateCommands(ImmutableArray<ScenarioAction> commands, GameState state, NovelProject project)
@@ -69,7 +72,7 @@ public static class LuaActionScript
         return commands;
     }
 
-    internal static ImmutableArray<ScenarioAction> RunInWorker(ScriptAction action, LuaStateSnapshot state, LuaCommandCatalog catalog)
+    internal static ImmutableArray<ScenarioAction> RunInWorker(ScriptAction action, LuaStateSnapshot state, LuaCommandCatalog catalog, LuaBranchDebugger? debugger = null)
     {
         LuaLimits.CheckSource(action.Source);
         // No libraries with non-preemptible native loops, filesystem, loading or CLR interop.
@@ -186,6 +189,7 @@ public static class LuaActionScript
         try
         {
             var function = script.LoadString(action.Source, null, action.Name);
+            if (debugger is not null) script.AttachDebugger(debugger);
             var coroutine = script.CreateCoroutine(function).Coroutine;
             coroutine.AutoYieldCounter = InstructionBudget;
             var result = coroutine.Resume();

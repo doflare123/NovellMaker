@@ -48,6 +48,12 @@ public sealed partial class SceneEditorView : UserControl
             return new(scene.Id, line?.Id ?? scene.SelectedLine?.Id, line is not null || scene.SelectedLine is not null ? ScriptPhase.DuringLine : ScriptPhase.SceneStart);
         });
     }
+    private async void OpenPreviewDebug(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is SceneDocumentViewModel document && TopLevel.GetTopLevel(this) is Window owner)
+            await new PreviewDebugWindow(document).ShowDialog(owner);
+    }
+
     private void ObserveDocument()
     {
         StopAudition();

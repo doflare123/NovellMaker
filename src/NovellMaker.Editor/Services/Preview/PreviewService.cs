@@ -50,6 +50,16 @@ public sealed class PreviewService : IPreviewService
             if (hidden && OperatingSystem.IsWindows()) start.WindowStyle = ProcessWindowStyle.Hidden;
             foreach (var argument in new[] { "--project", snapshotPath, "--assets-root", request.AssetsRoot, "--scene", request.SceneId.ToString(), "--language", request.Language }) start.ArgumentList.Add(argument);
             if (request.LineId is { } line) { start.ArgumentList.Add("--line"); start.ArgumentList.Add(line.ToString()); }
+            if (request.Trace is not null || request.Start is not null)
+            {
+                var debugPath = Path.Combine(directory, "debug.json");
+                await File.WriteAllTextAsync(debugPath, System.Text.Json.JsonSerializer.Serialize(request.Start));
+                start.ArgumentList.Add("--preview-debug");
+                start.ArgumentList.Add(debugPath);
+                start.RedirectStandardOutput = true;
+                start.StandardOutputEncoding = System.Text.Encoding.UTF8;
+            }
+            ObjectDisposedException.ThrowIf(disposed, this);
             started = Process.Start(start) ?? throw new IOException("Не удалось запустить игровой предпросмотр.");
             process = started;
             var context = SynchronizationContext.Current;
@@ -59,7 +69,14 @@ public sealed class PreviewService : IPreviewService
                 if (context is null) report(message);
                 else context.Post(_ => { if (!disposed) report(message); }, null);
             }
-            var completion = ObserveAsync(started, directory, Report);
+            var child = started;
+            void Trace(NovellMaker.Core.Execution.PreviewTrace entry)
+            {
+                if (context is null) request.Trace?.Invoke(entry);
+                else context.Post(_ => { if (!disposed) request.Trace?.Invoke(entry); }, null);
+            }
+            var output = start.RedirectStandardOutput ? ReadTraceAsync(child, Trace) : Task.CompletedTask;
+            var completion = ObserveAsync(started, directory, Report, output);
             Completion = completion;
             // Surface immediate native/backend startup failures through the normal editor error dialog.
             if (await Task.WhenAny(completion, Task.Delay(350)) == completion)
@@ -75,13 +92,27 @@ public sealed class PreviewService : IPreviewService
         }
     }
 
-    private async Task<string?> ObserveAsync(Process child, string directory, Action<string> report)
+    private static async Task ReadTraceAsync(Process child, Action<NovellMaker.Core.Execution.PreviewTrace> trace)
+    {
+        while (await child.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line)
+        {
+            try
+            {
+                if (System.Text.Json.JsonSerializer.Deserialize<NovellMaker.Core.Execution.PreviewTrace>(line) is { Message: not null } entry)
+                    trace(entry);
+            }
+            catch (System.Text.Json.JsonException) { /* Other native backend output. */ }
+        }
+    }
+
+    private async Task<string?> ObserveAsync(Process child, string directory, Action<string> report, Task output)
     {
         try
         {
             var stderr = child.StandardError.ReadToEndAsync();
             await child.WaitForExitAsync();
             var details = await stderr;
+            await output;
             if (stopped.TryRemove(child, out _)) return null;
             var error = child.ExitCode == 0 ? null : $"Предпросмотр завершился с кодом {child.ExitCode}: {details[..Math.Min(details.Length, 8192)]}";
             report(error ?? "Окно игрового предпросмотра закрыто.");
@@ -105,6 +136,7 @@ public sealed class PreviewService : IPreviewService
         try
         {
             File.Delete(Path.Combine(directory, "snapshot.novell"));
+            File.Delete(Path.Combine(directory, "debug.json"));
             Directory.Delete(directory);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
