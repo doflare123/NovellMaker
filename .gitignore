@@ -14,4 +14,7 @@ artifacts/
 !/examples/character-animation/
 /docs/*
 !/docs/lua-reference/
+!/docs/branding/
+!/docs/RELEASE-0.1-beta.md
+!/docs/BUILDING.md
 AGENTS.md

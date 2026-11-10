@@ -1,6 +1,6 @@
 # Персонажи, части и клипы
 
-[Руководство](engine-guide.md) · [Исполнение и Load](execution-model.md#время-клипов-персонажей) · [Проверка](verification.md)
+[Руководство](engine-guide.md) · [Исполнение и Load](execution-model.md#время-клипов-персонажей) · [Проверка](compatibility.md)
 
 ## Быстрый пример
 

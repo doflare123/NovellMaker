@@ -7,7 +7,7 @@ if (-not $IsWindows -or [Runtime.InteropServices.RuntimeInformation]::ProcessArc
 }
 $repository = Split-Path $PSScriptRoot -Parent
 $run = Join-Path $repository ('artifacts/release/' + [guid]::NewGuid().ToString('N'))
-$candidate = Join-Path $run 'editor'
+$candidate = Join-Path $run 'NovellMaker'
 $results = Join-Path $run 'TestResults'
 $names = @('AVALONIA_TELEMETRY_OPTOUT', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'NOVELLMAKER_NATIVE_SMOKE',
     'NOVELLMAKER_EXPORT_SMOKE', 'NOVELLMAKER_INSTALLER_SMOKE', 'NOVELLMAKER_DELIVERY_EDITOR_DIR', 'NOVELLMAKER_DELIVERY_EVIDENCE_DIR',
@@ -35,11 +35,12 @@ try {
     if ([IO.Path]::GetDirectoryName($preview) -ne [IO.Path]::GetFullPath($candidate)) { throw 'Preview path escaped candidate.' }
     if (Test-Path -LiteralPath $preview) { Remove-Item -LiteralPath $preview -Recurse -Force }
     Copy-Item -LiteralPath (Join-Path $candidate 'ExportTemplates/win-x64') -Destination $preview -Recurse
+    & (Join-Path $PSScriptRoot 'copy-release-content.ps1') -Destination $candidate
     # Test bytes extracted from the deliverable ZIP, including its directory structure and native dependencies.
     $stagedArchive = Join-Path $run '.candidate.zip'
     Compress-Archive -LiteralPath $candidate -DestinationPath $stagedArchive
     Expand-Archive -LiteralPath $stagedArchive -DestinationPath (Join-Path $run 'unpacked')
-    $candidate = Join-Path $run 'unpacked/editor'
+    $candidate = Join-Path $run 'unpacked/NovellMaker'
     foreach ($file in @('NovellMaker.Editor.exe', 'coreclr.dll', 'Runtime/NovellMaker.Runtime.exe',
         'Runtime/coreclr.dll', 'ExportTemplates/win-x64/runtime-template.json', 'BuildTools/NSIS/makensis.exe')) {
         if (-not (Test-Path -LiteralPath (Join-Path $candidate $file) -PathType Leaf)) { throw "Candidate missing $file" }

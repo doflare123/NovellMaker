@@ -28,14 +28,16 @@ jobs:
       - name: Qualify the actual Windows editor delivery
         id: qualify
         shell: pwsh
-        run: ./scripts/check-release.ps1
+        run: ./scripts/build-release.ps1 -Platform Windows
       - uses: actions/upload-artifact@v4
         with:
           name: qualified-windows-candidate
           if-no-files-found: error
           path: |
-            ${{ steps.qualify.outputs.directory }}/NovellMaker-win-x64.zip
-            ${{ steps.qualify.outputs.directory }}/qualification.json
+            ${{ steps.qualify.outputs.release_directory }}/*-win-x64-Setup.exe
+            ${{ steps.qualify.outputs.release_directory }}/*-win-x64-portable.zip
+            ${{ steps.qualify.outputs.release_directory }}/qualification-win-x64.json
+            ${{ steps.qualify.outputs.release_directory }}/SHA256SUMS
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -43,23 +45,59 @@ jobs:
           path: |
             artifacts/release/**/TestResults/
             artifacts/release/**/evidence/
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AVALONIA_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages*.lock.json'
+      - name: Build experimental Linux editor and preview
+        id: package
+        shell: pwsh
+        run: ./scripts/build-release.ps1 -Platform Linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experimental-linux-candidate
+          if-no-files-found: error
+          path: |
+            ${{ steps.package.outputs.release_directory }}/*-linux-x64-experimental.tar.gz
+            ${{ steps.package.outputs.release_directory }}/build-linux-x64.json
   release:
-    needs: [behavior, delivery]
+    needs: [behavior, delivery, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: qualified-windows-candidate
           path: candidate
+      - uses: actions/download-artifact@v4
+        with:
+          name: experimental-linux-candidate
+          path: linux-candidate
       - name: Verify candidate identity and bytes
         shell: pwsh
         run: |
-          $evidence = Get-Content candidate/qualification.json -Raw | ConvertFrom-Json
+          $evidence = Get-Content candidate/qualification-win-x64.json -Raw | ConvertFrom-Json
           if ($evidence.worktreeDirty) { throw 'Candidate was built from a dirty worktree.' }
           if ($evidence.commit -ne $env:GITHUB_SHA) { throw 'Candidate belongs to a different commit.' }
-          if ((Get-FileHash candidate/NovellMaker-win-x64.zip -Algorithm SHA256).Hash -ne $evidence.sha256) { throw 'Candidate archive changed.' }
+          if ((Get-FileHash (Join-Path candidate $evidence.archive) -Algorithm SHA256).Hash -ne $evidence.sha256) { throw 'Candidate archive changed.' }
+          if ((Get-FileHash (Join-Path candidate $evidence.installer) -Algorithm SHA256).Hash -ne $evidence.installerSha256) { throw 'Editor installer changed.' }
+          $linux = Get-Content linux-candidate/build-linux-x64.json -Raw | ConvertFrom-Json
+          if ((Get-FileHash (Join-Path linux-candidate $linux.archive) -Algorithm SHA256).Hash -ne $linux.sha256) { throw 'Linux archive changed.' }
+          $files = @(Get-ChildItem candidate,linux-candidate -File | Where-Object { $_.Name -match '\.(exe|zip|tar\.gz)$' })
+          $files | Sort-Object Name | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content candidate/SHA256SUMS -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
           name: release-ready-win-x64
@@ -71,4 +109,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --generate-notes candidate/NovellMaker-win-x64.zip candidate/qualification.json
+        shell: pwsh
+        run: |
+          [xml]$properties = Get-Content Directory.Build.props -Raw
+          $version = [string]$properties.Project.PropertyGroup.Version
+          if ($env:RELEASE_TAG -ne "v$version") { throw 'Release tag must match the application version.' }
+          $notes = Get-Content docs/RELEASE-0.1-beta.md -Raw
+          $notes.Replace('](lua-reference/', "](https://github.com/$env:GH_REPO/blob/$env:RELEASE_TAG/docs/lua-reference/") | Set-Content release-notes.md -Encoding utf8
+          $arguments = @('release', 'create', $env:RELEASE_TAG, '--verify-tag', '--draft', '--title', "NovellMaker $version", '--notes-file', 'release-notes.md')
+          if ($version.Contains('-')) { $arguments += '--prerelease' }
+          $arguments += @(Get-ChildItem candidate,linux-candidate -File |
+            Where-Object { $_.Name -match '\.(exe|zip|tar\.gz)$' -or $_.Name -eq 'SHA256SUMS' } | ForEach-Object FullName)
+          gh @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release creation failed.' }

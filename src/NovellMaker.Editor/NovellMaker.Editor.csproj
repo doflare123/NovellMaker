@@ -18,12 +18,15 @@
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
   </ItemGroup>
   <Target Name="CopyRuntimeHost" AfterTargets="Build">
+    <PropertyGroup>
+      <RuntimeHostBuildRoot>$(MSBuildProjectDirectory)/../NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/$(RuntimeIdentifier)/</RuntimeHostBuildRoot>
+    </PropertyGroup>
     <ItemGroup>
-      <RuntimeHostFile Include="$(MSBuildProjectDirectory)/../NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/**/*" Exclude="$(MSBuildProjectDirectory)/../NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/win-x64/**/*;$(MSBuildProjectDirectory)/../NovellMaker.Runtime/bin/$(Configuration)/$(TargetFramework)/publish/**/*" />
+      <RuntimeHostFile Include="$(RuntimeHostBuildRoot)**/*" Exclude="$(RuntimeHostBuildRoot)win-*/**/*;$(RuntimeHostBuildRoot)linux-*/**/*;$(RuntimeHostBuildRoot)osx-*/**/*;$(RuntimeHostBuildRoot)publish/**/*" />
     </ItemGroup>
     <Copy SourceFiles="@(RuntimeHostFile)" DestinationFiles="@(RuntimeHostFile->'$(TargetDir)Runtime/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
-  <Target Name="CopyWindowsExportTemplate" AfterTargets="Build">
+  <Target Name="CopyWindowsExportTemplate" AfterTargets="Build" Condition="'$(RuntimeIdentifier)' == '' Or '$(RuntimeIdentifier)' == 'win-x64'">
     <PropertyGroup>
       <ExportTemplateRoot>$(MSBuildProjectDirectory)/../../artifacts/export-templates/win-x64/</ExportTemplateRoot>
       <ExportTemplateOutput>$(TargetDir)ExportTemplates/win-x64/</ExportTemplateOutput>
@@ -34,20 +37,20 @@
     <RemoveDir Directories="$(ExportTemplateOutput)" Condition="Exists('$(ExportTemplateRoot)runtime-template.json')" />
     <Copy SourceFiles="@(ExportTemplateFile)" DestinationFiles="@(ExportTemplateFile->'$(ExportTemplateOutput)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
-  <Target Name="PublishWindowsExportTemplate" AfterTargets="Publish" DependsOnTargets="CopyWindowsExportTemplate">
+  <Target Name="PublishWindowsExportTemplate" AfterTargets="Publish" DependsOnTargets="CopyWindowsExportTemplate" Condition="'$(RuntimeIdentifier)' == '' Or '$(RuntimeIdentifier)' == 'win-x64'">
     <RemoveDir Directories="$(PublishDir)ExportTemplates/win-x64/" />
     <Copy SourceFiles="@(ExportTemplateFile)" DestinationFiles="@(ExportTemplateFile->'$(PublishDir)ExportTemplates/win-x64/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
   <Target Name="PublishRuntimeHost" AfterTargets="Publish" DependsOnTargets="CopyRuntimeHost">
     <Copy SourceFiles="@(RuntimeHostFile)" DestinationFiles="@(RuntimeHostFile->'$(PublishDir)Runtime/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
-  <Target Name="CopyWindowsInstallerCompiler" AfterTargets="Build">
+  <Target Name="CopyWindowsInstallerCompiler" AfterTargets="Build" Condition="'$(RuntimeIdentifier)' == '' Or '$(RuntimeIdentifier)' == 'win-x64'">
     <ItemGroup>
       <InstallerCompilerFile Include="$(MSBuildProjectDirectory)/../../artifacts/build-tools/nsis-3.13/**/*" />
     </ItemGroup>
     <Copy SourceFiles="@(InstallerCompilerFile)" DestinationFiles="@(InstallerCompilerFile->'$(TargetDir)BuildTools/NSIS/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
-  <Target Name="PublishWindowsInstallerCompiler" AfterTargets="Publish" DependsOnTargets="CopyWindowsInstallerCompiler">
+  <Target Name="PublishWindowsInstallerCompiler" AfterTargets="Publish" DependsOnTargets="CopyWindowsInstallerCompiler" Condition="'$(RuntimeIdentifier)' == '' Or '$(RuntimeIdentifier)' == 'win-x64'">
     <Copy SourceFiles="@(InstallerCompilerFile)" DestinationFiles="@(InstallerCompilerFile->'$(PublishDir)BuildTools/NSIS/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 </Project>

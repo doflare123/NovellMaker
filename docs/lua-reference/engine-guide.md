@@ -1,6 +1,6 @@
 # Руководство движка для автора
 
-[Оглавление Lua](index.md) · [Примеры](examples.md) · [Ограничения и проверка](verification.md)
+[Оглавление Lua](index.md) · [Примеры](examples.md) · [Ограничения и проверка](compatibility.md)
 
 NovellMaker — редактор и движок для **независимых проектов новелл**. Проект содержит сцены, тексты по языкам, персонажей, изображения, WAV, Lua-ресурсы, холсты интерфейса и авторские назначения ввода. Базовую новеллу можно собрать в GUI; Lua дополняет сценарий и позволяет писать интерфейсы/мини-игры. Это не одна встроенная игра и не набор обязательных игровых меню.
 
@@ -216,28 +216,13 @@ GUI использует подготовленный шаблон `ExportTempla
 
 Подпись Authenticode, чистая VM без SDK, отдельная нативная проверка Linux/macOS и экспорт этих ОС не заявлены как выполненные. Мобильные платформы/Web в первоначальный обязательный объём не входят.
 
-## Для сборки редактора из репозитория
+## Сборка редактора из исходников
 
-Нужен SDK, закреплённый в [global.json](../../global.json), и доступные NuGet-пакеты; текущая база SDK 10.0.204. Core/Editor/Runtime написаны на C#, UI редактора Avalonia, runtime MonoGame. Зависимости зафиксированы lock-файлами; не подменяйте версию MoonSharp ради написания сценария.
-
-```powershell
-$env:AVALONIA_TELEMETRY_OPTOUT = '1'
-dotnet restore NovellMaker.slnx --locked-mode
-dotnet run --project src/NovellMaker.Editor
-```
-
-Выпуск Windows x64: `./scripts/check-release.ps1` (офлайн NSIS: `-NsisArchive <путь>`). Скрипт готовит ZIP self-contained редактора с автономным Runtime, ExportTemplates и NSIS, распаковывает его в новый каталог и проверяет запуск окна поставленного редактора без SDK в PATH/DOTNET_ROOT, затем выполняет обязательный набор Delivery: создание независимого проекта командой редактора «Пример» → Save As/повторное открытие → настоящий предпросмотр → экспорт установщика → установка → запуск без SDK в PATH/DOTNET_ROOT → сохранение/загрузка → удаление с побайтовой проверкой всех пользовательских файлов → повторная установка и загрузка прежнего слота. В набор входят также рисование/аудиобэкенд, чтение/история, восстановление слоистой и покадровой анимации персонажей, реальный курсор/пауза/продолжение/окончание голоса — всего 11 обязательных случаев. Проверки новых функций используют предпросмотр и экспортный шаблон из того же распакованного ZIP. Создание/сохранение вызываются через те же команды EditorSession, что GUI; диалоги автоматизированы, это не проверка кликов по всему интерфейсу.
-
-[Release delivery gate](../../.github/workflows/release.yml) запускается для тегов `v*` и вручную. Он повторно выполняет [CI](../../.github/workflows/ci.yml) на Windows/Linux/macOS и Windows Delivery для одного коммита. Отсутствующий TRX, пустой набор, пропуск или inconclusive обязательного теста блокируют выпуск. Только после успеха обоих заданий появляется `release-ready-win-x64`; для тега создаётся черновик GitHub Release с проверенным ZIP редактора и `qualification.json` (коммит, признак правок рабочей копии, SHA-256 ZIP, этапы, время). В CI изменившаяся рабочая копия запрещена; локальный запуск честно фиксирует её правки в worktreeDirty. Во время публикации ZIP не пересобирается. Черновик публикуется ответственным за выпуск после просмотра. Ручные загрузки через GitHub вне workflow технически не запрещены этим YAML; права выпуска/защита тегов задаются настройками репозитория.
-
-TRX каждого запуска находятся в уникальном `artifacts/release/<run>/TestResults`; JSON/PNG нативных проверок — `artifacts/release/<run>/evidence`, в CI сохраняются и при сбое. Скрипт не выдаёт успешный ZIP/qualification при сбое проверки. Обычный `check.ps1` и задание `test` CI выполняют поведенческие проверки; их успех не заменяет выпускной допуск. Нативный экспорт Linux/macOS этим допуском не подтверждается.
-
-Нативная переносимость runtime: `./scripts/check-native-portability.ps1` на целевой ОС (Linux с графической сессией либо `xvfb-run -a pwsh -NoProfile -File ./scripts/check-native-portability.ps1`). Скрипт публикует self-contained runtime для текущей архитектуры, проверяет графику/аудио, screen Lua UI, бюджет game Lua и завершение worker при отмене; требует все 6 случаев без пропусков. В CI есть отдельные Linux/macOS задания, от которых также зависит выпуск Windows. Evidence сохраняется в `artifacts/native-portability/<rid>/<run>`; `portability.json` явно отделяет этот прогон от проверки экспорта. Linux CI использует software GL и OpenAL null backend. Экспорт Linux/macOS и общая ОС-квота памяти их Lua worker остаются открытыми; добавленный CI не является свидетельством нативного успеха до его выполнения. Текущие результаты см. в [verification](verification.md#расширенный-delivery-и-нативный-прогон-переносимости--5-ноября-2026).
-
-Поставка runtime-шаблона: `./scripts/prepare-windows-export.ps1`. Поставка с NSIS: `./scripts/prepare-windows-installer.ps1` (официальный ZIP проверяется закреплённым SHA-256; офлайн `-NsisArchive <путь>`). Build/Publish включают подготовленные файлы. Полные проверки: `./scripts/check.ps1`; нативные флаги `-CaptureScreenshots -NativeRuntime -WindowsExport` либо `-WindowsInstaller` запускают соответствующие более широкие проверки; `-ReleaseLive` включает реальный сетевой smoke. Проверка этого справочника: `python scripts/check-lua-reference.py`.
+Подготовка поставок, зависимости и проверки описаны отдельно в
+[инструкции сборки](../BUILDING.md).
 
 ## Текущие границы
 
 Нет файлового require/общего сцено-Lua с обратимым преобразованием карточек, постоянной сценарной VM/возобновления произвольного стека, произвольного rollback, произвольной сети/CLR/OS API автора, облака/совместной работы, встроенной платформенной системы достижений. Автосохранение редактора **реализовано** отдельными [снимками восстановления](#автосохранение-и-восстановление-редактора). Интерфейсы/слоты/настройки/мини-игры/модули/RNG/ограниченная библиотека/явная проверка выпуска **реализованы** в пределах этого справочника. Общий таймлайн фрагмента сцены со звуком, событиями и ожиданиями, расширенный аудиотаймлайн/MP3/OGG и экспорт Linux/macOS не реализованы. Ожидание конечных клипов персонажей доступно в событиях фразы и через [game.wait_actions](scenario.md#game-wait-actions).
 
-Источники возможностей: [проект](../../src/NovellMaker.Core/Projects/NovelProject.cs), [холст](../../src/NovellMaker.Core/Scenes/SceneCanvas.cs), [действия кнопок](../../src/NovellMaker.Core/Screens/ScreenAsset.cs), [диалог](../../src/NovellMaker.Core/Scenes/DialogueCanvas.cs), [CSS parser](../../src/NovellMaker.Core/Styling/DialogueCssParser.cs), [импорт изображений](../../src/NovellMaker.Editor/Services/Assets/ImageAssetService.cs), [WAV](../../src/NovellMaker.Core/Audio/PcmWave.cs), [Lua tools](../../src/NovellMaker.Editor/Services/LuaAuthoringTools.cs), [подготовка поставки](../../scripts/prepare-windows-export.ps1), [NSIS](../../scripts/prepare-windows-installer.ps1). Проверки распределены по Core/Editor/Runtime; выполненный объём текущего прогона — [verification](verification.md).
+Источники возможностей: [проект](../../src/NovellMaker.Core/Projects/NovelProject.cs), [холст](../../src/NovellMaker.Core/Scenes/SceneCanvas.cs), [действия кнопок](../../src/NovellMaker.Core/Screens/ScreenAsset.cs), [диалог](../../src/NovellMaker.Core/Scenes/DialogueCanvas.cs), [CSS parser](../../src/NovellMaker.Core/Styling/DialogueCssParser.cs), [импорт изображений](../../src/NovellMaker.Editor/Services/Assets/ImageAssetService.cs), [WAV](../../src/NovellMaker.Core/Audio/PcmWave.cs), [Lua tools](../../src/NovellMaker.Editor/Services/LuaAuthoringTools.cs), [подготовка поставки](../../scripts/prepare-windows-export.ps1), [NSIS](../../scripts/prepare-windows-installer.ps1). Проверки распределены по Core/Editor/Runtime; границы поддержки — [совместимость](compatibility.md).
