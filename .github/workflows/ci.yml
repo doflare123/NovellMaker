@@ -28,6 +28,9 @@ jobs:
       - name: Verify release gate rejection cases
         shell: pwsh
         run: ./tests/ReleaseGate.Tests.ps1
+      - name: Verify archive download fallback and integrity
+        shell: pwsh
+        run: ./tests/ArchiveDownload.Tests.ps1
       - run: dotnet test NovellMaker.slnx --configuration Release --no-build --logger trx --results-directory TestResults --blame-hang-timeout 60s --blame-hang-dump-type none
       - uses: actions/upload-artifact@v4
         if: always()

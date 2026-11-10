@@ -25,6 +25,11 @@ jobs:
           global-json-file: global.json
           cache: true
           cache-dependency-path: '**/packages*.lock.json'
+      - name: Cache pinned NSIS archive
+        uses: actions/cache@v4
+        with:
+          path: artifacts/build-tools/nsis-3.13.zip
+          key: nsis-3.13-BA63DFFC4410EE89193E1CB5A41989991BD77C61068DA17E3156D136B7B0B3D8
       - name: Qualify the actual Windows editor delivery
         id: qualify
         shell: pwsh
