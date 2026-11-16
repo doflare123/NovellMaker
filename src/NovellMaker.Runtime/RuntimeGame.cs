@@ -117,12 +117,15 @@ internal sealed partial class RuntimeGame : Game
         IsFixedTimeStep = arguments.SmokeOutputPath is null || arguments.SmokeRealtimeDuration is not null;
         IsMouseVisible = true;
         Window.AllowUserResizing = true;
-        Window.Title = arguments.Package?.Title ?? "NovellMaker — предпросмотр сцены";
         Content.RootDirectory = "Content";
     }
 
     protected override void LoadContent()
     {
+        // DesktopGL 3.8.5.1 recreates the window during graphics initialization and
+        // marshals its initial title as ANSI on Windows. Set it on the final window:
+        // MonoGame's title setter explicitly uses UTF-8, as required by SDL.
+        Window.Title = arguments.Package?.Title ?? "NovellMaker — предпросмотр сцены";
         imageCache = new((asset, token) => RuntimeImageLoader.Decode(arguments.AssetsRoot, asset, token),
             decoded => RuntimeImageLoader.CreateTexture(GraphicsDevice, decoded), uploadRows: RuntimeImageLoader.UploadRows);
         imagePreloader = new(player.Execution.Project);
